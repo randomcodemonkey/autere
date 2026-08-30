@@ -1,0 +1,66 @@
+import { useState, useCallback } from 'react';
+import { url } from '../base-path';
+
+interface AuthStatus {
+  authEnabled: boolean;
+  authenticated: boolean;
+}
+
+export function useAuth() {
+  const [authenticated, setAuthenticated] = useState(false);
+  const [authEnabled, setAuthEnabled] = useState(false);
+  const [loginError, setLoginError] = useState('');
+
+  const checkAuthStatus = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch(url('/api/auth/status'));
+      const data = await res.json();
+      if (data.success && data.data.authEnabled && !data.data.authenticated) {
+        setAuthEnabled(true);
+        setAuthenticated(false);
+        return false;
+      }
+      setAuthEnabled(data.data.authEnabled);
+      setAuthenticated(true);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const login = useCallback(async (password: string): Promise<boolean> => {
+    setLoginError('');
+    if (!password) {
+      setLoginError('Enter password');
+      return false;
+    }
+    try {
+      const res = await fetch(url('/api/auth/login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAuthenticated(true);
+        setLoginError('');
+        return true;
+      } else {
+        setLoginError(data.error || 'Login failed');
+        return false;
+      }
+    } catch {
+      setLoginError('Connection error');
+      return false;
+    }
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await fetch(url('/api/auth/logout'), { method: 'POST' });
+    } catch {}
+    setAuthenticated(false);
+  }, []);
+
+  return { authenticated, authEnabled, loginError, checkAuthStatus, login, logout };
+}

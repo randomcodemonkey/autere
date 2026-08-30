@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>pi-monitor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="login-screen" class="login-screen">
+    <div class="login-form-container">
+      <h2 class="login-title">⚡ pi-monitor</h2>
+      <form id="login-form">
+        <input id="login-password" class="login-input" type="password" placeholder="Password" autocomplete="current-password">
+        <div id="login-error" class="login-error"></div>
+        <button type="submit" class="login-btn">Login</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="main-app">
+    <div class="header">
+      <h1>⚡ pi-monitor</h1>
+      <div>
+        <span id="status-badge" class="status-badge status-idle" title="Click to open status">
+          <span class="connection-dot dot-gray" id="status-dot"></span>
+          <span id="status-text">Connecting...</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="container">
+      <div class="cards-scroll">
+        <div class="grid-2">
+          <div class="card" data-card-id="model">
+            <div class="card-header">
+              <div class="card-title">Model</div>
+              <button class="card-toggle" title="Collapse">▾</button>
+            </div>
+            <div id="model-list" class="model-list"></div>
+          </div>
+          <div class="card" data-card-id="usage">
+            <div class="card-header">
+              <div class="card-title">Usage</div>
+              <button class="card-toggle" title="Collapse">▾</button>
+            </div>
+            <div class="usage-grid">
+              <div>
+                <div class="stat-label">Messages</div>
+                <div class="stat-value-compact" id="stat-messages">0</div>
+              </div>
+              <div>
+                <div class="stat-label">Requests</div>
+                <div class="stat-value-compact" id="stat-requests">0</div>
+              </div>
+              <div>
+                <div class="stat-label">Input Tokens</div>
+                <div class="stat-value-compact" id="stat-input">0</div>
+              </div>
+              <div>
+                <div class="stat-label">Output Tokens</div>
+                <div class="stat-value-compact" id="stat-output">0</div>
+              </div>
+              <div>
+                <div class="stat-label">Cost</div>
+                <div class="stat-value-compact" id="stat-cost">$0.0000</div>
+              </div>
+              <div>
+                <div class="stat-label">Context</div>
+                <div class="context-info" id="context-info">-</div>
+              </div>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" id="context-bar" style="width: 0%"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card" data-card-id="tools">
+            <div class="card-header">
+              <div class="card-title">Tools</div>
+              <button class="card-toggle" title="Collapse">▾</button>
+            </div>
+            <div class="tool-list" id="tool-list">
+              <span class="tool-empty">No active tools</span>
+            </div>
+            <div class="recent-tools hidden" id="recent-tools"></div>
+          </div>
+          <div class="card" data-card-id="extensions">
+            <div class="card-header">
+              <div class="card-title">Extensions</div>
+              <button class="card-toggle" title="Collapse">▾</button>
+            </div>
+            <div id="extensions-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card stream-card">
+        <div class="card-title">
+          Chat
+          <div class="stream-filters">
+            <button class="stream-toggle active" data-filter="thinking">thinking</button>
+            <button class="stream-toggle active" data-filter="toolResult">tools</button>
+          </div>
+        </div>
+        <div class="stream-box" id="stream-box"></div>
+        <div class="chat-input-container">
+          <textarea id="chat-input" class="chat-input" placeholder="Type a message..." rows="1"></textarea>
+          <button id="chat-send" class="chat-send-btn">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="ext-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="ext-modal-title"></h3>
+        <button class="modal-close" id="ext-modal-close">✕</button>
+      </div>
+      <div class="modal-body" id="ext-modal-body"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="status-modal">
+    <div class="modal modal-status">
+      <div class="modal-header">
+        <h3>Status</h3>
+        <button class="modal-close" id="status-modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-status-connection">
+          <span class="connection-dot dot-gray" id="status-modal-dot"></span>
+          <span class="modal-status-text" id="status-modal-text">Connecting...</span>
+        </div>
+        <div class="modal-section">Session</div>
+        <button id="abort-btn" class="abort-btn hidden">⏹ Abort Operation</button>
+        <button id="new-session-btn" class="new-session-btn">✨ New Session</button>
+        <div class="modal-section spaced">User</div>
+        <button id="logout-btn" class="modal-btn">🔒 Logout</button>
+        <div class="modal-section spaced">System</div>
+        <button id="restart-btn" class="restart-btn">⟳ Restart PI</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

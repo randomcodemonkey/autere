@@ -1,0 +1,14 @@
+node_modules/*
+*~
+
+# Compiled frontend assets (build outputs)
+public/app.js
+public/styles.css
+
+# build files
+dist/
+
+# Cypress artifacts
+cypress/screenshots/
+cypress/videos/
+cypress/downloads/
