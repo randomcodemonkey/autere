@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback, memo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, memo } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { StreamMessage } from '../types';
@@ -198,8 +198,8 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   const dedupedMessages = filteredMessages;
 
   // Autoscroll: track if user is at bottom
-  const autoScrollRef = useRef(true);
-  const scrollRafRef = useRef<number | null>(null);
+  const isAtBottomRef = useRef(true);
+  const programmaticScrollRef = useRef(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const hasNewContentRef = useRef(false);
 
@@ -207,51 +207,48 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   useEffect(() => {
     const box = boxRef.current;
     if (box) {
+      programmaticScrollRef.current = true;
       box.scrollTop = box.scrollHeight;
     }
   }, []);
 
   // Auto-scroll when messages change, but only if user is at bottom
-  useEffect(() => {
+  useLayoutEffect(() => {
     const box = boxRef.current;
-    if (box && autoScrollRef.current) {
+    if (box && isAtBottomRef.current) {
+      programmaticScrollRef.current = true;
       box.scrollTop = box.scrollHeight;
-    } else if (!autoScrollRef.current) {
-      // User is scrolled up — mark that new content arrived
+    } else if (!isAtBottomRef.current) {
       hasNewContentRef.current = true;
+      setShowScrollButton(true);
     }
   }, [messages, isStreaming]);
 
-  // Track user scroll position to enable/disable autoscroll
-  // Uses requestAnimationFrame to debounce, so rapid scroll events from
-  // programmatic auto-scroll only produce one position check after the
-  // browser has settled on the final scroll position.
+  // Track user scroll position
   const handleScroll = useCallback(() => {
-    if (scrollRafRef.current != null) {
-      cancelAnimationFrame(scrollRafRef.current);
+    // Ignore scroll events from our own programmatic scrolls
+    if (programmaticScrollRef.current) {
+      programmaticScrollRef.current = false;
+      return;
     }
-    scrollRafRef.current = requestAnimationFrame(() => {
-      scrollRafRef.current = null;
-      const box = boxRef.current;
-      if (!box) return;
-      const threshold = 40;
-      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < threshold;
-      autoScrollRef.current = atBottom;
-      if (atBottom) {
-        hasNewContentRef.current = false;
-        setShowScrollButton(false);
-      } else {
-        // User scrolled up — show button only if new content has arrived
-        setShowScrollButton(hasNewContentRef.current);
-      }
-    });
+    const box = boxRef.current;
+    if (!box) return;
+    const threshold = 40;
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < threshold;
+    isAtBottomRef.current = atBottom;
+    if (atBottom) {
+      hasNewContentRef.current = false;
+      setShowScrollButton(false);
+    } else if (hasNewContentRef.current) {
+      setShowScrollButton(true);
+    }
   }, []);
 
   // Scroll to bottom and resume autoscroll
   const scrollToBottom = useCallback(() => {
     const box = boxRef.current;
     if (box) {
-      autoScrollRef.current = true;
+      isAtBottomRef.current = true;
       hasNewContentRef.current = false;
       setShowScrollButton(false);
       box.scrollTop = box.scrollHeight;

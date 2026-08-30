@@ -10,8 +10,8 @@ function TestComponent() {
       <span data-testid="authEnabled">{String(authEnabled)}</span>
       <span data-testid="loginError">{loginError}</span>
       <button data-testid="checkAuth" onClick={() => checkAuthStatus()}>Check Auth</button>
-      <button data-testid="login" onClick={() => login('testpassword')}>Login</button>
-      <button data-testid="loginEmpty" onClick={() => login('')}>Login Empty</button>
+      <button data-testid="login" onClick={() => login('admin', 'testpassword')}>Login</button>
+      <button data-testid="loginEmpty" onClick={() => login('admin', '')}>Login Empty</button>
       <button data-testid="logout" onClick={() => logout()}>Logout</button>
     </div>
   );

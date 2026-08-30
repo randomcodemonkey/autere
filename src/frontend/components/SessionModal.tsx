@@ -15,6 +15,7 @@ interface SessionModalProps {
   onAbort: () => void;
   onNewSession: () => void;
   onSwitchSession: (sessionId: string) => void;
+  onSessionDeleted?: () => void;
 }
 
 export const SessionModal: React.FC<SessionModalProps> = ({
@@ -29,6 +30,7 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   onAbort,
   onNewSession,
   onSwitchSession,
+  onSessionDeleted,
 }) => {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -95,6 +97,24 @@ export const SessionModal: React.FC<SessionModalProps> = ({
     }
     setCompactLoading(false);
   }, []);
+
+  const handleDelete = useCallback(async (sessionId: string) => {
+    if (!confirm('Delete this session?')) return;
+    try {
+      const res = await fetch(url('/api/sessions/delete'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchSessions();
+        onSessionDeleted?.();
+      }
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+    }
+  }, [fetchSessions, onSessionDeleted]);
 
   const getSessionLabel = (session: SessionInfo) => {
     if (session.sessionName) return session.sessionName;
@@ -177,15 +197,27 @@ export const SessionModal: React.FC<SessionModalProps> = ({
                     }
                   }}
                 >
-                  <div className="session-item-header">
-                    <span className="session-item-name">
-                      {isActive && <span className="session-active-dot" />}
-                      {getSessionLabel(session)}
-                    </span>
-                    <span className="session-item-time">{formatTime(session.lastActivity)}</span>
+                  <div className="session-item-content">
+                    <div className="session-item-header">
+                      <span className="session-item-name">
+                        {getSessionLabel(session)}
+                      </span>
+                      <span className="session-item-time">{formatTime(session.lastActivity)}</span>
+                    </div>
+                    <div className="session-item-id">{session.id}</div>
                   </div>
-                  <div className="session-item-id">{session.id}</div>
-                  {isActive && <div className="session-item-active-label">active</div>}
+                  {!isCurrentSession && (
+                    <button
+                      className="session-delete-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(session.id);
+                      }}
+                      title="Delete session"
+                    >
+                      ✕
+                    </button>
+                  )}
                 </div>
               );
             })}

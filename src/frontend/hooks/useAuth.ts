@@ -10,6 +10,8 @@ export function useAuth() {
   const [authenticated, setAuthenticated] = useState(false);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [loginError, setLoginError] = useState('');
+  const [userRole, setUserRole] = useState<string | null>(null);
+  const [username, setUsername] = useState<string | null>(null);
 
   const checkAuthStatus = useCallback(async (): Promise<boolean> => {
     try {
@@ -18,18 +20,26 @@ export function useAuth() {
       if (data.success && data.data.authEnabled && !data.data.authenticated) {
         setAuthEnabled(true);
         setAuthenticated(false);
+        setUserRole(null);
+        setUsername(null);
         return false;
       }
       setAuthEnabled(data.data.authEnabled);
       setAuthenticated(true);
+      setUserRole(data.data.role || null);
+      setUsername(data.data.user || null);
       return true;
     } catch {
       return false;
     }
   }, []);
 
-  const login = useCallback(async (password: string): Promise<boolean> => {
+  const login = useCallback(async (user: string, password: string): Promise<boolean> => {
     setLoginError('');
+    if (!user) {
+      setLoginError('Enter username');
+      return false;
+    }
     if (!password) {
       setLoginError('Enter password');
       return false;
@@ -38,7 +48,7 @@ export function useAuth() {
       const res = await fetch(url('/api/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ user, password }),
       });
       const data = await res.json();
       if (data.success) {
@@ -62,5 +72,5 @@ export function useAuth() {
     setAuthenticated(false);
   }, []);
 
-  return { authenticated, authEnabled, loginError, checkAuthStatus, login, logout };
+  return { authenticated, authEnabled, loginError, userRole, username, checkAuthStatus, login, logout };
 }

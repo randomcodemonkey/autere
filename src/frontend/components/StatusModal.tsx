@@ -6,21 +6,29 @@ interface StatusModalProps {
   open: boolean;
   statusType: string;
   statusText: string;
+  username?: string | null;
   onClose: () => void;
   onRestart: () => void;
+  onRestartBackend?: () => void;
   onLogout: () => void;
   restarting?: boolean;
+  userRole?: string | null;
 }
 
 export const StatusModal: React.FC<StatusModalProps> = ({
   open,
   statusType,
   statusText,
+  username,
   onClose,
   onRestart,
+  onRestartBackend,
   onLogout,
   restarting = false,
+  userRole,
 }) => {
+  const isAdmin = userRole === 'admin';
+
   return (
     <Modal open={open} onClose={onClose} className="modal-status">
       <div className="modal-header">
@@ -33,9 +41,13 @@ export const StatusModal: React.FC<StatusModalProps> = ({
           <span className="modal-status-text">{statusText}</span>
         </div>
         <div className="modal-section">User</div>
+        {username && <div className="modal-username">{username}</div>}
         <button className="btn btn-default" onClick={onLogout}>🔒 Logout</button>
         <div className="modal-section spaced">System</div>
         <button className="btn btn-danger" onClick={onRestart} disabled={restarting}>{restarting ? '⟳ Restarting…' : '⟳ Restart PI'}</button>
+        {isAdmin && onRestartBackend && (
+          <button className="btn btn-danger" style={{ marginTop: '0.5rem' }} onClick={onRestartBackend} disabled={restarting}>⟳ Restart Autere</button>
+        )}
       </div>
     </Modal>
   );

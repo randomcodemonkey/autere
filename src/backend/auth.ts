@@ -1,11 +1,34 @@
+/**
+ * Auth module — manages tokens, users, and passwords.
+ *
+ * Each token maps to a user. For now only "admin" is supported.
+ */
+
 import { IncomingMessage, ServerResponse } from 'http';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
-import { AUTH_TOKENS_FILE, AUTH_TOKEN_EXPIRY_MS } from './constants.js';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
+import { join, dirname } from 'path';
+import { homedir } from 'os';
+import { randomUUID } from 'crypto';
+import { AUTH_TOKENS_FILE, AUTH_TOKEN_EXPIRY_MS, PI_DIR } from './constants.js';
 
 // ── Auth state ──
 
-let authTokens: Map<string, number> = new Map();
+interface TokenEntry {
+  expiry: number;
+  user: string;
+}
+
+interface UserEntry {
+  password: string;
+  role: string;
+}
+
+// User registry — for now only admin is supported
+const users: Record<string, UserEntry> = {
+  admin: { password: '', role: 'admin' }, // password set at init
+};
+
+let authTokens: Map<string, TokenEntry> = new Map();
 let authEnabled = true;
 let authPassword = '';
 
@@ -24,12 +47,21 @@ export function generateToken(): string {
 export function loadAuthTokens() {
   try {
     if (existsSync(AUTH_TOKENS_FILE)) {
-      const data = JSON.parse(readFileSync(AUTH_TOKENS_FILE, 'utf-8'));
-      authTokens = new Map(Object.entries(data).map(([k, v]) => [k, v as number]));
+      const raw = JSON.parse(readFileSync(AUTH_TOKENS_FILE, 'utf-8'));
+      authTokens = new Map();
+      for (const [token, entry] of Object.entries(raw)) {
+        const e = entry as any;
+        // Support old format (number) by migrating to new format
+        if (typeof e === 'number') {
+          authTokens.set(token, { expiry: e, user: 'admin' });
+        } else if (e && typeof e === 'object' && typeof e.expiry === 'number') {
+          authTokens.set(token, { expiry: e.expiry, user: e.user || 'admin' });
+        }
+      }
       // Prune expired tokens
       const now = Date.now();
-      for (const [token, expiry] of authTokens) {
-        if (expiry < now) authTokens.delete(token);
+      for (const [token, entry] of authTokens) {
+        if (entry.expiry < now) authTokens.delete(token);
       }
       saveAuthTokens();
     }
@@ -43,7 +75,12 @@ export function saveAuthTokens() {
   try {
     const dir = dirname(AUTH_TOKENS_FILE);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(AUTH_TOKENS_FILE, JSON.stringify(Object.fromEntries(authTokens)), 'utf-8');
+    const data = Object.fromEntries(
+      [...authTokens.entries()].map(([token, entry]) => [token, { expiry: entry.expiry, user: entry.user }])
+    );
+    const tmp = join(dir, `.auth-tmp-${randomUUID()}`);
+    writeFileSync(tmp, JSON.stringify(data), 'utf-8');
+    renameSync(tmp, AUTH_TOKENS_FILE);
   } catch (err) {
     console.error('[autere] Failed to save auth tokens:', err);
   }
@@ -60,22 +97,49 @@ export function parseCookies(header: string): Record<string, string> {
   return cookies;
 }
 
-// ── Auth checking ──
+// ── Token lookup ──
 
-export function checkAuth(req: IncomingMessage): boolean {
-  if (!authEnabled) return true;
+function findValidToken(req: IncomingMessage): TokenEntry | null {
   const now = Date.now();
   // Check cookie
   const cookies = parseCookies(req.headers.cookie || '');
   const cookieToken = cookies['autere-token'];
-  if (cookieToken && authTokens.has(cookieToken) && (authTokens.get(cookieToken) || 0) > now) return true;
+  if (cookieToken) {
+    const entry = authTokens.get(cookieToken);
+    if (entry && entry.expiry > now) return entry;
+  }
   // Check Authorization header
   const auth = req.headers.authorization;
   if (auth?.startsWith('Bearer ')) {
     const token = auth.slice(7);
-    if (authTokens.has(token) && (authTokens.get(token) || 0) > now) return true;
+    const entry = authTokens.get(token);
+    if (entry && entry.expiry > now) return entry;
   }
-  return false;
+  return null;
+}
+
+// ── Auth checking ──
+
+export function checkAuth(req: IncomingMessage): boolean {
+  if (!authEnabled) return true;
+  return findValidToken(req) !== null;
+}
+
+/** Get the authenticated user from the request, or null */
+export function getUser(req: IncomingMessage): string | null {
+  if (!authEnabled) return 'admin'; // default user when auth is disabled
+  const entry = findValidToken(req);
+  return entry?.user || null;
+}
+
+/** Get the role for a user */
+export function getUserRole(user: string): string {
+  return users[user]?.role || 'user';
+}
+
+/** Check if a user has a specific role */
+export function hasRole(user: string, role: string): boolean {
+  return getUserRole(user) === role;
 }
 
 export function requireAuth(req: IncomingMessage, res: ServerResponse): boolean {
@@ -94,6 +158,8 @@ export function resolveAuth(pi: { getFlag: (name: string) => any }) {
   if (authEnabled && !authPassword) {
     throw new Error('[autere] Authentication is enabled but no password was provided. Set --monitor-password or PI_MONITOR_PASSWORD environment variable, or disable with --monitor-auth false');
   }
+  // Set admin password
+  if (users.admin) users.admin.password = authPassword;
   loadAuthTokens();
   if (!authEnabled) {
     console.log('[autere] Authentication disabled (--monitor-auth false)');
@@ -106,8 +172,9 @@ export function getAuthEnabled(): boolean {
   return authEnabled;
 }
 
-export function addAuthToken(token: string) {
-  authTokens.set(token, Date.now() + AUTH_TOKEN_EXPIRY_MS);
+/** Add auth token for a user */
+export function addAuthToken(token: string, user: string) {
+  authTokens.set(token, { expiry: Date.now() + AUTH_TOKEN_EXPIRY_MS, user });
 }
 
 export function removeAuthToken(token: string) {
@@ -120,4 +187,35 @@ export function getAuthTokenExpiry(): number {
 
 export function getAuthPassword(): string {
   return authPassword;
+}
+
+// ── Last session per user ──
+
+const LAST_SESSION_FILE = join(PI_DIR, 'monitor-last-session.json');
+
+export function getLastSession(user: string): string | null {
+  try {
+    if (existsSync(LAST_SESSION_FILE)) {
+      const data = JSON.parse(readFileSync(LAST_SESSION_FILE, 'utf-8'));
+      return data[user] || null;
+    }
+  } catch {}
+  return null;
+}
+
+export function setLastSession(user: string, sessionFile: string): void {
+  try {
+    let data: Record<string, string> = {};
+    if (existsSync(LAST_SESSION_FILE)) {
+      data = JSON.parse(readFileSync(LAST_SESSION_FILE, 'utf-8'));
+    }
+    data[user] = sessionFile;
+    const dir = dirname(LAST_SESSION_FILE);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const tmp = join(dir, `.last-session-tmp-${randomUUID()}`);
+    writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+    renameSync(tmp, LAST_SESSION_FILE);
+  } catch (err) {
+    console.error('[autere] Failed to save last session:', err);
+  }
 }

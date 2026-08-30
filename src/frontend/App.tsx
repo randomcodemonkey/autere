@@ -30,7 +30,7 @@ function Dashboard() {
   const navigate = useNavigate();
 
   // Auth
-  const { authenticated, authEnabled, loginError, checkAuthStatus, login, logout } = useAuth();
+  const { authenticated, authEnabled, loginError, userRole, username, checkAuthStatus, login, logout } = useAuth();
   const [authChecked, setAuthChecked] = useState(false);
 
   // Session state
@@ -291,8 +291,8 @@ function Dashboard() {
     }
   }, [authenticated, sessionState.sessionId, urlSessionId, navigate]);
 
-  const handleLogin = useCallback(async (password: string): Promise<boolean> => {
-    const success = await login(password);
+  const handleLogin = useCallback(async (user: string, password: string): Promise<boolean> => {
+    const success = await login(user, password);
     if (success) {
       setShowLoginScreen(false);
     }
@@ -307,12 +307,22 @@ function Dashboard() {
 
   const handleRestart = useCallback(async () => {
     setRestarting(true);
-    // Disconnect SSE so it doesn't auto-reconnect to the dying backend
-    sseDisconnect();
     try {
       await fetch(url('/api/restart'), { method: 'POST' });
     } catch (err) {
       console.error('Restart error:', err);
+    }
+    // SSE stays connected - the backend sends updated state when pi process is ready
+  }, []);
+
+  const handleRestartBackend = useCallback(async () => {
+    if (!confirm('Restart the entire autere backend? All users will be disconnected.')) return;
+    setRestarting(true);
+    sseDisconnect();
+    try {
+      await fetch(url('/api/restart-backend'), { method: 'POST' });
+    } catch (err) {
+      console.error('Restart backend error:', err);
     }
     // Wait for the backend to fully restart, then reconnect SSE
     setTimeout(() => {
@@ -415,10 +425,13 @@ function Dashboard() {
         open={showStatusModal}
         statusType={statusType}
         statusText={statusText}
+        username={username}
         onClose={() => setShowStatusModal(false)}
         onRestart={handleRestart}
+        onRestartBackend={handleRestartBackend}
         onLogout={handleLogout}
         restarting={restarting}
+        userRole={userRole}
       />
 
       <SessionModal

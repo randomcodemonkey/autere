@@ -1084,6 +1084,25 @@ body {
 }
 
 // -- Tools ----------------------------------------------------------------------
+.tool-active-count,
+.tool-recent-count {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.5rem;
+  margin-left: 0.4rem;
+  font-weight: 500;
+}
+
+.tool-active-count {
+  background: #1a3a2a;
+  color: #4ade80;
+}
+
+.tool-recent-count {
+  background: #2a2a2a;
+  color: #888;
+}
+
 .tool-list {
   display: flex;
   flex-wrap: wrap;
@@ -1366,6 +1385,12 @@ body {
   }
 }
 
+.modal-username {
+  font-size: 0.9rem;
+  color: #bbb;
+  margin-bottom: 0.5rem;
+}
+
 .modal-detail-row {
   display: flex;
   justify-content: space-between;
@@ -1564,6 +1589,9 @@ body {
 }
 
 .session-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   padding: 0.45rem 0.6rem;
   border-radius: 0.4rem;
   cursor: pointer;
@@ -1588,6 +1616,11 @@ body {
       background: transparent;
     }
   }
+}
+
+.session-item-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .session-item-header {
@@ -1637,6 +1670,24 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-top: 0.15rem;
+}
+
+.session-delete-btn {
+  flex-shrink: 0;
+  background: #3b1216;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.65rem;
+  padding: 0.25rem 0.4rem;
+  line-height: 1;
+  color: #f87171;
+  opacity: 1;
+  transition: background 0.15s;
+}
+
+.session-delete-btn:hover {
+  background: #5c1a1a;
 }
 
 // -- Main App -------------------------------------------------------------------

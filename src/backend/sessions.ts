@@ -1,17 +1,18 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 import { SessionInfo } from './types.js';
-import { PI_DIR } from './constants.js';
 import { availableSessions } from './state.js';
 import { broadcast } from './utils.js';
+
+const SESSIONS_DIR = join(homedir(), '.autere', 'sessions');
 
 // ── Session listing ──
 
 export function readSessions(): void {
   try {
     const sessions: SessionInfo[] = [];
-    const sessionsDir = join(PI_DIR, 'sessions');
-    if (!existsSync(sessionsDir)) {
+    if (!existsSync(SESSIONS_DIR)) {
       availableSessions.length = 0;
       return;
     }
@@ -70,7 +71,7 @@ export function readSessions(): void {
       }
     }
 
-    findJsonlFiles(sessionsDir);
+    findJsonlFiles(SESSIONS_DIR);
     sessions.sort((a, b) => b.lastActivity - a.lastActivity);
 
     const prev = JSON.stringify(availableSessions);
