@@ -1,5 +1,13 @@
 // ── Extension info types ──
 
+/** A generic list section for extension details modal */
+export interface ExtensionSection {
+  /** Section header text */
+  header: string;
+  /** List of objects to display — each object's keys become columns */
+  items: Record<string, any>[];
+}
+
 export interface ExtensionInfo {
   name: string;
   displayName: string;
@@ -7,6 +15,8 @@ export interface ExtensionInfo {
   hasConfig: boolean;
   status: string;
   details: Record<string, any>;
+  /** Optional sections for the details modal (generic list-of-objects view) */
+  sections?: ExtensionSection[];
 }
 
 /** A handler for a named extension that can provide custom status logic. */

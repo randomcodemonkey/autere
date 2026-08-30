@@ -36,7 +36,7 @@ describe('SessionModal', () => {
       <SessionModal
         open={true}
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         currentSessionId="session-123"
         currentSessionName="Test Session"
         onClose={cy.stub()}
@@ -55,7 +55,7 @@ describe('SessionModal', () => {
       <SessionModal
         open={true}
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         currentSessionId="session-123"
         currentSessionName="Test Session"
         onClose={cy.stub()}
@@ -74,7 +74,7 @@ describe('SessionModal', () => {
       <SessionModal
         open={true}
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         currentSessionId="session-123"
         currentSessionName="Test Session"
         onClose={cy.stub()}
@@ -94,7 +94,7 @@ describe('SessionModal', () => {
       <SessionModal
         open={true}
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         currentSessionId="session-123"
         currentSessionName="Test Session"
         onClose={cy.stub()}
@@ -113,7 +113,7 @@ describe('SessionModal', () => {
       <SessionModal
         open={true}
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         currentSessionId="session-123"
         currentSessionName="Test Session"
         onClose={cy.stub()}
@@ -134,7 +134,7 @@ describe('SessionModal', () => {
       <SessionModal
         open={true}
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         currentSessionId="session-123"
         currentSessionName="Test Session"
         onClose={cy.stub()}
@@ -154,7 +154,7 @@ describe('SessionModal', () => {
       <SessionModal
         open={true}
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         currentSessionId="session-123"
         currentSessionName="Test Session"
         onClose={cy.stub()}
@@ -174,7 +174,7 @@ describe('SessionModal', () => {
       <SessionModal
         open={true}
         statusType="streaming"
-        text="Working"
+        statusText="Working"
         currentSessionId="session-123"
         currentSessionName="Test Session"
         onClose={cy.stub()}
@@ -193,7 +193,7 @@ describe('SessionModal', () => {
       <SessionModal
         open={true}
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         currentSessionId="session-123"
         currentSessionName="Test Session"
         onClose={cy.stub()}
@@ -211,7 +211,7 @@ describe('SessionModal', () => {
       <SessionModal
         open={true}
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         currentSessionId="session-123"
         currentSessionName="Test Session"
         onClose={cy.stub()}
@@ -233,7 +233,7 @@ describe('SessionModal', () => {
       <SessionModal
         open={true}
         statusType="streaming"
-        text="Working"
+        statusText="Working"
         currentSessionId="session-123"
         currentSessionName="Test Session"
         isActive={true}

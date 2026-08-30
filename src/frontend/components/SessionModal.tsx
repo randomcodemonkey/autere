@@ -124,15 +124,16 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   return (
     <Modal open={open} onClose={onClose} className="modal-session">
       <div className="modal-header">
-        <h3>Session</h3>
+        <h3>
+          Session
+          <span className="modal-header-status">
+            <span className={`connection-dot dot-${statusType === 'connected' ? 'green' : statusType === 'streaming' ? 'yellow' : statusType === 'disconnected' ? 'red' : 'gray'}`} />
+            <span className="modal-header-status-text">{statusText}</span>
+          </span>
+        </h3>
         <button className="modal-close" onClick={onClose}>✕</button>
       </div>
       <div className="modal-body">
-        {/* Current session info */}
-        <div className="modal-status-connection">
-          <span className={`connection-dot dot-${statusType === 'connected' ? 'green' : statusType === 'streaming' ? 'yellow' : statusType === 'disconnected' ? 'red' : 'gray'}`} />
-          <span className="modal-status-text">{statusText}</span>
-        </div>
 
         <div className="modal-section">Current Session</div>
         <div className="session-name-input-row">

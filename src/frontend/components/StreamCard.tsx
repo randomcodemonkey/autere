@@ -283,16 +283,12 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
 
   return (
     <div className={`card stream-card${isStreaming ? ' working' : ''}`}>
-      <div className="card-title">
-        Chat
-        <div className="stream-filters">
-          <button
-            className="stream-toggle fullscreen-toggle"
-            onClick={toggleFullscreen}
-            title={fullscreen ? 'Show cards' : 'Fullscreen chat'}
-          >
-            {fullscreen ? '◁ cards' : '▷ full'}
-          </button>
+      <div className="card-title" onClick={toggleFullscreen} style={{ cursor: 'pointer' }}>
+        <span className="chat-title-group">
+          Chat
+          <span className="chat-collapse-icon">{fullscreen ? '▾' : '▸'}</span>
+        </span>
+        <div className="stream-filters" onClick={(e) => e.stopPropagation()}>
           <button
             className={`stream-toggle${filters.thinking ? ' active' : ''}`}
             onClick={() => toggleFilter('thinking')}

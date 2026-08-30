@@ -10,7 +10,7 @@ interface HeaderProps {
   sessionName: string | null;
   onSessionClick: () => void;
   externalActivity?: boolean;
-  isActive?: boolean; // true when agent is streaming or compacting
+  isActive?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({ statusType, statusText, onStatusClick, sessionId, sessionName, onSessionClick, externalActivity, isActive }) => {

@@ -1,21 +1,16 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import { SessionInfo } from './types.js';
-import { availableSessions } from './state.js';
-import { broadcast } from './utils.js';
+import { PI_DIR } from './constants.js';
 
-const SESSIONS_DIR = join(homedir(), '.autere', 'sessions');
+const SESSIONS_DIR = join(PI_DIR, 'sessions');
 
 // ── Session listing ──
 
-export function readSessions(): void {
+export function readSessions(): SessionInfo[] {
   try {
     const sessions: SessionInfo[] = [];
-    if (!existsSync(SESSIONS_DIR)) {
-      availableSessions.length = 0;
-      return;
-    }
+    if (!existsSync(SESSIONS_DIR)) return sessions;
 
     function findJsonlFiles(dir: string) {
       const entries = readdirSync(dir, { withFileTypes: true });
@@ -73,15 +68,9 @@ export function readSessions(): void {
 
     findJsonlFiles(SESSIONS_DIR);
     sessions.sort((a, b) => b.lastActivity - a.lastActivity);
-
-    const prev = JSON.stringify(availableSessions);
-    availableSessions.length = 0;
-    availableSessions.push(...sessions);
-
-    if (JSON.stringify(sessions) !== prev) {
-      broadcast({ type: 'sessions', data: availableSessions });
-    }
+    return sessions;
   } catch (err) {
     console.error('[autere] Failed to read sessions:', err);
+    return [];
   }
 }

@@ -5,7 +5,6 @@ import { homedir } from 'os';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { StreamEntry, SessionUsageResult } from './types.js';
-import { streamHistory, newSessionCreating, sseClients } from './state.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PI_DIR = join(homedir(), '.pi', 'agent');
@@ -31,21 +30,6 @@ export function filterScopedModels(models: any[]): any[] {
     const ref = `${m.provider}/${m.id}`;
     return enabled.some(pattern => ref === pattern || ref.endsWith('/' + pattern));
   });
-}
-
-// ── SSE broadcast ──
-
-export function broadcast(event: any) {
-  // Suppress stale stream_history while a new session is being created.
-  if (newSessionCreating && event.type === 'stream_history') return;
-  const data = `data: ${JSON.stringify(event)}\n\n`;
-  for (const client of sseClients) {
-    try {
-      client.write(data);
-    } catch {
-      sseClients.delete(client);
-    }
-  }
 }
 
 // ── JSON response ──
@@ -81,77 +65,7 @@ export function getDashboardHTML(basePath: string = ''): string {
   return html;
 }
 
-// ── Stream history dedup ──
-
-export function dedupStreamHistory(): StreamEntry[] {
-  const byKey = new Map<string, StreamEntry>();
-  const order: string[] = [];
-  for (const msg of streamHistory) {
-    if (msg.streaming) {
-      const key = `streaming-${msg.role}-${msg.timestamp || 0}`;
-      byKey.set(key, msg);
-      order.push(key);
-      continue;
-    }
-    // For thinking messages: deduplicate by role + text (keep newest)
-    // For other messages: use role + text + timestamp (each is unique)
-    const isThinking = msg.role === 'thinking';
-    const contentKey = isThinking
-      ? `${msg.role}|${msg.text?.slice(0, 200) || ''}`
-      : `${msg.role}|${msg.text?.slice(0, 200) || ''}|${msg.timestamp || 0}`;
-    const existing = byKey.get(contentKey);
-    if (!existing) {
-      byKey.set(contentKey, msg);
-      order.push(contentKey);
-    } else if (isThinking && (msg.timestamp || 0) > (existing.timestamp || 0)) {
-      // For thinking messages, keep the newest one
-      byKey.set(contentKey, msg);
-    }
-  }
-  return order.map(k => byKey.get(k)!);
-}
-
-// ── Tool args formatting ──
-
-export function formatToolArgs(name: string, args: any): string {
-  if (!args) return '';
-  if (name === 'bash' && args.command) return args.command;
-  if (name === 'read' && args.path) return args.path;
-  if (name === 'write' && args.path) return args.path + (args.content ? ' (' + args.content.length + ' chars)' : '');
-  if (name === 'edit' && args.path) return args.path;
-  if (name === 'find' && args.path) return args.path;
-  if (name === 'ls' && args.path) return args.path;
-  if (name === 'send_wa_message') return (args.jid || args.recipient_jid || '') + ' ' + (args.message || '').slice(0, 50);
-  if (name === 'send_reaction') return (args.jid || '') + ' ' + (args.emoji || '');
-  for (const v of Object.values(args)) {
-    if (typeof v === 'string' && v.length > 0) return v;
-  }
-  return '';
-}
-
 // ── Message extraction ──
-
-export function extractPreview(message: any): string {
-  if (!message.content) return '';
-  if (message.role === 'toolResult') {
-    const toolName = message.toolName || 'tool';
-    const textContent = message.content.find((c: any) => c.type === 'text');
-    const output = textContent?.text || '';
-    const prefix = message.isError ? `[${toolName} error]` : `[${toolName}]`;
-    if (!output) return prefix;
-    const trimmed = output.length > 200 ? output.slice(0, 200) + '...' : output;
-    return prefix + ' ' + trimmed;
-  }
-  const textContent = message.content.find((c: any) => c.type === 'text');
-  if (textContent?.text) {
-    return textContent.text.slice(0, 100) + (textContent.text.length > 100 ? '...' : '');
-  }
-  const types = message.content.map((c: any) => c.type).filter(Boolean);
-  if (types.length > 0) {
-    return '[' + types.join(', ') + ']';
-  }
-  return '[empty]';
-}
 
 export function extractFullText(message: any): string {
   if (!message.content) return '';
@@ -219,14 +133,14 @@ export function readSessionHistory(sessionFile: string, limit: number = 30): Str
           const msg = entry.message;
           const role = msg.role || '';
           if (!role || role === 'model_change') continue;
-          
+
           // Handle toolResult messages - detect edit tool specially
           if (role === 'toolResult') {
             const toolName = msg.toolName || 'tool';
             const textContent = msg.content?.find((c: any) => c.type === 'text');
             const output = textContent?.text || '';
             const isError = msg.isError || false;
-            
+
             if (toolName === 'edit') {
               // Edit tool - use content.text as header, details.diff as body
               const header = output; // e.g. "Successfully replaced 1 block(s) in /path/to/file"

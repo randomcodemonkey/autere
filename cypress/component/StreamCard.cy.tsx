@@ -10,11 +10,10 @@ describe('StreamCard', () => {
 
   it('renders filter buttons and fullscreen toggle', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={cy.stub()} />);
-    cy.get('.stream-toggle').should('have.length', 4);
-    cy.get('.stream-toggle').eq(0).should('contain', 'full');
-    cy.get('.stream-toggle').eq(1).should('contain', 'thinking');
-    cy.get('.stream-toggle').eq(2).should('contain', 'tools');
-    cy.get('.stream-toggle').eq(3).should('contain', 'edits');
+    cy.get('.stream-toggle').should('have.length', 3);
+    cy.get('.stream-toggle').eq(0).should('contain', 'thinking');
+    cy.get('.stream-toggle').eq(1).should('contain', 'tools');
+    cy.get('.stream-toggle').eq(2).should('contain', 'edits');
   });
 
   it('renders user messages', () => {

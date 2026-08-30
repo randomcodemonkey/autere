@@ -1,69 +1,69 @@
 # autere
 
-Real-time web dashboard for monitoring pi agent sessions via the pi extension API.
+Real-time web dashboard for monitoring pi agent sessions via per-user RPC processes.
 
 ![Dashboard](https://img.shields.io/badge/status-stable-green)
 
 ## Features
 
-- **Live Stream** — Real-time message history with markdown rendering for assistant responses
+- **Multi-User Support** — Each user gets their own pi process with isolated state
+- **Live Stream** — Real-time message history with markdown rendering and thinking display
 - **Session Stats** — Messages, requests, input/output tokens, and cost tracking
 - **Context Usage** — Visual progress bar showing context window consumption
-- **Model Info** — Current model and thinking level
+- **Model Info** — Current model with real-time switching
 - **Active Tools** — Tools currently executing with live updates
-- **Recent Tools** — Last 5 completed tool calls with expandable arguments
-- **WhatsApp Status** — Connection state, registered users and groups
-- **Session Reset** — Survives `/new` with automatic state reset and notification
+- **Recent Tools** — Last 5 completed tool calls with expandable arguments (persisted in memory)
+- **Session Management** — Switch sessions, create new ones, delete old ones, rename sessions
+- **Extension Discovery** — Automatic detection of installed pi extensions with status
+- **User Roles** — Admin role with backend restart privileges
+- **Autoscroll** — Smart scrolling with "New messages" button when scrolled up
+- **Fullscreen Chat** — Mobile-optimized chat-only view
+- **Idle Timeout** — Pi processes automatically terminate after configurable idle period
 
 ## Installation
 
-### As a pi extension (recommended)
+### Standalone (recommended)
 
 ```bash
-# Copy to extensions directory
-cp -r /path/to/pi-monitor ~/.pi/agent/extensions/
-
-# Or symlink
-ln -s /path/to/pi-monitor ~/.pi/agent/extensions/pi-monitor
+cd /home/slop/code/pi-monitor
+npm install
+npm start
 ```
 
-### Via settings.json
-
-Add to `~/.pi/agent/settings.json`:
-
-```json
-{
-  "extensions": ["/path/to/pi-monitor"]
-}
-```
-
-### Run with pi directly
+### With custom provider
 
 ```bash
-pi --mode rpc -e /path/to/pi-monitor
+npx tsx src/backend/index.ts --provider 9router --model openrouter/mimo-v2.5-all
 ```
 
 ## Usage
 
-Once loaded, the dashboard is available at **http://localhost:3456** (default port).
+Once started, the dashboard is available at **http://localhost:3456** (default port).
+
+### Login
+
+Default user: `admin` with the password set via `--monitor-password` or `PI_MONITOR_PASSWORD`.
 
 ### Configuration
 
-Set a custom port via pi flag:
-
 ```bash
-pi --flag pi-monitor:port=8080
+npx tsx src/backend/index.ts \
+  --port 3456 \
+  --monitor-auth true \
+  --monitor-password mypassword \
+  --provider 9router \
+  --model openrouter/mimo-v2.5-all \
+  --idle-timeout 30
 ```
 
-Or in `settings.json`:
-
-```json
-{
-  "flags": {
-    "pi-monitor:port": "8080"
-  }
-}
-```
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--port` | 3456 | HTTP server port |
+| `--monitor-auth` | true | Enable/disable authentication |
+| `--monitor-password` | — | Password for login |
+| `--provider` | — | Pi provider |
+| `--model` | — | Pi model ID |
+| `--idle-timeout` | 30 | Minutes before idle pi process is killed |
 
 ## Dashboard
 
@@ -71,166 +71,95 @@ The dashboard shows:
 
 | Section | Description |
 |---------|-------------|
-| **Header** | pi-monitor title, WhatsApp status indicator |
-| **Stats Row** | Messages, Requests, Input Tokens, Output Tokens, Cost |
-| **Model** | Current model name and provider |
+| **Header** | Autere title, connection status indicator, session selector |
+| **Model** | Current model with selector to switch |
+| **Stats** | Messages, Requests, Input/Output Tokens, Cost |
 | **Context Usage** | Token count, context window size, usage percentage bar |
-| **Active Tools** | Tools currently executing (with spinner) |
-| **WhatsApp** | Connection status, registered users and groups |
-| **Recent Tools** | Last 5 completed tool calls (click to expand arguments) |
-| **Live Stream** | Real-time message history with role labels |
+| **Tools** | Active tools (with spinner) + last 5 completed tools |
+| **Extensions** | Installed extensions with connection status |
+| **Chat Stream** | Real-time message history with role labels |
+| **Chat Input** | Message input with send button |
 
-### Live Stream Roles
+### Chat Stream Roles
 
-| Role | Color | Description |
-|------|-------|-------------|
-| `user` | Yellow | User messages |
-| `assistant` | Blue | Assistant responses (rendered as markdown) |
-| `thinking` | Purple italic | Model reasoning/thinking |
-| `tool` | Purple | Tool execution requests |
-| `toolResult` | Purple | Tool execution results |
-| `system` | Gray italic | System messages (e.g., "Session cleared") |
+| Role | Description |
+|------|-------------|
+| `user` | User messages |
+| `assistant` | Assistant responses (rendered as markdown) |
+| `thinking` | Model reasoning/thinking |
+| `toolResult` | Tool execution results |
+| `edit` | File edit diffs (colored) |
+| `system` | System messages (e.g., "Session cleared") |
 
 ## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Dashboard UI (HTML) |
-| `/events` | GET | SSE stream of real-time events |
+| `/` | GET | Dashboard UI |
+| `/events` | GET | SSE stream (user-scoped) |
+| `/api/auth/login` | POST | Login (user + password) |
+| `/api/auth/logout` | POST | Logout |
+| `/api/auth/status` | GET | Auth status + user role |
 | `/api/state` | GET | Current session state |
 | `/api/stats` | GET | Token usage statistics |
 | `/api/messages` | GET | Recent messages |
-| `/api/tools` | GET | Active tool executions |
-| `/api/whatsapp` | GET | WhatsApp connection state |
-
-### Response Format
-
-All `/api/*` endpoints return:
-
-```json
-{
-  "success": true,
-  "data": { ... }
-}
-```
-
-### `GET /api/state`
-
-```json
-{
-  "model": { "provider": "anthropic", "id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4" },
-  "thinkingLevel": "off",
-  "isStreaming": false,
-  "messageCount": 42,
-  "requestCount": 15,
-  "connected": true
-}
-```
-
-### `GET /api/stats`
-
-```json
-{
-  "tokens": { "input": 125000, "output": 45000, "cacheRead": 10000, "cacheWrite": 2000 },
-  "cost": 0.85,
-  "contextUsage": { "tokens": 50000, "contextWindow": 200000, "percent": 25 }
-}
-```
-
-### `GET /api/messages`
-
-Returns array of recent messages:
-
-```json
-[
-  { "role": "user", "timestamp": 1234567890, "preview": "Hello, how are you?" },
-  { "role": "assistant", "timestamp": 1234567891, "preview": "I'm doing well, thanks!" }
-]
-```
-
-### `GET /api/tools`
-
-Returns currently active tool executions:
-
-```json
-[
-  { "id": "tool_123", "name": "bash", "cmd": "ls -la", "startedAt": 1234567890 }
-]
-```
-
-### `GET /api/whatsapp`
-
-```json
-{
-  "connected": true,
-  "users": ["+1234567890"],
-  "groups": ["Project Team"]
-}
-```
+| `/api/tools` | GET | Active + recent tools |
+| `/api/extensions` | GET | Installed extensions |
+| `/api/models` | GET | Available models |
+| `/api/set-model` | POST | Switch model |
+| `/api/sessions` | GET | List sessions |
+| `/api/sessions/switch-by-id` | POST | Switch session by ID |
+| `/api/sessions/delete` | POST | Delete session |
+| `/api/new-session` | POST | Create new session |
+| `/api/session-name` | POST | Rename session |
+| `/api/send` | POST | Send message |
+| `/api/abort` | POST | Abort current operation |
+| `/api/compact` | POST | Compact context |
+| `/api/restart` | POST | Restart user's pi process |
+| `/api/restart-backend` | POST | Restart entire backend (admin only) |
 
 ## SSE Events
 
-Connect to `/events` for real-time updates:
+| Type | Description |
+|------|-------------|
+| `status` | Session state update |
+| `stats` | Token/cost update |
+| `stream_history` | Chat messages (last 50) |
+| `tool_start` | Tool started |
+| `tool_end` | Tool completed (includes recentTools) |
+| `models` | Available models list |
+| `sessions` | Available sessions list |
+| `extensions` | Extension status updates |
+| `navigate` | Frontend navigation command |
+| `heartbeat` | Keep-alive (every 3s) |
+| `new_session_creating` | New session being created |
 
-```javascript
-const events = new EventSource('http://localhost:3456/events');
+## Architecture
 
-events.onmessage = (e) => {
-  const { type, data } = JSON.parse(e.data);
-  // Handle event
-};
-```
+- **Standalone server** — Node.js HTTP server with per-user pi RPC processes
+- **Frontend** — React + Vite SPA served from `dist/`
+- **State** — Per-user in-memory state, global extensions/sessions
+- **Auth** — Token-based with user roles, atomic file writes
 
-### Event Types
+## Data Files
 
-| Type | Description | Data |
-|------|-------------|------|
-| `status` | Session state update | `sessionState` |
-| `stats` | Token/cost update | `sessionStats` |
-| `message` | New message | `message` object |
-| `stream_history` | Live stream update | Array of last 10 messages |
-| `tool_start` | Tool started | `{ id, name, cmd }` |
-| `tool_end` | Tool completed | `{ id, name, isError, cmd, recentTools }` |
-| `whatsapp` | WhatsApp state | `whatsappState` |
-
-### Stream History Format
-
-Each entry in `stream_history`:
-
-```json
-{
-  "role": "assistant",
-  "text": "The response content...",
-  "streaming": false
-}
-```
-
-### Recent Tools (from `tool_end`)
-
-The `recentTools` array in `tool_end` events contains the last 5 completed tool calls:
-
-```json
-[
-  { "name": "bash", "isError": false, "timestamp": 1234567890, "args": { "command": "ls -la" } },
-  { "name": "read", "isError": false, "timestamp": 1234567891, "args": { "path": "/etc/hosts" } }
-]
-```
-
-This is also available via `GET /api/tools` for the currently active (running) tools.
+| File | Description |
+|------|-------------|
+| `~/.pi/agent/monitor-auth-tokens.json` | Auth tokens |
+| `~/.pi/agent/monitor-last-session.json` | Last session per user |
+| `~/.autere/sessions/` | Session files |
+| `~/.autere/deleted-sessions/` | Deleted sessions |
 
 ## Development
 
 ```bash
 npm install
-npm run dev        # Run with tsx
+npm run dev        # Run frontend + backend concurrently
 npm run typecheck  # Type check
+npm run build      # Build frontend to dist/
+npm test           # Run component tests
+npm run test:e2e   # Run e2e tests
 ```
-
-## Architecture
-
-- **Extension** (`src/index.ts`) — Subscribes to pi events, manages state, serves HTTP/SSE
-- **Dashboard** (`public/index.html`) — Single-file HTML/CSS/JS, no build step required
-- **State** — In-memory, reset on session change (`/new`, `/resume`)
 
 ## License
 

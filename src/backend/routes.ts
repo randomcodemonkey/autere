@@ -10,11 +10,11 @@ import { join, dirname, basename } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { ProcessManager } from './process-manager.js';
-import { getUser, getUserRole, hasRole, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getAuthPassword, setLastSession } from './auth.js';
+import { getUser, getUserRole, hasRole, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getAuthPassword, getTokenFromRequest, setLastSession } from './auth.js';
 import { readExtensions } from './extensions.js';
 import { readSessions } from './sessions.js';
 import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filterScopedModels } from './utils.js';
-import { extensionsState, availableSessions as globalAvailableSessions } from './state.js';
+import { extensionsState, availableSessions } from './state.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -163,24 +163,25 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     // ── Require auth for all API / SSE endpoints ──
     if (requireAuth(req, res)) return;
 
-    // ── Get user and their session ──
+    // ── Get token and their session ──
+    const token = getTokenFromRequest(req);
     const user = getUser(req);
-    if (!user) {
+    if (!token || !user) {
       sendJSON(res, { success: false, error: 'No user' }, 401);
       return;
     }
 
-    // Ensure user has a pi process running
+    // Ensure user has a pi process running (keyed by token)
     let session: import('./user-session.js').UserSession;
     try {
-      session = await pm.getOrCreate(user);
+      session = await pm.getOrCreate(token, user);
     } catch (err) {
       sendJSON(res, { success: false, error: `Failed to start pi process: ${err}` }, 500);
       return;
     }
 
     const { sessionState, sessionStats, streamHistory, recentMessages, activeTools, recentTools,
-            availableModels, availableSessions, extensionsState } = session.state;
+            availableModels } = session.state;
     const rpc = session.rpc;
 
     // ── API endpoints ──
@@ -247,8 +248,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
 
     if (url.pathname === '/api/restart' && req.method === 'POST') {
       try {
-        await pm.terminate(user);
-        session = await pm.getOrCreate(user);
+        await pm.terminate(token);
+        session = await pm.getOrCreate(token, user);
         sendJSON(res, { success: true });
       } catch (err) {
         sendJSON(res, { success: false, error: `Failed to restart pi process: ${err}` }, 500);
@@ -267,8 +268,12 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     }
 
     if (url.pathname === '/api/abort' && req.method === 'POST') {
-      try { await rpc.abort(); sendJSON(res, { success: true }); }
-      catch (err) { sendJSON(res, { success: false, error: `Failed to abort: ${err}` }); }
+      try {
+        await rpc.abort();
+        sendJSON(res, { success: true });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to abort: ${err}` });
+      }
       return;
     }
 
@@ -372,18 +377,20 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           sessionStats.cost = 0;
           sessionStats.contextUsage = null;
 
-          try {
-            const rpcStats = await rpc.getSessionStats();
-            if (rpcStats.contextUsage) sessionStats.contextUsage = rpcStats.contextUsage;
-            if (rpcStats.cost) sessionStats.cost = rpcStats.cost;
-          } catch {}
-
           session.broadcast({ type: 'status', data: { ...sessionState } });
           session.broadcast({ type: 'stats', data: { ...sessionStats } });
           session.broadcast({ type: 'stream_history', data: dedupHistory(streamHistory).slice(-50) });
 
           await rpc.switchSession(sess.sessionFile);
-          setLastSession(user, sess.sessionFile);
+          setLastSession(token, sess.sessionFile);
+
+          // Fetch stats AFTER switch so contextUsage reflects the new session
+          try {
+            const rpcStats = await rpc.getSessionStats();
+            if (rpcStats.contextUsage) sessionStats.contextUsage = rpcStats.contextUsage;
+            if (rpcStats.cost) sessionStats.cost = rpcStats.cost;
+            session.broadcast({ type: 'stats', data: { ...sessionStats } });
+          } catch {}
           sendJSON(res, { success: true });
         } catch (err) {
           sendJSON(res, { success: false, error: `Failed to switch session: ${err}` }, 500);
@@ -425,13 +432,23 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           sessionState.requestCount = fileStats.requestCount;
           sessionStats.tokens = fileStats.tokens;
           sessionStats.cost = 0;
+          sessionStats.contextUsage = null;
 
           session.broadcast({ type: 'status', data: { ...sessionState } });
           session.broadcast({ type: 'stats', data: { ...sessionStats } });
           session.broadcast({ type: 'stream_history', data: dedupHistory(streamHistory).slice(-50) });
 
           await rpc.switchSession(sessionFile);
-          setLastSession(user, sessionFile);
+          setLastSession(token, sessionFile);
+
+          // Fetch stats AFTER switch so contextUsage reflects the new session
+          try {
+            const rpcStats = await rpc.getSessionStats();
+            if (rpcStats.contextUsage) sessionStats.contextUsage = rpcStats.contextUsage;
+            if (rpcStats.cost) sessionStats.cost = rpcStats.cost;
+            session.broadcast({ type: 'stats', data: { ...sessionStats } });
+          } catch {}
+
           sendJSON(res, { success: true });
         } catch (err) {
           sendJSON(res, { success: false, error: `Failed to switch session: ${err}` }, 500);
@@ -468,7 +485,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
         if (state.sessionId) sessionState.sessionId = state.sessionId;
         if (state.sessionFile) {
           sessionState.sessionFile = state.sessionFile;
-          setLastSession(user, state.sessionFile);
+          setLastSession(token, state.sessionFile);
         }
         sessionState.sessionName = state.sessionName || null;
         sessionState.isStreaming = state.isStreaming;
@@ -579,6 +596,12 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       });
       res.write(`data: ${JSON.stringify({ type: 'stream_history', data: dedupHistory(streamHistory).slice(-50) })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: 'tool_end', data: { id: null, recentTools } })}\n\n`);
+      // Log extensions being sent
+      for (const ext of extensionsState) {
+        if (ext.sections) {
+          console.log(`[autere] SSE: sending extension ${ext.name} with ${ext.sections.length} sections`);
+        }
+      }
       res.write(`data: ${JSON.stringify({ type: 'extensions', data: extensionsState })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: 'models', data: availableModels })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: 'sessions', data: availableSessions })}\n\n`);
@@ -591,34 +614,37 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
 
   // ── Periodic polling for extensions and sessions (global) ──
   readExtensions();
-  readSessions();
+  availableSessions.length = 0;
+  availableSessions.push(...readSessions());
   sessionRefreshInterval = setInterval(async () => {
     const prevExt = JSON.stringify(extensionsState);
     await readExtensions();
     if (JSON.stringify(extensionsState) !== prevExt) {
-      // Broadcast to all users
-      for (const user of pm.activeUsers()) {
-        const session = pm.get(user);
+      // Broadcast to all sessions
+      for (const token of pm.activeTokens()) {
+        const session = pm.get(token);
         if (session) {
           session.state.extensionsState = [...extensionsState];
           session.broadcast({ type: 'extensions', data: extensionsState });
         }
       }
     }
-    readSessions();
-    // Update all user sessions with new session list
-    for (const user of pm.activeUsers()) {
-      const session = pm.get(user);
+    const newSessions = readSessions();
+    availableSessions.length = 0;
+    availableSessions.push(...newSessions);
+    // Update all sessions with new session list
+    for (const token of pm.activeTokens()) {
+      const session = pm.get(token);
       if (session) {
-        session.state.availableSessions = [...globalAvailableSessions];
+        session.state.availableSessions = [...availableSessions];
       }
     }
   }, 2000);
 
   // ── Heartbeat ──
   const heartbeatInterval = setInterval(() => {
-    for (const user of pm.activeUsers()) {
-      const session = pm.get(user);
+    for (const token of pm.activeTokens()) {
+      const session = pm.get(token);
       if (session) session.broadcast({ type: 'heartbeat', data: { ts: Date.now() } });
     }
   }, 3000);

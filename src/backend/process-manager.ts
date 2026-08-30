@@ -1,7 +1,8 @@
 /**
- * Process manager — manages per-user pi process instances.
+ * Process manager — manages per-token pi process instances.
  *
- * Spawns a pi process when a user logs in, terminates idle ones.
+ * Each auth token gets its own pi process, so multiple browser tabs
+ * for the same user operate independently.
  */
 
 import { UserSession } from './user-session.js';
@@ -23,9 +24,9 @@ export class ProcessManager {
     this.defaultIdleTimeoutMs = options.idleTimeoutMs || 30 * 60 * 1000; // 30 min default
   }
 
-  /** Get or create a session for a user */
-  async getOrCreate(user: string): Promise<UserSession> {
-    let session = this.sessions.get(user);
+  /** Get or create a session for a token */
+  async getOrCreate(token: string, user: string): Promise<UserSession> {
+    let session = this.sessions.get(token);
     if (session && session.isRunning) {
       session.touch();
       return session;
@@ -33,57 +34,57 @@ export class ProcessManager {
 
     // Stop old session if it exists but isn't running
     if (session) {
-      this.sessions.delete(user);
+      this.sessions.delete(token);
     }
 
     // Create new session
-    session = new UserSession(user, {
+    session = new UserSession(token, user, {
       provider: this.options.provider,
       model: this.options.model,
       args: this.options.args,
     }, this.defaultIdleTimeoutMs);
 
     session.onIdle(() => {
-      console.log(`[autere] Terminating idle session for user "${user}"`);
-      this.terminate(user);
+      console.log(`[autere] Terminating idle session for token "${token.slice(0, 8)}..."`);
+      this.terminate(token);
     });
 
-    this.sessions.set(user, session);
+    this.sessions.set(token, session);
 
     try {
       await session.start();
     } catch (err) {
-      console.error(`[autere] Failed to start pi process for user "${user}":`, err);
-      this.sessions.delete(user);
+      console.error(`[autere] Failed to start pi process for token "${token.slice(0, 8)}...":`, err);
+      this.sessions.delete(token);
       throw err;
     }
 
     return session;
   }
 
-  /** Get an existing session for a user (returns null if not found) */
-  get(user: string): UserSession | undefined {
-    return this.sessions.get(user);
+  /** Get an existing session for a token (returns undefined if not found) */
+  get(token: string): UserSession | undefined {
+    return this.sessions.get(token);
   }
 
-  /** Terminate a user's session */
-  async terminate(user: string): Promise<void> {
-    const session = this.sessions.get(user);
+  /** Terminate a token's session */
+  async terminate(token: string): Promise<void> {
+    const session = this.sessions.get(token);
     if (!session) return;
-    this.sessions.delete(user);
+    this.sessions.delete(token);
     await session.stop();
   }
 
   /** Terminate all sessions */
   async terminateAll(): Promise<void> {
-    const users = [...this.sessions.keys()];
-    for (const user of users) {
-      await this.terminate(user);
+    const tokens = [...this.sessions.keys()];
+    for (const token of tokens) {
+      await this.terminate(token);
     }
   }
 
-  /** List active users */
-  activeUsers(): string[] {
+  /** List active tokens */
+  activeTokens(): string[] {
     return [...this.sessions.keys()];
   }
 }

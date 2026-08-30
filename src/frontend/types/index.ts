@@ -56,6 +56,11 @@ export interface RecentTool {
   args: any;
 }
 
+export interface ExtensionSection {
+  header: string;
+  items: Record<string, any>[];
+}
+
 export interface ExtensionInfo {
   name: string;
   displayName: string;
@@ -63,6 +68,7 @@ export interface ExtensionInfo {
   hasConfig: boolean;
   status: string;
   details: Record<string, any>;
+  sections?: ExtensionSection[];
 }
 
 export interface AvailableModel {

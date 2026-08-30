@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useCardState } from '../hooks/useCardState';
 import { Modal } from './Modal';
 import type { ExtensionInfo } from '../types';
+import type { ExtensionSection } from '../types';
 
 interface ExtensionsCardProps {
   extensions: ExtensionInfo[];
@@ -13,7 +14,9 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
 
   const openModal = (idx: number) => {
     const ext = extensions[idx];
-    if (ext && ext.hasConfig && Object.keys(ext.details || {}).length > 0) {
+    const hasContent = (ext.hasConfig && Object.keys(ext.details || {}).length > 0)
+      || (ext.sections && ext.sections.length > 0);
+    if (hasContent) {
       setModalIdx(idx);
     }
   };
@@ -48,7 +51,8 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
             <div className="ext-empty">No extensions loaded</div>
           ) : (
             extensions.map((ext, i) => {
-              const hasDetails = ext.hasConfig && Object.keys(ext.details || {}).length > 0;
+              const hasDetails = (ext.hasConfig && Object.keys(ext.details || {}).length > 0)
+                || (ext.sections && ext.sections.length > 0);
               const dotClass = ext.status === 'connected' ? 'dot-green'
                 : ext.status === 'error' ? 'dot-red'
                 : 'dot-gray';
@@ -91,6 +95,27 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
               </div>
             ))
           }
+          {modalExt && modalExt.sections && modalExt.sections.map((section: ExtensionSection, si: number) => (
+            <div key={si} className="ext-section">
+              <div className="ext-section-header">{section.header}</div>
+              {section.items.length === 0 ? (
+                <div className="ext-section-empty">No data</div>
+              ) : (
+                <div className="ext-section-list">
+                  {section.items.map((item: Record<string, any>, ii: number) => (
+                    <div key={ii} className="ext-section-item">
+                      {Object.entries(item).map(([k, v]) => (
+                        <div key={k} className="ext-section-field">
+                          <span className="ext-section-field-key">{k}</span>
+                          <span className="ext-section-field-val">{String(v ?? '-')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
           {modalExt && modalExt.status === 'error' && modalExt.details?.connectionError && (
             <div className="ext-error-detail">
               <span className="ext-error-label">Error:</span>

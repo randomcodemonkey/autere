@@ -303,6 +303,31 @@ body {
 .dot-gray   { background: #666; }
 .dot-red    { background: #f87171; }
 
+.header-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
+.header-status-text {
+  font-size: 0.7rem;
+  color: #888;
+}
+
+.modal-header-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-left: 0.5rem;
+}
+
+.modal-header-status-text {
+  font-size: 0.7rem;
+  color: #888;
+}
+
 // -- Container ------------------------------------------------------------------
 .container {
   width: 100%;
@@ -410,35 +435,6 @@ body {
     min-height: 400px;
   }
 
-  // Full-screen chat mode: hides other cards, chat takes full container
-  .container.chat-fullscreen {
-    padding: 0;
-
-    .cards-scroll {
-      display: none;
-    }
-
-    .chat-wrapper {
-      flex: 1;
-      min-height: 0;
-    }
-
-    .stream-card {
-      min-height: 0;
-      height: 100%;
-      border-radius: 0;
-      border-color: transparent;
-    }
-
-    .stream-box {
-      font-size: 0.7rem;
-    }
-
-    .chat-input {
-      font-size: 0.8rem;
-    }
-  }
-
   // Smaller chat font on mobile
   .stream-box {
     font-size: 0.7rem;
@@ -472,15 +468,39 @@ body {
   }
 }
 
-// Hide fullscreen toggle on desktop, show only on mobile
-.fullscreen-toggle {
-  display: none;
+// Full-screen chat mode: hides other cards, chat takes full container
+.container.chat-fullscreen {
+  padding: 0;
+
+  .cards-scroll {
+    display: none;
+  }
+
+  .chat-wrapper {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .stream-card {
+    min-height: 0;
+    height: 100%;
+    border-radius: 0 0 0.75rem 0.75rem;
+    border-color: transparent;
+  }
 }
 
-@media (max-width: 768px) {
-  .fullscreen-toggle {
-    display: inline-flex;
-  }
+// Hide fullscreen toggle on desktop, show only on mobile
+.chat-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.chat-collapse-icon {
+  font-size: 1.2rem;
+  color: #888;
+  line-height: 1;
+  vertical-align: middle;
 }
 
 // -- Stats ----------------------------------------------------------------------
@@ -1271,6 +1291,63 @@ body {
   word-break: break-word;
 }
 
+// Extension detail sections (generic list-of-objects view)
+.ext-section {
+  margin-top: 0.8rem;
+}
+
+.ext-section-header {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.4rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid #333;
+}
+
+.ext-section-empty {
+  color: #666;
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.ext-section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.ext-section-item {
+  background: #1a1a1a;
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.8rem;
+}
+
+.ext-section-field {
+  display: flex;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  min-width: 0;
+}
+
+.ext-section-field-key {
+  color: #666;
+  flex-shrink: 0;
+}
+
+.ext-section-field-val {
+  color: #ccc;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  word-break: break-all;
+}
+
 // -- Modals ---------------------------------------------------------------------
 .modal-overlay {
   display: none;
@@ -1385,10 +1462,24 @@ body {
   }
 }
 
+.modal-user-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
 .modal-username {
   font-size: 0.9rem;
-  color: #bbb;
-  margin-bottom: 0.5rem;
+  color: #ddd;
+}
+
+.modal-role {
+  font-size: 0.7rem;
+  color: #888;
+  background: #2a2a2a;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.75rem;
 }
 
 .modal-detail-row {

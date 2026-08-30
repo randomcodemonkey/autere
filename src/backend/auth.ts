@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from '
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
-import { AUTH_TOKENS_FILE, AUTH_TOKEN_EXPIRY_MS, PI_DIR } from './constants.js';
+import { AUTH_TOKENS_FILE, AUTH_TOKEN_EXPIRY_MS } from './constants.js';
 
 // ── Auth state ──
 
@@ -125,6 +125,27 @@ export function checkAuth(req: IncomingMessage): boolean {
   return findValidToken(req) !== null;
 }
 
+/** Get the auth token from the request, or null */
+export function getTokenFromRequest(req: IncomingMessage): string | null {
+  if (!authEnabled) return 'noauth'; // single session when auth is disabled
+  const now = Date.now();
+  // Check cookie
+  const cookies = parseCookies(req.headers.cookie || '');
+  const cookieToken = cookies['autere-token'];
+  if (cookieToken) {
+    const entry = authTokens.get(cookieToken);
+    if (entry && entry.expiry > now) return cookieToken;
+  }
+  // Check Authorization header
+  const auth = req.headers.authorization;
+  if (auth?.startsWith('Bearer ')) {
+    const token = auth.slice(7);
+    const entry = authTokens.get(token);
+    if (entry && entry.expiry > now) return token;
+  }
+  return null;
+}
+
 /** Get the authenticated user from the request, or null */
 export function getUser(req: IncomingMessage): string | null {
   if (!authEnabled) return 'admin'; // default user when auth is disabled
@@ -189,27 +210,27 @@ export function getAuthPassword(): string {
   return authPassword;
 }
 
-// ── Last session per user ──
+// ── Last session per token (each login session tracks its own) ──
 
-const LAST_SESSION_FILE = join(PI_DIR, 'monitor-last-session.json');
+const LAST_SESSION_FILE = join(homedir(), '.autere', 'monitor-last-session.json');
 
-export function getLastSession(user: string): string | null {
+export function getLastSession(token: string): string | null {
   try {
     if (existsSync(LAST_SESSION_FILE)) {
       const data = JSON.parse(readFileSync(LAST_SESSION_FILE, 'utf-8'));
-      return data[user] || null;
+      return data[token] || null;
     }
   } catch {}
   return null;
 }
 
-export function setLastSession(user: string, sessionFile: string): void {
+export function setLastSession(token: string, sessionFile: string): void {
   try {
     let data: Record<string, string> = {};
     if (existsSync(LAST_SESSION_FILE)) {
       data = JSON.parse(readFileSync(LAST_SESSION_FILE, 'utf-8'));
     }
-    data[user] = sessionFile;
+    data[token] = sessionFile;
     const dir = dirname(LAST_SESSION_FILE);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const tmp = join(dir, `.last-session-tmp-${randomUUID()}`);

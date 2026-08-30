@@ -28,6 +28,8 @@ export interface UserSessionState {
   currentStreamText: string;
   currentStreamRole: string;
   activeStreamIdx: number | null;
+  currentThinkingText: string;
+  isThinking: boolean;
 }
 
 function createInitialState(): UserSessionState {
@@ -63,12 +65,15 @@ function createInitialState(): UserSessionState {
     currentStreamText: '',
     currentStreamRole: '',
     activeStreamIdx: null,
+    currentThinkingText: '',
+    isThinking: false,
   };
 }
 
 // ── UserSession ──
 
 export class UserSession {
+  readonly token: string;
   readonly user: string;
   readonly rpc: MonitorRpcClient;
   readonly state: UserSessionState;
@@ -78,11 +83,12 @@ export class UserSession {
   private _idleTimeoutMs: number;
   private _onIdle: (() => void) | null = null;
 
-  constructor(user: string, rpcOptions: { provider?: string; model?: string; args?: string[] }, idleTimeoutMs: number = 30 * 60 * 1000) {
+  constructor(token: string, user: string, rpcOptions: { provider?: string; model?: string; args?: string[] }, idleTimeoutMs: number = 30 * 60 * 1000) {
+    this.token = token;
     this.user = user;
-    // Resume user's last session if known
+    // Resume this token's last session if known
     const args = [...(rpcOptions.args || [])];
-    const lastSession = getLastSession(user);
+    const lastSession = getLastSession(token);
     if (lastSession && !args.includes('--session') && !args.includes('--continue') && !args.includes('-c')) {
       args.push('--session', lastSession);
     }
@@ -303,39 +309,64 @@ export class UserSession {
 
   private handleMessageUpdate(event: any): void {
     const s = this.state;
-    if (!event.message) return;
+    const evt = event.assistantMessageEvent;
+    if (!evt) return;
 
-    const text = event.message.content
-      ?.filter((c: any) => c.type === 'text')
-      .map((c: any) => c.text)
-      .join('') || '';
-
-    if (text) {
-      s.currentStreamText = text;
-      s.currentStreamRole = event.message.role || '';
-
-      const existingIdx = s.streamHistory.findIndex(
-        (m: any) => m.streaming && m.role === s.currentStreamRole
-      );
-
-      if (existingIdx >= 0) {
-        s.streamHistory[existingIdx] = {
-          ...s.streamHistory[existingIdx],
-          text,
-        };
+    if (evt.type === 'thinking_start') {
+      s.isThinking = true;
+      s.currentThinkingText = '';
+    } else if (evt.type === 'thinking_delta') {
+      s.currentThinkingText += evt.delta || '';
+      const idx = s.activeStreamIdx;
+      if (idx === null || s.streamHistory[idx]?.role !== 'thinking') {
+        if (idx !== null && s.streamHistory[idx]) {
+          s.streamHistory[idx].streaming = false;
+        }
+        s.streamHistory.push({ role: 'thinking', text: s.currentThinkingText, streaming: true, timestamp: Date.now() });
+        s.activeStreamIdx = s.streamHistory.length - 1;
       } else {
-        s.streamHistory.push({
-          role: s.currentStreamRole,
-          text,
-          streaming: true,
-          timestamp: Date.now(),
-        });
+        s.streamHistory[idx].text = s.currentThinkingText;
       }
+      this.broadcast({ type: 'stream_history', data: s.streamHistory.slice(-50) });
+    } else if (evt.type === 'thinking_end') {
+      s.isThinking = false;
+      const text = evt.content || s.currentThinkingText;
+      // Find the last thinking entry and finalize it
+      for (let i = s.streamHistory.length - 1; i >= 0; i--) {
+        if (s.streamHistory[i].role === 'thinking' && s.streamHistory[i].streaming) {
+          s.streamHistory[i].streaming = false;
+          if (text) s.streamHistory[i].text = text;
+          break;
+        }
+      }
+      s.activeStreamIdx = null;
+      s.currentThinkingText = '';
+      this.broadcast({ type: 'stream_history', data: s.streamHistory.slice(-50) });
+    } else if (evt.type === 'text_delta') {
+      const delta = evt.delta;
+      const idx = s.activeStreamIdx;
+      if (idx === null || s.streamHistory[idx]?.role !== 'assistant') {
+        if (idx !== null && s.streamHistory[idx]) {
+          s.streamHistory[idx].streaming = false;
+        }
+        s.currentStreamRole = 'assistant';
+        s.currentStreamText = '';
+        s.streamHistory.push({ role: 'assistant', text: '', streaming: true, timestamp: Date.now() });
+        s.activeStreamIdx = s.streamHistory.length - 1;
+      }
+      s.currentStreamText += delta || '';
+      s.streamHistory[s.activeStreamIdx!].text = s.currentStreamText;
+      this.broadcast({ type: 'stream_history', data: s.streamHistory.slice(-50) });
+    }
 
-      this.broadcast({
-        type: 'stream_history',
-        data: s.streamHistory.slice(-50),
-      });
+    // Update usage if present
+    if (event.usage) {
+      const usage = event.usage;
+      if (usage.input) s.sessionStats.tokens.input = usage.input || 0;
+      if (usage.output) s.sessionStats.tokens.output = usage.output || 0;
+      if (usage.cacheRead) s.sessionStats.tokens.cacheRead = usage.cacheRead || 0;
+      if (usage.cacheWrite) s.sessionStats.tokens.cacheWrite = usage.cacheWrite || 0;
+      if (usage.cost) s.sessionStats.cost = usage.cost.total || 0;
     }
   }
 
@@ -351,8 +382,8 @@ export class UserSession {
       .map((c: any) => c.text)
       .join('') || '';
 
-    // Skip toolResult messages — they are added by handleToolEnd instead
-    if (role === 'toolResult') {
+    // Skip toolResult and thinking messages — they are handled by handleToolEnd and handleMessageUpdate
+    if (role === 'toolResult' || role === 'thinking') {
       // Still update stats
       const usage = event.message.usage;
       if (usage) {
@@ -364,6 +395,13 @@ export class UserSession {
       }
       this.broadcast({ type: 'stats', data: { ...s.sessionStats } });
       return;
+    }
+
+    // Finalize any streaming thinking messages
+    for (const msg of s.streamHistory) {
+      if (msg.streaming && msg.role === 'thinking') {
+        msg.streaming = false;
+      }
     }
 
     // Update stream history
@@ -397,6 +435,17 @@ export class UserSession {
       data: s.streamHistory.slice(-50),
     });
 
+    // Detect errors — skip toolResult errors (handled by handleToolEnd instead)
+    const msg = event.message;
+    let errorText: string | null = null;
+    if (msg.role !== 'toolResult' && (msg.stopReason === 'error' || msg.errorMessage)) {
+      errorText = msg.errorMessage || 'An error occurred';
+    }
+    if (errorText) {
+      s.streamHistory.push({ role: 'system', text: errorText, streaming: false, timestamp: Date.now(), isError: true });
+      this.broadcast({ type: 'stream_history', data: s.streamHistory.slice(-50) });
+    }
+
     // Update stats
     const usage = event.message.usage;
     if (usage) {
@@ -419,6 +468,15 @@ export class UserSession {
   private handleToolStart(event: any): void {
     const s = this.state;
     const cmd = this.formatToolArgs(event.toolName, event.args);
+
+    // Close any previously active tool (it terminated without sending tool_end)
+    for (const [id, tool] of s.activeTools) {
+      s.recentTools.unshift({ name: tool.name, isError: false, timestamp: Date.now(), args: tool.args });
+      if (s.recentTools.length > 5) s.recentTools.length = 5;
+      this.broadcast({ type: 'tool_end', data: { id, name: tool.name, isError: false, cmd: tool.cmd, recentTools: s.recentTools } });
+    }
+    s.activeTools.clear();
+
     s.activeTools.set(event.toolCallId, { name: event.toolName, args: event.args, cmd, startTime: Date.now() });
     this.broadcast({ type: 'tool_start', data: { id: event.toolCallId, name: event.toolName, cmd } });
   }

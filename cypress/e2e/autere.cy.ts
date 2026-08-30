@@ -161,8 +161,10 @@ describe('autere E2E', () => {
           $different.click();
 
           // Wait for the click to be processed (model change is async via RPC)
-          // The active model may or may not change depending on backend behavior,
-          // but the click should not error and the UI should remain functional
+          cy.get('.model-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
+
+          // Click back to the original model to restore the default
+          cy.get('.model-item').contains(activeName).click();
           cy.get('.model-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
         });
       });
@@ -240,7 +242,7 @@ describe('autere E2E', () => {
 
     it('shows connection status', () => {
       cy.get('.status-badge').click();
-      cy.get('.modal-status-text').should('exist');
+      cy.get('.modal-header-status-text').should('exist');
     });
 
     it('shows logout button', () => {

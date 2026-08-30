@@ -7,7 +7,7 @@ describe('StatusModal', () => {
       <StatusModal
         open={true}
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         onClose={cy.stub()}
         onRestart={cy.stub()}
         onLogout={cy.stub()}
@@ -28,7 +28,7 @@ describe('StatusModal', () => {
         onLogout={cy.stub()}
       />
     );
-    cy.get('.modal-status-text').should('contain', 'Idle');
+    cy.get('.modal-header-status-text').should('contain', 'Idle');
     cy.get('.dot-green').should('exist');
   });
 

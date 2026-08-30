@@ -6,7 +6,7 @@ describe('Header', () => {
     cy.mount(
       <Header
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         onStatusClick={cy.stub()}
         sessionId="abc123"
         sessionName="My Session"
@@ -21,7 +21,7 @@ describe('Header', () => {
     cy.mount(
       <Header
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         onStatusClick={cy.stub()}
         sessionId="abc123"
         sessionName={longName}
@@ -35,7 +35,7 @@ describe('Header', () => {
     cy.mount(
       <Header
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         onStatusClick={cy.stub()}
         sessionId="abc123-def456"
         sessionName={null}
@@ -49,7 +49,7 @@ describe('Header', () => {
     cy.mount(
       <Header
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         onStatusClick={cy.stub()}
         sessionId={null}
         sessionName={null}
@@ -64,7 +64,7 @@ describe('Header', () => {
     cy.mount(
       <Header
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         onStatusClick={onStatusClick}
         sessionId="abc123"
         sessionName="Test"
@@ -80,7 +80,7 @@ describe('Header', () => {
     cy.mount(
       <Header
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         onStatusClick={cy.stub()}
         sessionId="abc123"
         sessionName="Test"
@@ -96,7 +96,7 @@ describe('Header', () => {
     cy.mount(
       <Header
         statusType="streaming"
-        text="Working"
+        statusText="Working"
         onStatusClick={cy.stub()}
         sessionId="abc123"
         sessionName="Test"
@@ -113,7 +113,7 @@ describe('Header', () => {
     cy.mount(
       <Header
         statusType="disconnected"
-        text="Disconnected"
+        statusText="Disconnected"
         onStatusClick={cy.stub()}
         sessionId="abc123"
         sessionName="Test"
@@ -127,7 +127,7 @@ describe('Header', () => {
     cy.mount(
       <Header
         statusType="connected"
-        text="Idle"
+        statusText="Idle"
         onStatusClick={cy.stub()}
         sessionId="abc123"
         sessionName="Test"

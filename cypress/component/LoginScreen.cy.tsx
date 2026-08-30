@@ -16,7 +16,8 @@ describe('LoginScreen', () => {
   });
 
   it('calls onLogin with user and password when form is submitted', () => {
-    const onLogin = cy.stub().resolves(true).as('onLogin');
+    const onLogin = cy.stub().resolves(true);
+    cy.wrap(onLogin).as('onLogin');
     cy.mount(<LoginScreen open={true} error="" onLogin={onLogin} />);
     cy.get('.login-input').eq(0).clear().type('admin');
     cy.get('.login-input').eq(1).type('testpassword');
@@ -51,7 +52,8 @@ describe('LoginScreen', () => {
   });
 
   it('submits form on Enter key', () => {
-    const onLogin = cy.stub().resolves(true).as('onLogin');
+    const onLogin = cy.stub().resolves(true);
+    cy.wrap(onLogin).as('onLogin');
     cy.mount(<LoginScreen open={true} error="" onLogin={onLogin} />);
     cy.get('.login-input').eq(1).type('testpassword{enter}');
     cy.get('@onLogin').should('have.been.calledOnce');
