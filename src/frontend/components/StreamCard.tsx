@@ -323,8 +323,9 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
             const lineCount = editLines.length;
             const editCollapseThreshold = 12;
             const isEdit = role === 'edit';
-            const truncLen = role === 'toolResult' || role === 'thinking' ? 128 : role === 'system' ? displayText.length : 2048;
-            const isLong = isEdit ? lineCount > editCollapseThreshold : displayText.length > truncLen;
+            const effectiveLen = displayText.length;
+            const truncLen = role === 'toolResult' || role === 'thinking' ? 128 : role === 'system' ? effectiveLen : 2048;
+            const isLong = isEdit ? lineCount > editCollapseThreshold : effectiveLen > truncLen;
             const isAssistant = role === 'assistant';
 
             return (

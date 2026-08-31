@@ -78,6 +78,23 @@ export interface AvailableModel {
   thinkingLevel?: string;
 }
 
+export interface SettingField {
+  key: string;
+  label: string;
+  type: 'text' | 'password' | 'toggle' | 'select' | 'list';
+  placeholder?: string;
+  options?: { value: string; label: string }[];
+  description?: string;
+  listPlaceholder?: string;
+  listAddLabel?: string;
+}
+
+export interface SettingSection {
+  id: string;
+  label: string;
+  fields: SettingField[];
+}
+
 export interface SessionInfo {
   id: string;
   sessionFile: string;
@@ -100,6 +117,7 @@ export type SSEEventType =
   | 'sessions'
   | 'new_session_creating'
   | 'navigate'
+  | 'error'
   | 'heartbeat';
 
 export interface SSEMessage {

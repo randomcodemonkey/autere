@@ -5,7 +5,7 @@
  * Handlers are registered by name and matched against discovered extensions.
  */
 
-import { existsSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { ExtensionHandler, ExtensionInfo, ExtensionSection } from './types.js';
@@ -61,7 +61,8 @@ async function loginNineRouter(baseUrl: string, password: string): Promise<strin
     } finally {
       clearTimeout(timeout);
     }
-  } catch {
+  } catch (err: any) {
+    console.error('[autere] 9router: failed to login:', err?.message || err);
     return null;
   }
 }
@@ -136,17 +137,14 @@ const nineRouterHandler: ExtensionHandler = {
   configPaths: [NINE_ROUTER_CONFIG_PATH],
 
   async enrich(info: ExtensionInfo): Promise<ExtensionInfo> {
-    // Read config
+    // Read config via user settings (falls back to 9router-config.json)
+    const config = getUserSetting('admin', 'nineRouter', {});
+    if (config && typeof config === 'object') {
+      info.details = { ...info.details, ...config };
+      info.hasConfig = Object.keys(config).length > 0;
+    }
     if (existsSync(NINE_ROUTER_CONFIG_PATH)) {
-      try {
-        const raw = readFileSync(NINE_ROUTER_CONFIG_PATH, 'utf-8');
-        const config = JSON.parse(raw);
-        info.details = { ...info.details, ...config };
-        info.hasConfig = true;
-        info.configPath = NINE_ROUTER_CONFIG_PATH;
-      } catch (err) {
-        console.error('[autere] Failed to read 9router config:', err);
-      }
+      info.configPath = NINE_ROUTER_CONFIG_PATH;
     }
 
     // Check connection status

@@ -118,9 +118,13 @@ describe('autere E2E', () => {
     it('shows streaming indicator while agent is working', function() {
       this.timeout(60000);
 
-      // Send a message that will trigger streaming
-      cy.get('.chat-input').type('Say hello');
-      cy.get('.chat-send-btn').click();
+      // Wait for agent to be idle
+      cy.get('.status-badge', { timeout: 60000 }).should('not.contain', 'Working');
+
+      // Clear any leftover value, type message, and force-click send
+      // (button may be disabled from prior test's sending/compacting state)
+      cy.get('.chat-input').clear().type('Say hello');
+      cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
 
       // Check for working status
       cy.get('.status-badge', { timeout: 15000 }).should('contain', 'Working');
@@ -329,13 +333,14 @@ describe('autere E2E', () => {
 
   describe('Create New Session', () => {
     it('creates a new session and navigates to it', function() {
-      this.timeout(30000);
+      this.timeout(60000);
 
       // Open session modal
       cy.get('.session-badge').click();
       cy.get('.modal-session').should('be.visible');
 
-      // Click New Session button
+      // Wait for New Session button to be enabled (disabled while streaming)
+      cy.get('.modal-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
       cy.get('.modal-session .btn-primary').click();
 
       // Should eventually navigate to a new session (loading page may be too fast to catch)
@@ -346,11 +351,12 @@ describe('autere E2E', () => {
     });
 
     it('new session has empty chat history', function() {
-      this.timeout(30000);
+      this.timeout(60000);
 
       // Create new session (scope to modal)
       cy.get('.session-badge').click();
       cy.get('.modal-session').should('be.visible');
+      cy.get('.modal-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
       cy.get('.modal-session .btn-primary').click();
       cy.url({ timeout: 20000 }).should('match', /\/session\/[^/]+$/);
 
@@ -360,11 +366,12 @@ describe('autere E2E', () => {
     });
 
     it('can send message in new session', function() {
-      this.timeout(60000);
+      this.timeout(90000);
 
       // Create new session (scope to modal)
       cy.get('.session-badge').click();
       cy.get('.modal-session').should('be.visible');
+      cy.get('.modal-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
       cy.get('.modal-session .btn-primary').click();
       cy.url({ timeout: 20000 }).should('match', /\/session\/[^/]+$/);
 
@@ -510,6 +517,7 @@ describe('autere E2E', () => {
       // Create a new session (scope to modal)
       cy.get('.session-badge').click();
       cy.get('.modal-session').should('be.visible');
+      cy.get('.modal-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
       cy.get('.modal-session .btn-primary').click();
 
       // Should navigate to a session URL (modal closes and URL changes)
@@ -520,6 +528,171 @@ describe('autere E2E', () => {
 
       // Stream history should be cleared by new_session_creating event
       cy.get('.stream-box .stream-msg').should('not.exist');
+    });
+  });
+
+  describe('Settings Page', () => {
+    it('navigates to settings page from dashboard', () => {
+      cy.visit('/settings');
+      cy.get('#main-app').should('exist');
+      cy.get('.settings-page').should('exist');
+    });
+
+    it('shows settings card with title', () => {
+      cy.visit('/settings');
+      cy.get('.settings-card').should('exist');
+      cy.get('.settings-card .card-title').should('contain', 'Settings');
+    });
+
+    it('shows Models section with sortable list', () => {
+      cy.visit('/settings');
+      cy.get('.settings-section-title').contains('Models').should('exist');
+      cy.get('.sortable-list').should('exist');
+    });
+
+    it('shows 9Router section if extension is enabled', () => {
+      cy.visit('/settings');
+      cy.get('.settings-section-title', { timeout: 10000 }).contains('9Router').should('exist');
+    });
+
+    it('shows enabled models in sortable list', () => {
+      cy.visit('/settings');
+      cy.get('.sortable-list-item', { timeout: 10000 }).should('have.length.greaterThan', 0);
+    });
+
+    it('add model input is visible on its own row', () => {
+      cy.visit('/settings');
+      cy.get('.sortable-list-add').should('exist');
+      cy.get('.sortable-list-add .sortable-list-input').should('be.visible');
+      cy.get('.sortable-list-add-btn').should('contain', 'Add Model');
+    });
+
+    it('add model button is disabled when input is empty', () => {
+      cy.visit('/settings');
+      cy.get('.sortable-list-add .sortable-list-input').should('have.value', '');
+      cy.get('.sortable-list-add-btn').should('be.disabled');
+    });
+
+    it('add model button enables when input has text', () => {
+      cy.visit('/settings');
+      cy.get('.sortable-list-add .sortable-list-input').type('test/model-v1');
+      cy.get('.sortable-list-add-btn').should('not.be.disabled');
+    });
+
+    it('can add a model to the list', () => {
+      cy.visit('/settings');
+
+      // Get initial count
+      cy.get('.sortable-list-item').then(($items) => {
+        const initialCount = $items.length;
+
+        // Type a new model name
+        cy.get('.sortable-list-add .sortable-list-input').type('test/newly-added-model');
+        cy.get('.sortable-list-add-btn').click();
+
+        // Should have one more item
+        cy.get('.sortable-list-item').should('have.length', initialCount + 1);
+
+        // New item's input should contain the model name
+        cy.get('.sortable-list-item').last().find('.sortable-list-input').should('have.value', 'test/newly-added-model');
+
+        // Input should be cleared
+        cy.get('.sortable-list-add .sortable-list-input').should('have.value', '');
+      });
+    });
+
+    it('can add multiple models sequentially', () => {
+      cy.visit('/settings');
+
+      cy.get('.sortable-list-item').then(($items) => {
+        const initialCount = $items.length;
+
+        // Add first model
+        cy.get('.sortable-list-add .sortable-list-input').type('test/first-model');
+        cy.get('.sortable-list-add-btn').click();
+        cy.get('.sortable-list-item').should('have.length', initialCount + 1);
+
+        // Add second model
+        cy.get('.sortable-list-add .sortable-list-input').type('test/second-model');
+        cy.get('.sortable-list-add-btn').click();
+        cy.get('.sortable-list-item').should('have.length', initialCount + 2);
+
+        // Both should be present as input values
+        cy.get('.sortable-list-item').eq(initialCount).find('.sortable-list-input').should('have.value', 'test/first-model');
+        cy.get('.sortable-list-item').eq(initialCount + 1).find('.sortable-list-input').should('have.value', 'test/second-model');
+      });
+    });
+
+    it('can remove a model from the list', () => {
+      cy.visit('/settings');
+
+      cy.get('.sortable-list-item', { timeout: 10000 }).then(($items) => {
+        const initialCount = $items.length;
+        expect(initialCount).to.be.greaterThan(0);
+
+        // Click the remove button on the first item
+        cy.get('.sortable-list-item').first().find('.sortable-list-remove').click();
+
+        // Should have one fewer item
+        cy.get('.sortable-list-item').should('have.length', initialCount - 1);
+      });
+    });
+
+    it('can focus and interact with model entry inputs', () => {
+      cy.visit('/settings');
+
+      cy.get('.sortable-list-item', { timeout: 10000 }).should('have.length.greaterThan', 0);
+
+      // Model entry inputs should be focusable and editable
+      cy.get('.sortable-list-item').first().find('.sortable-list-input').should('not.be.disabled');
+      cy.get('.sortable-list-item').first().find('.sortable-list-input').focus();
+      cy.get('.sortable-list-item').first().find('.sortable-list-input').should('have.focus');
+    });
+
+    it('prevents adding duplicate models', () => {
+      cy.visit('/settings');
+
+      cy.get('.sortable-list-item', { timeout: 10000 }).should('have.length.greaterThan', 0);
+
+      // Get the first model name and initial count, then try adding duplicate
+      cy.get('.sortable-list-item').first().find('.sortable-list-input').invoke('val').then((existingName) => {
+        cy.get('.sortable-list-item').its('length').then((initialCount) => {
+          // Try to add the same name
+          cy.get('.sortable-list-add .sortable-list-input').type(existingName);
+          cy.get('.sortable-list-add-btn').click();
+
+          // Should NOT add a duplicate — count stays the same
+          cy.get('.sortable-list-item').should('have.length', initialCount);
+        });
+      });
+    });
+
+    it('toggle fields work correctly', () => {
+      cy.visit('/settings');
+
+      cy.get('.settings-toggle', { timeout: 10000 }).should('exist');
+
+      // Find the first toggle and verify it toggles
+      cy.get('.settings-toggle input[type="checkbox"]').first().check({ force: true }).should('be.checked');
+      cy.get('.settings-toggle input[type="checkbox"]').first().uncheck({ force: true }).should('not.be.checked');
+    });
+
+    it('save button is visible', () => {
+      cy.visit('/settings');
+      cy.get('.settings-actions .btn-primary').should('contain', 'Save Settings');
+    });
+
+    it('session badge navigates to latest session', () => {
+      cy.visit('/settings');
+      cy.get('.session-badge').should('exist');
+      cy.get('.session-badge').click();
+      cy.url({ timeout: 15000 }).should('match', /\/session\/[^/]+$/);
+    });
+
+    it('settings page does not show dashboard cards', () => {
+      cy.visit('/settings');
+      cy.get('.container .card').should('not.exist');
+      cy.get('.stream-card').should('not.exist');
     });
   });
 });

@@ -19,7 +19,7 @@
     "cy:component:open": "cypress open --component",
     "cy:e2e": "cypress run --e2e",
     "cy:e2e:open": "cypress open --e2e",
-    "test": "npm run test:component && npm run test:e2e",
+    "test:all": "npm run test:component && npm run test:e2e",
     "test:component": "npm run cy:component",
     "test:e2e": "npm run build && npx tsx cypress/e2e/support/run-e2e.ts"
   },

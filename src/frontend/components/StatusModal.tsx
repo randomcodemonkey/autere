@@ -11,7 +11,9 @@ interface StatusModalProps {
   onRestart: () => void;
   onRestartBackend?: () => void;
   onLogout: () => void;
+  onSettings?: () => void;
   restarting?: boolean;
+  restartingBackend?: boolean;
   userRole?: string | null;
 }
 
@@ -24,10 +26,13 @@ export const StatusModal: React.FC<StatusModalProps> = ({
   onRestart,
   onRestartBackend,
   onLogout,
+  onSettings,
   restarting = false,
+  restartingBackend = false,
   userRole,
 }) => {
   const isAdmin = userRole === 'admin';
+  const isWorking = statusType === 'streaming';
 
   return (
     <Modal open={open} onClose={onClose} className="modal-status">
@@ -47,11 +52,26 @@ export const StatusModal: React.FC<StatusModalProps> = ({
           <span className="modal-username">{username || '—'}</span>
           {userRole && <span className="modal-role">{userRole}</span>}
         </div>
-        <button className="btn btn-default" onClick={onLogout}>🔒 Logout</button>
+        <div className="modal-user-actions">
+          <button className="btn btn-default" onClick={onLogout}>🔒 Logout</button>
+          {onSettings && (
+            <div className="settings-btn-wrapper">
+              <button
+                className="btn btn-info"
+                onClick={onSettings}
+                disabled={isWorking}
+                title={isWorking ? 'Settings can only be changed when idle' : undefined}
+              >
+                ⚙ Settings
+              </button>
+              {isWorking && <span className="settings-tooltip">Settings can only be changed when idle</span>}
+            </div>
+          )}
+        </div>
         <div className="modal-section spaced">System</div>
         <button className="btn btn-danger" onClick={onRestart} disabled={restarting}>{restarting ? '⟳ Restarting…' : '⟳ Restart PI'}</button>
         {isAdmin && onRestartBackend && (
-          <button className="btn btn-danger" style={{ marginTop: '0.5rem' }} onClick={onRestartBackend} disabled={restarting}>⟳ Restart Autere</button>
+          <button className="btn btn-danger" style={{ marginTop: '0.5rem' }} onClick={onRestartBackend} disabled={restartingBackend}>{restartingBackend ? '⟳ Restarting…' : '⟳ Restart Autere'}</button>
         )}
       </div>
     </Modal>

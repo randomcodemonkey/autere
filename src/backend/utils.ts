@@ -1,25 +1,17 @@
 import { ServerResponse } from 'http';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { StreamEntry, SessionUsageResult } from './types.js';
+import { getUserSetting } from './user-settings.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PI_DIR = join(homedir(), '.pi', 'agent');
 
-// ── Scoped models from settings.json ──
+// ── Scoped models from user settings ──
 
 export function getEnabledModelPatterns(): string[] {
-  try {
-    const settingsPath = join(PI_DIR, 'settings.json');
-    if (!existsSync(settingsPath)) return [];
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-    return settings.enabledModels || [];
-  } catch {
-    return [];
-  }
+  return getUserSetting('admin', 'enabledModels', []);
 }
 
 /** Filter models to only those matching the enabled/scoped models list */

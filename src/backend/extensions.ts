@@ -12,27 +12,10 @@
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import type { ExtensionInfo, ExtensionHandler } from './types.js';
-import { PI_DIR, SETTINGS_FILE, NPM_EXTENSIONS_DIR, EXTENSIONS_DIR } from './constants.js';
+import { PI_DIR, NPM_EXTENSIONS_DIR, EXTENSIONS_DIR } from './constants.js';
 import { extensionsState } from './state.js';
 import { getExtensionHandler } from './extension-handlers.js';
-
-// ── Settings reading ──
-
-interface PiSettings {
-  packages?: string[];
-  [key: string]: any;
-}
-
-function readSettings(): PiSettings {
-  try {
-    if (existsSync(SETTINGS_FILE)) {
-      return JSON.parse(readFileSync(SETTINGS_FILE, 'utf-8'));
-    }
-  } catch (err) {
-    console.error('[autere] Failed to read settings.json:', err);
-  }
-  return {};
-}
+import { getUserSetting } from './user-settings.js';
 
 // ── Extension discovery ──
 
@@ -64,8 +47,7 @@ function parsePackageSpec(spec: string): { source: 'npm' | 'local'; id: string }
  * Discover npm extension packages from settings.json.
  */
 function discoverNpmExtensions(): DiscoveredExtension[] {
-  const settings = readSettings();
-  const packages = settings.packages || [];
+  const packages = getUserSetting('admin', 'packages', []) as string[];
   const discovered: DiscoveredExtension[] = [];
 
   for (const spec of packages) {

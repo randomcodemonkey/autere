@@ -6,10 +6,123 @@
  */
 
 import { randomUUID } from 'crypto';
+import { existsSync, readFileSync, statSync } from 'fs';
 import type { ServerResponse } from 'http';
 import { MonitorRpcClient } from './rpc-client.js';
 import { filterScopedModels } from './utils.js';
 import { getLastSession, setLastSession } from './auth.js';
+
+/**
+ * Read messages directly from a session JSONL file.
+ * Used for external activity detection where RPC cached messages are stale.
+ */
+function readMessagesFromFile(sessionFile: string, limit: number = 100): any[] {
+  try {
+    const content = readFileSync(sessionFile, 'utf-8');
+    const lines = content.split('\n').filter(Boolean);
+    const messages: any[] = [];
+    // Read from end (most recent) up to limit
+    for (let i = lines.length - 1; i >= 0 && messages.length < limit; i--) {
+      try {
+        const obj = JSON.parse(lines[i]);
+        if (obj.type === 'message') messages.unshift(obj);
+      } catch {}
+    }
+    return messages;
+  } catch { return []; }
+}
+
+// ── Helpers for detecting rm commands ──
+
+function isRmCommand(command?: string): boolean {
+  if (!command) return false;
+  const trimmed = command.trim();
+  return /^\S*\brm\b/.test(trimmed);
+}
+
+function extractRmPaths(command: string): string[] {
+  const paths: string[] = [];
+  const parts = command.trim().split(/\s+/);
+  let seenRm = false;
+  for (const part of parts) {
+    if (!seenRm) {
+      if (/rm$/.test(part)) seenRm = true;
+      continue;
+    }
+    if (part.startsWith('-')) continue;
+    paths.push(part);
+  }
+  return paths;
+}
+
+/**
+ * Shared formatting for tool results into stream history entries.
+ * Used by both live tool_end events and history loading from session files.
+ */
+function formatToolResult(
+  toolName: string,
+  toolArgs: any,
+  resultContent: any[] | undefined,
+  isError: boolean,
+  timestamp?: number,
+  resultDetails?: any,
+  rmSnapshots?: Record<string, string>,
+): { role: string; text: string; streaming: boolean; timestamp?: number; isError?: boolean } | null {
+  let text = '';
+  let role: string;
+
+  if (toolName === 'edit') {
+    // Edit tools: content.text as header, details.diff as body
+    const header = resultContent
+      ?.filter((c: any) => c.type === 'text')
+      .map((c: any) => c.text)
+      .join('\n') || '';
+    const diff = resultDetails?.diff || '';
+    text = diff ? header + '\n\n' + diff : header;
+    role = 'edit';
+  } else if (toolName === 'write') {
+    // Write as edit with all lines shown as added
+    const filePath = toolArgs.path || '';
+    const content = toolArgs.content || '';
+    const lines = typeof content === 'string' ? content.split('\n') : [];
+    const diffLines = lines.map((line: string) => '+ ' + line);
+    const header = filePath ? `Write ${filePath}` : 'Write';
+    text = header + '\n' + diffLines.join('\n');
+    role = 'edit';
+  } else if (toolName === 'bash' && isRmCommand(toolArgs.command)) {
+    // Rm commands as edit with removed lines
+    const paths = extractRmPaths(toolArgs.command);
+    const parts: string[] = [];
+    for (const p of paths) {
+      let content = '';
+      // Use snapshot if available (live events), otherwise try to read (history)
+      if (rmSnapshots && p in rmSnapshots) {
+        content = rmSnapshots[p];
+      } else {
+        try { if (existsSync(p)) content = readFileSync(p, 'utf-8'); } catch {}
+      }
+      const lines = content.split('\n');
+      const diffLines = lines.map((line: string) => '- ' + line);
+      parts.push(`Delete ${p}\n` + diffLines.join('\n'));
+    }
+    text = parts.length > 0 ? parts.join('\n\n') : paths.map(p => `Delete ${p}`).join(', ');
+    role = 'edit';
+  } else if (resultContent) {
+    text = resultContent
+      .filter((c: any) => c.type === 'text')
+      .map((c: any) => c.text)
+      .join('\n');
+    role = 'toolResult';
+  } else {
+    return null;
+  }
+
+  const prefix = isError ? `[${toolName} error]` : '';
+  const displayText = prefix ? (text ? prefix + ' ' + text : prefix) : text;
+  if (!displayText) return null;
+
+  return { role, text: displayText, streaming: false, timestamp, ...(isError ? { isError: true } : {}) };
+}
 
 // ── Per-user state types ──
 
@@ -46,6 +159,7 @@ function createInitialState(): UserSessionState {
       sessionName: null,
       connected: false,
       startTime: Date.now(),
+      externalActivity: false,
       compacting: false,
     },
     sessionStats: {
@@ -77,11 +191,17 @@ export class UserSession {
   readonly user: string;
   readonly rpc: MonitorRpcClient;
   readonly state: UserSessionState;
-  readonly sseClients: Set<ServerResponse> = new Set();
+  readonly sseClients: Map<ServerResponse, string | null> = new Map(); // client -> sessionId they're viewing
   private cleanupTimer: ReturnType<typeof setTimeout> | null = null;
   private lastActivity: number = Date.now();
   private _idleTimeoutMs: number;
   private _onIdle: (() => void) | null = null;
+
+  // External activity detection — watches the session file for writes by other pi processes
+  private externalCheckTimer: ReturnType<typeof setInterval> | null = null;
+  private lastKnownFileSize: number = 0;
+  private lastExternalActivityTime: number = 0;
+  private consecutiveEventsFromPi: number = 0;
 
   constructor(token: string, user: string, rpcOptions: { provider?: string; model?: string; args?: string[] }, idleTimeoutMs: number = 30 * 60 * 1000) {
     this.token = token;
@@ -117,10 +237,32 @@ export class UserSession {
   }
 
   /** Broadcast an SSE event to all connected clients */
+  /**
+   * Broadcast an SSE event to clients viewing the current session.
+   * Automatically injects sessionId into event data if not already present,
+   * so only clients viewing that session receive the event.
+   */
   broadcast(data: any) {
     const msg = `data: ${JSON.stringify(data)}\n\n`;
-    for (const client of this.sseClients) {
+    for (const [client] of this.sseClients) {
       try { client.write(msg); } catch {}
+    }
+  }
+
+  /** Broadcast an SSE event only to clients viewing a specific session */
+  broadcastToSession(sessionId: string | null, data: any) {
+    const msg = `data: ${JSON.stringify(data)}\n\n`;
+    for (const [client, clientSessionId] of this.sseClients) {
+      if (clientSessionId === sessionId) {
+        try { client.write(msg); } catch {}
+      }
+    }
+  }
+
+  /** Update all clients to view the given session */
+  setAllClientsSession(sessionId: string | null) {
+    for (const [client] of this.sseClients) {
+      this.sseClients.set(client, sessionId);
     }
   }
 
@@ -139,6 +281,9 @@ export class UserSession {
     // Start idle timer
     this.resetIdleTimer();
 
+    // Start watching session file for external writes
+    this.startExternalActivityWatch();
+
     console.log(`[autere] User "${this.user}" pi process started`);
   }
 
@@ -148,11 +293,14 @@ export class UserSession {
       clearTimeout(this.cleanupTimer);
       this.cleanupTimer = null;
     }
+    this.stopExternalActivityWatch();
     try {
       await this.rpc.stop();
-    } catch {}
+    } catch (err) {
+      console.error('[autere] UserSession.stop: failed to stop RPC:', err);
+    }
     // Disconnect all SSE clients
-    for (const client of this.sseClients) {
+    for (const [client] of this.sseClients) {
       try { client.end(); } catch {}
     }
     this.sseClients.clear();
@@ -189,7 +337,9 @@ export class UserSession {
         this.state.sessionStats.tokens = stats.tokens || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
         this.state.sessionStats.cost = stats.cost || 0;
         if (stats.contextUsage) this.state.sessionStats.contextUsage = stats.contextUsage;
-      } catch {}
+      } catch (err) {
+        console.error('[autere] UserSession.fetchInitialState: failed to get session stats:', err);
+      }
 
       try {
         const models = await this.rpc.getAvailableModels();
@@ -197,23 +347,22 @@ export class UserSession {
         this.state.availableModels = scoped.map((m: any) => ({
           provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
         }));
-      } catch {}
+      } catch (err) {
+        console.error('[autere] UserSession.fetchInitialState: failed to get available models:', err);
+      }
 
       // Load session history
       try {
         const messages = await this.rpc.getMessages();
         if (messages && messages.length > 0) {
-          this.state.streamHistory = messages.map((msg: any) => ({
-            role: msg.role || '',
-            text: msg.content?.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('') || '',
-            streaming: false,
-            timestamp: msg.timestamp ? new Date(msg.timestamp).getTime() : undefined,
-          })).filter((m: any) => m.text);
+          this.state.streamHistory = this.buildStreamHistoryFromMessages(messages);
           if (this.state.streamHistory.length > 50) {
             this.state.streamHistory.splice(0, this.state.streamHistory.length - 50);
           }
         }
-      } catch {}
+      } catch (err) {
+        console.error('[autere] UserSession.fetchInitialState: failed to load session history:', err);
+      }
     } catch (err) {
       console.error(`[autere] User "${this.user}" failed to fetch initial state:`, err);
     }
@@ -227,6 +376,13 @@ export class UserSession {
       if (event.type !== 'message_update') {
         console.log(`[autere] User "${this.user}" RPC event: ${event.type}`);
       }
+
+      // We received an event from pi — this process is active, clear external flag
+      if (this.state.sessionState.externalActivity) {
+        this.state.sessionState.externalActivity = false;
+        this.broadcast({ type: 'status', data: { ...this.state.sessionState } });
+      }
+      this.consecutiveEventsFromPi++;
 
       switch (event.type) {
         case 'session_start':
@@ -296,7 +452,7 @@ export class UserSession {
         };
       }
       this.broadcast({ type: 'status', data: { ...s.sessionState } });
-    }).catch(() => {});
+    }).catch((err) => { console.error('[autere] UserSession.handleSessionStart: failed to get state:', err); });
   }
 
   private handleSessionInfoChanged(event: any): void {
@@ -327,7 +483,7 @@ export class UserSession {
       } else {
         s.streamHistory[idx].text = s.currentThinkingText;
       }
-      this.broadcast({ type: 'stream_history', data: s.streamHistory.slice(-50) });
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
     } else if (evt.type === 'thinking_end') {
       s.isThinking = false;
       const text = evt.content || s.currentThinkingText;
@@ -341,7 +497,7 @@ export class UserSession {
       }
       s.activeStreamIdx = null;
       s.currentThinkingText = '';
-      this.broadcast({ type: 'stream_history', data: s.streamHistory.slice(-50) });
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
     } else if (evt.type === 'text_delta') {
       const delta = evt.delta;
       const idx = s.activeStreamIdx;
@@ -356,7 +512,7 @@ export class UserSession {
       }
       s.currentStreamText += delta || '';
       s.streamHistory[s.activeStreamIdx!].text = s.currentStreamText;
-      this.broadcast({ type: 'stream_history', data: s.streamHistory.slice(-50) });
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
     }
 
     // Update usage if present
@@ -376,14 +532,21 @@ export class UserSession {
 
     s.sessionState.messageCount++;
 
-    const role = event.message.role || '';
+    const rawRole = event.message.role || '';
     const text = event.message.content
       ?.filter((c: any) => c.type === 'text')
       .map((c: any) => c.text)
       .join('') || '';
 
+    // Debug: log all assistant messages from pi
+    if (rawRole === 'assistant') {
+      const contentTypes = (event.message.content || []).map((c: any) => c.type);
+      console.log(`[autere] assistant message_end: text_len=${text.length}, content_types=[${contentTypes}]`);
+      if (text) console.log(`[autere] assistant message text: ${text}`);
+    }
+
     // Skip toolResult and thinking messages — they are handled by handleToolEnd and handleMessageUpdate
-    if (role === 'toolResult' || role === 'thinking') {
+    if (rawRole === 'toolResult' || rawRole === 'thinking') {
       // Still update stats
       const usage = event.message.usage;
       if (usage) {
@@ -406,7 +569,7 @@ export class UserSession {
 
     // Update stream history
     const streamingIdx = s.streamHistory.findIndex(
-      (m: any) => m.streaming && m.role === role
+      (m: any) => m.streaming && m.role === rawRole
     );
 
     if (streamingIdx >= 0) {
@@ -418,7 +581,7 @@ export class UserSession {
       };
     } else if (text) {
       s.streamHistory.push({
-        role,
+        role: rawRole,
         text,
         streaming: false,
         timestamp: Date.now(),
@@ -443,7 +606,7 @@ export class UserSession {
     }
     if (errorText) {
       s.streamHistory.push({ role: 'system', text: errorText, streaming: false, timestamp: Date.now(), isError: true });
-      this.broadcast({ type: 'stream_history', data: s.streamHistory.slice(-50) });
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
     }
 
     // Update stats
@@ -462,7 +625,7 @@ export class UserSession {
     this.rpc.getSessionStats().then(stats => {
       if (stats.contextUsage) s.sessionStats.contextUsage = stats.contextUsage;
       this.broadcast({ type: 'stats', data: { ...s.sessionStats } });
-    }).catch(() => {});
+    }).catch((err) => { console.error('[autere] UserSession.handleMessageEnd: failed to get session stats:', err); });
   }
 
   private handleToolStart(event: any): void {
@@ -473,12 +636,26 @@ export class UserSession {
     for (const [id, tool] of s.activeTools) {
       s.recentTools.unshift({ name: tool.name, isError: false, timestamp: Date.now(), args: tool.args });
       if (s.recentTools.length > 5) s.recentTools.length = 5;
-      this.broadcast({ type: 'tool_end', data: { id, name: tool.name, isError: false, cmd: tool.cmd, recentTools: s.recentTools } });
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'tool_end', data: { id, name: tool.name, isError: false, cmd: tool.cmd, recentTools: s.recentTools } });
     }
     s.activeTools.clear();
 
-    s.activeTools.set(event.toolCallId, { name: event.toolName, args: event.args, cmd, startTime: Date.now() });
-    this.broadcast({ type: 'tool_start', data: { id: event.toolCallId, name: event.toolName, cmd } });
+    const toolEntry: any = { name: event.toolName, args: event.args, cmd, startTime: Date.now() };
+
+    // For rm commands, snapshot file content before deletion
+    if (event.toolName === 'bash' && isRmCommand(event.args?.command)) {
+      const paths = extractRmPaths(event.args.command);
+      const snapshots: Record<string, string> = {};
+      for (const p of paths) {
+        try {
+          if (existsSync(p)) snapshots[p] = readFileSync(p, 'utf-8');
+        } catch {}
+      }
+      toolEntry.rmSnapshots = snapshots;
+    }
+
+    s.activeTools.set(event.toolCallId, toolEntry);
+    this.broadcastToSession(s.sessionState.sessionId, { type: 'tool_start', data: { id: event.toolCallId, name: event.toolName, cmd } });
   }
 
   private handleToolEnd(event: any): void {
@@ -489,44 +666,57 @@ export class UserSession {
     s.activeTools.delete(event.toolCallId);
     s.recentTools.unshift({ name: event.toolName, isError: event.isError, timestamp: Date.now(), args });
     if (s.recentTools.length > 5) s.recentTools.length = 5;
-    this.broadcast({ type: 'tool_end', data: { id: event.toolCallId, name: event.toolName, isError: event.isError, cmd, recentTools: s.recentTools } });
+    this.broadcastToSession(s.sessionState.sessionId, { type: 'tool_end', data: { id: event.toolCallId, name: event.toolName, isError: event.isError, cmd, recentTools: s.recentTools } });
 
     // Add tool result to stream history
     if (event.result || event.isError) {
-      const toolName = event.toolName || 'tool';
-      let text = '';
-
-      // For edit tools: content.text as header, details.diff as body
-      if (toolName === 'edit') {
-        const header = event.result?.content
-          ?.filter((c: any) => c.type === 'text')
-          .map((c: any) => c.text)
-          .join('\n') || '';
-        const diff = event.result?.details?.diff || '';
-        text = diff ? header + '\n\n' + diff : header;
-      } else if (event.result?.content) {
-        text = event.result.content
-          .filter((c: any) => c.type === 'text')
-          .map((c: any) => c.text)
-          .join('\n');
-      }
-
-      const isError = event.isError || false;
-      const role = toolName === 'edit' ? 'edit' : 'toolResult';
-      const prefix = isError ? `[${toolName} error]` : (toolName === 'edit' ? '' : `[${toolName}]`);
-      const displayText = prefix ? (text ? prefix + ' ' + text : prefix) : text;
-      if (displayText) {
-        s.streamHistory.push({
-          role,
-          text: displayText,
-          streaming: false,
-          timestamp: Date.now(),
-          isError,
-        });
+      const entry = formatToolResult(
+        event.toolName,
+        tool?.args || {},
+        event.result?.content,
+        event.isError,
+        Date.now(),
+        event.result?.details,
+        tool?.rmSnapshots,
+      );
+      if (entry) {
+        s.streamHistory.push(entry);
         if (s.streamHistory.length > 50) s.streamHistory.splice(0, s.streamHistory.length - 50);
-        this.broadcast({ type: 'stream_history', data: s.streamHistory.slice(-50) });
+        this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
       }
     }
+  }
+
+  private buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
+    const messages = rawMessages.map((m: any) => m.message || m).filter(Boolean);
+
+    // Build a map of toolCallId -> tool call args from assistant messages
+    const toolCallArgs = new Map<string, any>();
+    for (const msg of messages) {
+      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === 'toolCall' && block.id && block.arguments) {
+            toolCallArgs.set(block.id, { name: block.name, args: block.arguments });
+          }
+        }
+      }
+    }
+
+    return messages
+      .map((msg: any) => {
+        const role = msg.role || '';
+        const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : undefined;
+
+        if (role === 'toolResult') {
+          const call = msg.toolCallId ? toolCallArgs.get(msg.toolCallId) : undefined;
+          const toolArgs = call?.args || {};
+          return formatToolResult(msg.toolName, toolArgs, msg.content, msg.isError, timestamp, msg.details);
+        }
+
+        const text = msg.content?.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('') || '';
+        return { role, text, streaming: false, timestamp };
+      })
+      .filter((m: any) => m?.text);
   }
 
   private handleModelSelect(event: any): void {
@@ -551,5 +741,82 @@ export class UserSession {
       if (typeof v === 'string' && v.length > 0) return v;
     }
     return '';
+  }
+
+  // ── External activity detection ──
+
+  private startExternalActivityWatch(): void {
+    const sessionFile = this.state.sessionState.sessionFile;
+    if (sessionFile && existsSync(sessionFile)) {
+      try {
+        this.lastKnownFileSize = statSync(sessionFile).size;
+      } catch {}
+    }
+    this.externalCheckTimer = setInterval(() => {
+      this.checkExternalActivity();
+    }, 3000);
+  }
+
+  private stopExternalActivityWatch(): void {
+    if (this.externalCheckTimer) {
+      clearInterval(this.externalCheckTimer);
+      this.externalCheckTimer = null;
+    }
+    if (this.state.sessionState.externalActivity) {
+      this.state.sessionState.externalActivity = false;
+      this.broadcast({ type: 'status', data: { ...this.state.sessionState } });
+    }
+  }
+
+  private checkExternalActivity(): void {
+    const s = this.state;
+    const sessionFile = s.sessionState.sessionFile;
+    if (!sessionFile || !existsSync(sessionFile)) return;
+
+    try {
+      const stats = statSync(sessionFile);
+      const currentSize = stats.size;
+
+      // Clear external activity if no external writes for 60 seconds
+      if (s.sessionState.externalActivity && this.lastExternalActivityTime > 0 && Date.now() - this.lastExternalActivityTime > 60_000) {
+        s.sessionState.externalActivity = false;
+        console.log('[autere] External activity cleared (60s timeout)');
+        this.broadcast({ type: 'status', data: { ...s.sessionState } });
+        return;
+      }
+
+      // File size decreased (e.g. after compaction) or first check — just record it
+      if (currentSize <= this.lastKnownFileSize) {
+        this.lastKnownFileSize = currentSize;
+        return;
+      }
+
+      // File grew — did we receive events from pi recently?
+      if (this.consecutiveEventsFromPi > 0) {
+        this.lastKnownFileSize = currentSize;
+        this.consecutiveEventsFromPi--;
+        return;
+      }
+
+      // No events from pi recently — external process wrote to the file
+      console.log(`[autere] External activity detected: file grew from ${this.lastKnownFileSize} to ${currentSize}`);
+      s.sessionState.externalActivity = true;
+      this.lastExternalActivityTime = Date.now();
+      this.lastKnownFileSize = currentSize;
+      this.broadcast({ type: 'status', data: { ...s.sessionState } });
+
+      // Reload stream history directly from file (RPC returns cached messages from local pi process)
+      const rawMessages = readMessagesFromFile(sessionFile);
+      if (rawMessages.length > 0) {
+        const oldLen = s.streamHistory.length;
+        s.streamHistory = this.buildStreamHistoryFromMessages(rawMessages);
+        const newLen = s.streamHistory.length;
+        if (s.streamHistory.length > 50) s.streamHistory.splice(0, s.streamHistory.length - 50);
+        console.log(`[autere] External reload: ${oldLen} -> ${newLen} messages`);
+        this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
+      }
+    } catch (e) {
+      console.log(`[autere] Failure in checkExternalActivity: ${e}`);
+    }
   }
 }
