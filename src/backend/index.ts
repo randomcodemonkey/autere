@@ -19,6 +19,7 @@ function parseArgs(): {
   piModel?: string;
   piArgs: string[];
   idleTimeoutMinutes: number;
+  newSession: boolean;
 } {
   const args = process.argv.slice(2);
   let port = 3456;
@@ -27,6 +28,7 @@ function parseArgs(): {
   let piProvider: string | undefined;
   let piModel: string | undefined;
   let idleTimeoutMinutes = 30;
+  let newSession = false;
   const piArgs: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -43,12 +45,17 @@ function parseArgs(): {
       piModel = args[++i];
     } else if (arg === '--idle-timeout' && args[i + 1]) {
       idleTimeoutMinutes = parseInt(args[++i]) || 30;
+    } else if (arg === '--new-session') {
+      // Always start pi with a brand-new session — never resume the last
+      // active session. Used by e2e tests so they never attach to (and
+      // broadcast into) a session that real users may also be viewing.
+      newSession = true;
     } else {
       piArgs.push(arg);
     }
   }
 
-  return { port, monitorAuth, monitorPassword, piProvider, piModel, piArgs, idleTimeoutMinutes };
+  return { port, monitorAuth, monitorPassword, piProvider, piModel, piArgs, idleTimeoutMinutes, newSession };
 }
 
 // ── Main ──
@@ -78,12 +85,12 @@ async function main() {
     process.exit(1);
   }
 
-  // Create the process manager
   const pm = new ProcessManager({
     provider: config.piProvider,
     model: config.piModel,
     args: config.piArgs,
     idleTimeoutMs: config.idleTimeoutMinutes * 60 * 1000,
+    resumeLastSession: !config.newSession,
   });
 
   // Start the HTTP server

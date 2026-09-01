@@ -11,6 +11,7 @@ import type { ServerResponse } from 'http';
 import { MonitorRpcClient } from './rpc-client.js';
 import { filterScopedModels } from './utils.js';
 import { getLastSession, setLastSession } from './auth.js';
+import { registerExternalActivityInterest, notifyExternalActivity, type ExternalActivityInterest } from './external-activity.js';
 
 /**
  * Read messages directly from a session JSONL file.
@@ -129,7 +130,6 @@ function formatToolResult(
 export interface UserSessionState {
   sessionState: any;
   sessionStats: any;
-  streamHistory: any[];
   recentMessages: any[];
   activeTools: Map<string, any>;
   recentTools: any[];
@@ -167,7 +167,6 @@ function createInitialState(): UserSessionState {
       cost: 0,
       contextUsage: null,
     },
-    streamHistory: [],
     recentMessages: [],
     activeTools: new Map(),
     recentTools: [],
@@ -192,6 +191,10 @@ export class UserSession {
   readonly rpc: MonitorRpcClient;
   readonly state: UserSessionState;
   readonly sseClients: Map<ServerResponse, string | null> = new Map(); // client -> sessionId they're viewing
+  private clientIdMap: Map<string, ServerResponse> = new Map(); // clientId -> SSE response
+  // Stream history buffers, one per session. A single shared buffer would mix
+  // messages from different sessions when clients view or switch sessions.
+  private historyBuffers: Map<string, any[]> = new Map();
   private cleanupTimer: ReturnType<typeof setTimeout> | null = null;
   private lastActivity: number = Date.now();
   private _idleTimeoutMs: number;
@@ -199,22 +202,32 @@ export class UserSession {
 
   // External activity detection — watches the session file for writes by other pi processes
   private externalCheckTimer: ReturnType<typeof setInterval> | null = null;
-  private lastKnownFileSize: number = 0;
-  private lastExternalActivityTime: number = 0;
+  private lastKnownFileSizes: Map<string, number> = new Map(); // sessionFile -> size
+  private externalActivitySessions: Map<string, number> = new Map(); // sessionId -> last external activity ts
   private consecutiveEventsFromPi: number = 0;
 
-  constructor(token: string, user: string, rpcOptions: { provider?: string; model?: string; args?: string[] }, idleTimeoutMs: number = 30 * 60 * 1000) {
+  // Cross-process instant external-activity notification (see external-activity.ts)
+  private externalInterest: ExternalActivityInterest;
+  private unregisterExternalInterest: (() => void) | null = null;
+
+  constructor(token: string, user: string, rpcOptions: { provider?: string; model?: string; args?: string[]; resumeLastSession?: boolean }, idleTimeoutMs: number = 30 * 60 * 1000) {
     this.token = token;
     this.user = user;
-    // Resume this token's last session if known
+    // Resume this token's last session if known (unless disabled, e.g. e2e tests)
     const args = [...(rpcOptions.args || [])];
-    const lastSession = getLastSession(token);
-    if (lastSession && !args.includes('--session') && !args.includes('--continue') && !args.includes('-c')) {
-      args.push('--session', lastSession);
+    if (rpcOptions.resumeLastSession !== false) {
+      const lastSession = getLastSession(token);
+      if (lastSession && !args.includes('--session') && !args.includes('--continue') && !args.includes('-c')) {
+        args.push('--session', lastSession);
+      }
     }
     this.rpc = new MonitorRpcClient({ ...rpcOptions, args });
     this.state = createInitialState();
     this._idleTimeoutMs = idleTimeoutMs;
+    this.externalInterest = {
+      getSessionFile: () => this.state.sessionState.sessionFile,
+      onExternalActivity: () => this.handleInstantExternalActivity(),
+    };
   }
 
   /** Set callback for when session goes idle */
@@ -249,6 +262,30 @@ export class UserSession {
     }
   }
 
+  /** Get (or create) the stream history buffer for a specific session */
+  historyFor(sessionId: string | null): any[] {
+    const key = sessionId || '__none__';
+    let buf = this.historyBuffers.get(key);
+    if (!buf) {
+      buf = [];
+      this.historyBuffers.set(key, buf);
+    }
+    return buf;
+  }
+
+  /** Replace the stream history buffer for a specific session */
+  setHistoryFor(sessionId: string | null, entries: any[]) {
+    this.historyBuffers.set(sessionId || '__none__', entries);
+  }
+
+  /** Clear the external-activity flag for a session and notify its viewers */
+  clearExternalActivity(sessionId: string | null) {
+    this.externalActivitySessions.delete(sessionId || '__none__');
+    if (sessionId) {
+      this.broadcastToSession(sessionId, { type: 'external_activity', data: { sessionId, active: false } });
+    }
+  }
+
   /** Broadcast an SSE event only to clients viewing a specific session */
   broadcastToSession(sessionId: string | null, data: any) {
     const msg = `data: ${JSON.stringify(data)}\n\n`;
@@ -256,6 +293,24 @@ export class UserSession {
       if (clientSessionId === sessionId) {
         try { client.write(msg); } catch {}
       }
+    }
+  }
+
+  /** Register a client ID for an SSE connection */
+  registerClientId(clientId: string, res: ServerResponse) {
+    this.clientIdMap.set(clientId, res);
+    // Clean up when connection closes
+    res.on('close', () => {
+      this.clientIdMap.delete(clientId);
+      this.sseClients.delete(res);
+    });
+  }
+
+  /** Update a specific client's session tracking by client ID */
+  setClientSessionByClientId(clientId: string, sessionId: string | null) {
+    const res = this.clientIdMap.get(clientId);
+    if (res) {
+      this.sseClients.set(res, sessionId);
     }
   }
 
@@ -284,6 +339,9 @@ export class UserSession {
     // Start watching session file for external writes
     this.startExternalActivityWatch();
 
+    // Register for instant cross-session external-activity notifications
+    this.unregisterExternalInterest = registerExternalActivityInterest(this.externalInterest);
+
     console.log(`[autere] User "${this.user}" pi process started`);
   }
 
@@ -294,6 +352,8 @@ export class UserSession {
       this.cleanupTimer = null;
     }
     this.stopExternalActivityWatch();
+    this.unregisterExternalInterest?.();
+    this.unregisterExternalInterest = null;
     try {
       await this.rpc.stop();
     } catch (err) {
@@ -351,14 +411,13 @@ export class UserSession {
         console.error('[autere] UserSession.fetchInitialState: failed to get available models:', err);
       }
 
-      // Load session history
+      // Load session history into the buffer for this specific session
       try {
         const messages = await this.rpc.getMessages();
         if (messages && messages.length > 0) {
-          this.state.streamHistory = this.buildStreamHistoryFromMessages(messages);
-          if (this.state.streamHistory.length > 50) {
-            this.state.streamHistory.splice(0, this.state.streamHistory.length - 50);
-          }
+          const buf = this.historyFor(this.state.sessionState.sessionId);
+          buf.push(...this.buildStreamHistoryFromMessages(messages));
+          if (buf.length > 50) buf.splice(0, buf.length - 50);
         }
       } catch (err) {
         console.error('[autere] UserSession.fetchInitialState: failed to load session history:', err);
@@ -380,9 +439,14 @@ export class UserSession {
       // We received an event from pi — this process is active, clear external flag
       if (this.state.sessionState.externalActivity) {
         this.state.sessionState.externalActivity = false;
-        this.broadcast({ type: 'status', data: { ...this.state.sessionState } });
+        this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...this.state.sessionState } });
       }
       this.consecutiveEventsFromPi++;
+
+      // Instantly notify other UserSession instances whose pi process is on
+      // the same session file — they would otherwise only notice via the
+      // 3s file-size poll.
+      notifyExternalActivity(s.sessionState.sessionFile, this.externalInterest);
 
       switch (event.type) {
         case 'session_start':
@@ -393,12 +457,12 @@ export class UserSession {
           break;
         case 'agent_start':
           s.sessionState.isStreaming = true;
-          this.broadcast({ type: 'status', data: { ...s.sessionState } });
+          this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
           break;
         case 'agent_end':
         case 'agent_settled':
           s.sessionState.isStreaming = false;
-          this.broadcast({ type: 'status', data: { ...s.sessionState } });
+          this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
           break;
         case 'message_update':
           this.handleMessageUpdate(event);
@@ -417,16 +481,16 @@ export class UserSession {
           break;
         case 'compaction_start':
           s.sessionState.compacting = true;
-          this.broadcast({ type: 'status', data: { ...s.sessionState } });
+          this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
           break;
         case 'compaction_end':
           s.sessionState.compacting = false;
           s.sessionState.isStreaming = false;
-          this.broadcast({ type: 'status', data: { ...s.sessionState } });
+          this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
           break;
         case 'turn_start':
           s.sessionState.isStreaming = true;
-          this.broadcast({ type: 'status', data: { ...s.sessionState } });
+          this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
           break;
       }
 
@@ -438,9 +502,35 @@ export class UserSession {
     const s = this.state;
     const rpc = this.rpc;
 
+    // Reset streaming state — a new session has begun
+    s.activeStreamIdx = null;
+    s.currentStreamText = '';
+    s.currentThinkingText = '';
+
+    // Invalidate the session key immediately: subsequent pi events belong to
+    // the NEW session but we don't know its id until getState() resolves.
+    // Keying them to the old sessionId would append the new session's content
+    // to the old session's history buffer and stream it to old-session viewers.
+    // With a null key they go to a detached buffer nobody views.
+    s.sessionState.sessionId = null;
+
     rpc.getState().then(state => {
       if (state.sessionId) s.sessionState.sessionId = state.sessionId;
       if (state.sessionFile) s.sessionState.sessionFile = state.sessionFile;
+
+      // Reload history for the new session so the buffer reflects its content
+      try {
+        if (s.sessionState.sessionFile && existsSync(s.sessionState.sessionFile)) {
+          const rawMessages = readMessagesFromFile(s.sessionState.sessionFile, 50);
+          if (rawMessages.length > 0) {
+            this.setHistoryFor(s.sessionState.sessionId, this.buildStreamHistoryFromMessages(rawMessages).slice(-50));
+          }
+        }
+      } catch {}
+
+      // The new session is no longer "external" — pi is now on it
+      this.clearExternalActivity(s.sessionState.sessionId);
+
       s.sessionState.sessionName = state.sessionName || null;
       s.sessionState.isStreaming = state.isStreaming;
       s.sessionState.compacting = state.isCompacting;
@@ -451,7 +541,9 @@ export class UserSession {
           name: state.model.name || state.model.id,
         };
       }
-      this.broadcast({ type: 'status', data: { ...s.sessionState } });
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
+      const buf = this.historyFor(s.sessionState.sessionId);
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', sessionId: s.sessionState.sessionId, data: buf.slice(-50) });
     }).catch((err) => { console.error('[autere] UserSession.handleSessionStart: failed to get state:', err); });
   }
 
@@ -459,7 +551,7 @@ export class UserSession {
     const s = this.state;
     if (event.sessionName !== undefined) {
       s.sessionState.sessionName = event.sessionName;
-      this.broadcast({ type: 'status', data: { ...s.sessionState } });
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
     }
   }
 
@@ -468,51 +560,58 @@ export class UserSession {
     const evt = event.assistantMessageEvent;
     if (!evt) return;
 
+    // All history mutations apply to the CURRENT session's buffer. Events
+    // arriving while sessionId is null (mid-session-switch) go to a detached
+    // buffer that nobody is viewing — this prevents leaking one session's
+    // content into another session's history.
+    const buf = this.historyFor(s.sessionState.sessionId);
+    const sessionId = s.sessionState.sessionId;
+
     if (evt.type === 'thinking_start') {
       s.isThinking = true;
       s.currentThinkingText = '';
     } else if (evt.type === 'thinking_delta') {
       s.currentThinkingText += evt.delta || '';
       const idx = s.activeStreamIdx;
-      if (idx === null || s.streamHistory[idx]?.role !== 'thinking') {
-        if (idx !== null && s.streamHistory[idx]) {
-          s.streamHistory[idx].streaming = false;
+      if (idx === null || buf[idx]?.role !== 'thinking') {
+        if (idx !== null && buf[idx]) {
+          buf[idx].streaming = false;
         }
-        s.streamHistory.push({ role: 'thinking', text: s.currentThinkingText, streaming: true, timestamp: Date.now() });
-        s.activeStreamIdx = s.streamHistory.length - 1;
+        buf.push({ role: 'thinking', text: s.currentThinkingText, streaming: true, timestamp: Date.now() });
+        s.activeStreamIdx = buf.length - 1;
       } else {
-        s.streamHistory[idx].text = s.currentThinkingText;
+        buf[idx].text = s.currentThinkingText;
       }
-      this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
+      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-50) });
     } else if (evt.type === 'thinking_end') {
       s.isThinking = false;
       const text = evt.content || s.currentThinkingText;
       // Find the last thinking entry and finalize it
-      for (let i = s.streamHistory.length - 1; i >= 0; i--) {
-        if (s.streamHistory[i].role === 'thinking' && s.streamHistory[i].streaming) {
-          s.streamHistory[i].streaming = false;
-          if (text) s.streamHistory[i].text = text;
+      for (let i = buf.length - 1; i >= 0; i--) {
+        if (buf[i].role === 'thinking' && buf[i].streaming) {
+          buf[i].streaming = false;
+          if (text) buf[i].text = text;
           break;
         }
       }
       s.activeStreamIdx = null;
       s.currentThinkingText = '';
-      this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
+      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-50) });
     } else if (evt.type === 'text_delta') {
       const delta = evt.delta;
       const idx = s.activeStreamIdx;
-      if (idx === null || s.streamHistory[idx]?.role !== 'assistant') {
-        if (idx !== null && s.streamHistory[idx]) {
-          s.streamHistory[idx].streaming = false;
+      if (idx === null || buf[idx]?.role !== 'assistant') {
+        if (idx !== null && buf[idx]) {
+          buf[idx].streaming = false;
         }
         s.currentStreamRole = 'assistant';
         s.currentStreamText = '';
-        s.streamHistory.push({ role: 'assistant', text: '', streaming: true, timestamp: Date.now() });
-        s.activeStreamIdx = s.streamHistory.length - 1;
+        buf.push({ role: 'assistant', text: '', streaming: true, timestamp: Date.now() });
+        s.activeStreamIdx = buf.length - 1;
       }
       s.currentStreamText += delta || '';
-      s.streamHistory[s.activeStreamIdx!].text = s.currentStreamText;
-      this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
+      buf[s.activeStreamIdx!].text = s.currentStreamText;
+      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-50) });
     }
 
     // Update usage if present
@@ -556,31 +655,33 @@ export class UserSession {
         if (usage.cacheWrite) s.sessionStats.tokens.cacheWrite = (s.sessionStats.tokens.cacheWrite || 0) + usage.cacheWrite;
         if (usage.cost) s.sessionStats.cost = (s.sessionStats.cost || 0) + (usage.cost.total || 0);
       }
-      this.broadcast({ type: 'stats', data: { ...s.sessionStats } });
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
       return;
     }
 
     // Finalize any streaming thinking messages
-    for (const msg of s.streamHistory) {
+    const buf = this.historyFor(s.sessionState.sessionId);
+    const sessionId = s.sessionState.sessionId;
+    for (const msg of buf) {
       if (msg.streaming && msg.role === 'thinking') {
         msg.streaming = false;
       }
     }
 
     // Update stream history
-    const streamingIdx = s.streamHistory.findIndex(
+    const streamingIdx = buf.findIndex(
       (m: any) => m.streaming && m.role === rawRole
     );
 
     if (streamingIdx >= 0) {
-      s.streamHistory[streamingIdx] = {
-        ...s.streamHistory[streamingIdx],
+      buf[streamingIdx] = {
+        ...buf[streamingIdx],
         text,
         streaming: false,
         timestamp: Date.now(),
       };
     } else if (text) {
-      s.streamHistory.push({
+      buf.push({
         role: rawRole,
         text,
         streaming: false,
@@ -589,13 +690,14 @@ export class UserSession {
     }
 
     // Keep only last 50 messages
-    if (s.streamHistory.length > 50) {
-      s.streamHistory.splice(0, s.streamHistory.length - 50);
+    if (buf.length > 50) {
+      buf.splice(0, buf.length - 50);
     }
 
-    this.broadcast({
+    this.broadcastToSession(sessionId, {
       type: 'stream_history',
-      data: s.streamHistory.slice(-50),
+      sessionId,
+      data: buf.slice(-50),
     });
 
     // Detect errors — skip toolResult errors (handled by handleToolEnd instead)
@@ -605,8 +707,8 @@ export class UserSession {
       errorText = msg.errorMessage || 'An error occurred';
     }
     if (errorText) {
-      s.streamHistory.push({ role: 'system', text: errorText, streaming: false, timestamp: Date.now(), isError: true });
-      this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
+      buf.push({ role: 'system', text: errorText, streaming: false, timestamp: Date.now(), isError: true });
+      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-50) });
     }
 
     // Update stats
@@ -619,12 +721,12 @@ export class UserSession {
       if (usage.cost) s.sessionStats.cost = (s.sessionStats.cost || 0) + (usage.cost.total || 0);
     }
 
-    this.broadcast({ type: 'stats', data: { ...s.sessionStats } });
-    this.broadcast({ type: 'status', data: { ...s.sessionState } });
+    this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
+    this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
 
     this.rpc.getSessionStats().then(stats => {
       if (stats.contextUsage) s.sessionStats.contextUsage = stats.contextUsage;
-      this.broadcast({ type: 'stats', data: { ...s.sessionStats } });
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
     }).catch((err) => { console.error('[autere] UserSession.handleMessageEnd: failed to get session stats:', err); });
   }
 
@@ -680,9 +782,11 @@ export class UserSession {
         tool?.rmSnapshots,
       );
       if (entry) {
-        s.streamHistory.push(entry);
-        if (s.streamHistory.length > 50) s.streamHistory.splice(0, s.streamHistory.length - 50);
-        this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
+        const buf = this.historyFor(s.sessionState.sessionId);
+        const sessionId = s.sessionState.sessionId;
+        buf.push(entry);
+        if (buf.length > 50) buf.splice(0, buf.length - 50);
+        this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-50) });
       }
     }
   }
@@ -703,20 +807,44 @@ export class UserSession {
     }
 
     return messages
-      .map((msg: any) => {
+      .flatMap((msg: any) => {
         const role = msg.role || '';
         const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : undefined;
 
         if (role === 'toolResult') {
           const call = msg.toolCallId ? toolCallArgs.get(msg.toolCallId) : undefined;
           const toolArgs = call?.args || {};
-          return formatToolResult(msg.toolName, toolArgs, msg.content, msg.isError, timestamp, msg.details);
+          const formatted = formatToolResult(msg.toolName, toolArgs, msg.content, msg.isError, timestamp, msg.details);
+          return formatted ? [formatted] : [];
+        }
+
+        // Assistant messages can contain a thinking block before the text
+        // block. While streaming these render as separate entries (a
+        // 'thinking' entry from deltas, then the assistant text at
+        // message_end) — mirror that here.
+        if (role === 'assistant' && Array.isArray(msg.content)) {
+          const entries: any[] = [];
+          const thinking = msg.content
+            .filter((c: any) => c.type === 'thinking')
+            .map((c: any) => c.thinking || '')
+            .join('')
+            .trim();
+          if (thinking) {
+            entries.push({ role: 'thinking', text: thinking, streaming: false, timestamp });
+          }
+          const text = msg.content
+            .filter((c: any) => c.type === 'text')
+            .map((c: any) => c.text)
+            .join('');
+          if (text) {
+            entries.push({ role, text, streaming: false, timestamp });
+          }
+          return entries;
         }
 
         const text = msg.content?.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('') || '';
-        return { role, text, streaming: false, timestamp };
-      })
-      .filter((m: any) => m?.text);
+        return text ? [{ role, text, streaming: false, timestamp }] : [];
+      });
   }
 
   private handleModelSelect(event: any): void {
@@ -727,7 +855,7 @@ export class UserSession {
         id: event.model.id,
         name: event.model.name || event.model.id,
       };
-      this.broadcast({ type: 'status', data: { ...s.sessionState } });
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
     }
   }
 
@@ -746,15 +874,43 @@ export class UserSession {
   // ── External activity detection ──
 
   private startExternalActivityWatch(): void {
-    const sessionFile = this.state.sessionState.sessionFile;
-    if (sessionFile && existsSync(sessionFile)) {
-      try {
-        this.lastKnownFileSize = statSync(sessionFile).size;
-      } catch {}
-    }
     this.externalCheckTimer = setInterval(() => {
       this.checkExternalActivity();
     }, 3000);
+  }
+
+  /**
+   * Instant external-activity notification: another autere-managed pi process
+   * just wrote to the session file we're currently on. Same effect as the
+   * file-poll path in checkExternalActivity() but without the polling delay.
+   */
+  private handleInstantExternalActivity(): void {
+    const s = this.state;
+    const sessionId = s.sessionState.sessionId;
+    const sessionFile = s.sessionState.sessionFile;
+    if (!sessionId || !sessionFile) return;
+    if (s.sessionState.externalActivity) return; // already flagged
+
+    console.log(`[autere] External activity (instant) on current session: ${sessionId}`);
+    s.sessionState.externalActivity = true;
+    this.externalActivitySessions.set(sessionId, Date.now());
+    this.broadcastToSession(sessionId, { type: 'status', data: { ...s.sessionState } });
+
+    // Reload the stream history directly from the file so viewers see the
+    // other process's messages immediately.
+    try {
+      if (existsSync(sessionFile)) {
+        const rawMessages = readMessagesFromFile(sessionFile);
+        if (rawMessages.length > 0) {
+          const built = this.buildStreamHistoryFromMessages(rawMessages);
+          if (built.length > 50) built.splice(0, built.length - 50);
+          this.setHistoryFor(sessionId, built);
+          this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: built });
+        }
+      }
+    } catch (err) {
+      console.error('[autere] handleInstantExternalActivity: failed to reload history:', err);
+    }
   }
 
   private stopExternalActivityWatch(): void {
@@ -762,59 +918,87 @@ export class UserSession {
       clearInterval(this.externalCheckTimer);
       this.externalCheckTimer = null;
     }
-    if (this.state.sessionState.externalActivity) {
-      this.state.sessionState.externalActivity = false;
-      this.broadcast({ type: 'status', data: { ...this.state.sessionState } });
-    }
   }
 
+  /**
+   * Watch session files for writes by OTHER pi processes.
+   *
+   * Tracks the file of pi's CURRENT session (using consecutiveEventsFromPi
+   * credits to distinguish our own writes) plus the files of every session
+   * currently viewed by a connected client — growth of those files is always
+   * external, since our pi process only writes to its current session.
+   */
   private checkExternalActivity(): void {
     const s = this.state;
-    const sessionFile = s.sessionState.sessionFile;
-    if (!sessionFile || !existsSync(sessionFile)) return;
 
     try {
-      const stats = statSync(sessionFile);
-      const currentSize = stats.size;
-
-      // Clear external activity if no external writes for 60 seconds
-      if (s.sessionState.externalActivity && this.lastExternalActivityTime > 0 && Date.now() - this.lastExternalActivityTime > 60_000) {
-        s.sessionState.externalActivity = false;
-        console.log('[autere] External activity cleared (60s timeout)');
-        this.broadcast({ type: 'status', data: { ...s.sessionState } });
-        return;
+      // Build the set of sessions being viewed: pi's current session plus
+      // every session any SSE client is viewing.
+      const viewed = new Set<string | null>();
+      viewed.add(s.sessionState.sessionId);
+      for (const [, clientSessionId] of this.sseClients) {
+        if (clientSessionId) viewed.add(clientSessionId);
       }
 
-      // File size decreased (e.g. after compaction) or first check — just record it
-      if (currentSize <= this.lastKnownFileSize) {
-        this.lastKnownFileSize = currentSize;
-        return;
+      const now = Date.now();
+
+      // Clear external flags after 60s of no external writes
+      for (const [sessionId, ts] of this.externalActivitySessions) {
+        if (now - ts > 60_000) {
+          this.externalActivitySessions.delete(sessionId);
+          if (sessionId === s.sessionState.sessionId) {
+            s.sessionState.externalActivity = false;
+            console.log('[autere] External activity cleared (60s timeout)');
+            this.broadcastToSession(sessionId, { type: 'status', data: { ...s.sessionState } });
+          } else {
+            this.broadcastToSession(sessionId, { type: 'external_activity', data: { sessionId, active: false } });
+          }
+        }
       }
 
-      // File grew — did we receive events from pi recently?
-      if (this.consecutiveEventsFromPi > 0) {
-        this.lastKnownFileSize = currentSize;
-        this.consecutiveEventsFromPi--;
-        return;
+      for (const sessionId of viewed) {
+        if (!sessionId) continue;
+        const isCurrent = sessionId === s.sessionState.sessionId;
+        const sessionFile = isCurrent
+          ? s.sessionState.sessionFile
+          : s.availableSessions.find((si: any) => si.id === sessionId)?.sessionFile;
+        if (!sessionFile || !existsSync(sessionFile)) continue;
+
+        const currentSize = statSync(sessionFile).size;
+        const lastKnown = this.lastKnownFileSizes.get(sessionFile);
+        this.lastKnownFileSizes.set(sessionFile, currentSize);
+        if (lastKnown === undefined || currentSize <= lastKnown) continue;
+
+        if (isCurrent) {
+          // File grew — did we receive events from our pi process recently?
+          if (this.consecutiveEventsFromPi > 0) {
+            this.consecutiveEventsFromPi--;
+            continue;
+          }
+          // No events from pi recently — external process wrote to the file
+          console.log(`[autere] External activity detected on current session: file grew from ${lastKnown} to ${currentSize}`);
+          s.sessionState.externalActivity = true;
+          this.externalActivitySessions.set(sessionId, Date.now());
+          this.broadcastToSession(sessionId, { type: 'status', data: { ...s.sessionState } });
+        } else {
+          console.log(`[autere] External activity detected on viewed session ${sessionId}: file grew from ${lastKnown} to ${currentSize}`);
+          this.externalActivitySessions.set(sessionId, Date.now());
+          this.broadcastToSession(sessionId, { type: 'external_activity', data: { sessionId, active: true } });
+        }
+
+        // Reload the stream history for THIS session directly from its file and
+        // stream it to its viewers (RPC cached messages may be stale/other-session).
+        const rawMessages = readMessagesFromFile(sessionFile);
+        if (rawMessages.length > 0) {
+          const built = this.buildStreamHistoryFromMessages(rawMessages);
+          if (built.length > 50) built.splice(0, built.length - 50);
+          this.setHistoryFor(sessionId, built);
+          this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: built });
+        }
       }
 
-      // No events from pi recently — external process wrote to the file
-      console.log(`[autere] External activity detected: file grew from ${this.lastKnownFileSize} to ${currentSize}`);
-      s.sessionState.externalActivity = true;
-      this.lastExternalActivityTime = Date.now();
-      this.lastKnownFileSize = currentSize;
-      this.broadcast({ type: 'status', data: { ...s.sessionState } });
-
-      // Reload stream history directly from file (RPC returns cached messages from local pi process)
-      const rawMessages = readMessagesFromFile(sessionFile);
-      if (rawMessages.length > 0) {
-        const oldLen = s.streamHistory.length;
-        s.streamHistory = this.buildStreamHistoryFromMessages(rawMessages);
-        const newLen = s.streamHistory.length;
-        if (s.streamHistory.length > 50) s.streamHistory.splice(0, s.streamHistory.length - 50);
-        console.log(`[autere] External reload: ${oldLen} -> ${newLen} messages`);
-        this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', data: s.streamHistory.slice(-50) });
-      }
+      // Drop size tracking for files we no longer care about
+      if (this.lastKnownFileSizes.size > 100) this.lastKnownFileSizes.clear();
     } catch (e) {
       console.log(`[autere] Failure in checkExternalActivity: ${e}`);
     }

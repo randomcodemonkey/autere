@@ -441,25 +441,8 @@ body {
     padding: 0.5rem 0.6rem;
   }
 
-  .stream-box .stream-msg,
-  .stream-box .stream-msg *,
-  .stream-box .stream-text,
-  .stream-box .stream-text *,
-  .stream-box .stream-tool-output,
-  .stream-box .stream-tool-output *,
-  .stream-box .edit-diff,
-  .stream-box .edit-diff *,
-  .stream-box .diff-line,
-  .stream-box .diff-line-content,
-  .stream-box .diff-line-number,
-  .stream-box .edit-file-header,
-  .stream-box .diff-hidden,
-  .stream-box .diff-hidden *,
-  .stream-box .diff-add,
-  .stream-box .diff-remove,
-  .stream-box .diff-header,
-  .stream-box .diff-filename {
-    font-size: 0.55rem !important;
+  .stream-box * {
+    font-size: 0.60rem !important;
   }
 
   .stream-box .diff-line-number {
@@ -788,11 +771,10 @@ body {
   color: #aaa;
   white-space: pre-wrap;
   word-break: break-word;
+  -webkit-text-size-adjust: 100%;
 }
 
 .edit-diff {
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 0.75rem;
   background: #1a1a1a;
   border: 1px solid #333;
   border-radius: 0.25rem;
@@ -803,7 +785,6 @@ body {
 .diff-line {
   display: flex;
   padding: 0.1rem 0;
-  line-height: 1.4;
 }
 
 .diff-line-number {
@@ -816,12 +797,11 @@ body {
 }
 
 .diff-line-content {
-  flex: 1;
-  white-space: pre;
+    white-space: pre;
 }
 
 .diff-add {
-  background: #0a2a1a;
+    background: #0a2a1a;
   .diff-line-content { color: #4ade80; }
 }
 

@@ -13,6 +13,14 @@ const HEARTBEAT_TIMEOUT = 6000;  // consider dead if no heartbeat within 6s (2 m
 export function useSSE(options: UseSSEOptions = {}) {
   const { onMessage, autoConnect = true } = options;
   const [connected, setConnected] = useState(false);
+  // True while a connection attempt is in flight (initial connect or
+  // reconnect). Lets the UI show "Loading" instead of "Disconnected" for
+  // transient cases like SPA navigation or a full page (re)load, where the
+  // SSE connection is simply being re-established. Initialized to autoConnect
+  // so the very first render (before the connect effect runs) already counts
+  // as "connecting", not "disconnected" — otherwise a full page load flashes
+  // Disconnected before the SSE stream opens.
+  const [connecting, setConnecting] = useState(autoConnect);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const eventSourceRef = useRef<EventSource | null>(null);
   const onMessageRef = useRef(onMessage);
@@ -52,12 +60,14 @@ export function useSSE(options: UseSSEOptions = {}) {
       eventSourceRef.current.close();
     }
 
+    setConnecting(true);
     const es = new EventSource(url('/events'));
     eventSourceRef.current = es;
 
     es.onopen = () => {
       connectedRef.current = true;
       setConnected(true);
+      setConnecting(false);
       setReconnectAttempts(0);
       startHeartbeatCheck();
     };
@@ -77,6 +87,7 @@ export function useSSE(options: UseSSEOptions = {}) {
     es.onerror = () => {
       connectedRef.current = false;
       setConnected(false);
+      setConnecting(false);
       stopHeartbeatCheck();
       es.close();
       setReconnectAttempts((prev) => prev + 1);
@@ -90,11 +101,15 @@ export function useSSE(options: UseSSEOptions = {}) {
       eventSourceRef.current = null;
     }
     setConnected(false);
+    setConnecting(false);
   }, [stopHeartbeatCheck]);
 
   useEffect(() => {
     if (autoConnect) {
+      setConnecting(true);
       connect();
+    } else {
+      setConnecting(false);
     }
     return () => {
       disconnect();
@@ -136,5 +151,5 @@ export function useSSE(options: UseSSEOptions = {}) {
     return () => clearInterval(interval);
   }, [autoConnect, connect]);
 
-  return { connected, connect, disconnect, reconnectAttempts };
+  return { connected, connecting, connect, disconnect, reconnectAttempts };
 }

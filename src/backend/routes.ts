@@ -16,6 +16,21 @@ import { readSessions } from './sessions.js';
 import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filterScopedModels } from './utils.js';
 import { extensionsState, availableSessions } from './state.js';
 import type { SessionInfo } from './types.js';
+
+/**
+ * Resolve a session by id, tolerating id drift: pi rewrites the session
+ * header (with a fresh id) in the same file when a session is resumed,
+ * while the filename keeps the original id. So an id known to the
+ * frontend (bookmark / client tracking) may match a filename but no
+ * longer match the header id that readSessions() uses. Fall back to a
+ * filename match in that case.
+ */
+export function findSession(sessionId: string): SessionInfo | undefined {
+  const byId = availableSessions.find(s => s.id === sessionId);
+  if (byId) return byId;
+  const lower = sessionId.toLowerCase();
+  return availableSessions.find(s => basename(s.sessionFile).toLowerCase().includes(lower));
+}
 import { getUserSetting, getAllUserSettings, saveUserSettings, getUserSettingsSchema } from './user-settings.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -182,7 +197,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       return;
     }
 
-    const { sessionState, sessionStats, streamHistory, recentMessages, activeTools, recentTools,
+    const { sessionState, sessionStats, recentMessages, activeTools, recentTools,
             availableModels } = session.state;
     const rpc = session.rpc;
 
@@ -310,7 +325,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
             sendJSON(res, { success: false, error: 'Cannot delete the active session' }, 400);
             return;
           }
-          const sess = availableSessions.find(s => s.id === sessionId);
+          const sess = findSession(sessionId);
           if (!sess) {
             sendJSON(res, { success: false, error: 'Session not found' }, 404);
             return;
@@ -332,7 +347,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     const historyMatch = url.pathname.match(/^\/api\/sessions\/([\w-]+)\/history$/);
     if (historyMatch && req.method === 'GET') {
       const sessionId = historyMatch[1];
-      const sess = availableSessions.find(s => s.id === sessionId);
+      const sess = findSession(sessionId);
       if (!sess) { sendJSON(res, { success: false, error: 'Session not found' }, 404); return; }
       const limit = parseInt(url.searchParams.get('limit') || '30');
       sendJSON(res, { success: true, data: readSessionHistory(sess.sessionFile, Math.min(limit, 100)) });
@@ -349,35 +364,60 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
             sendJSON(res, { success: false, error: 'sessionId is required' }, 400);
             return;
           }
-          const sess = availableSessions.find(s => s.id === sessionId);
+          let sess = findSession(sessionId);
+          if (!sess && sessionId === sessionState.sessionId && sessionState.sessionFile) {
+            // The active session may not be in availableSessions yet (its file
+            // hasn't been written to disk). Allow switching to it anyway.
+            sess = {
+              id: sessionId,
+              sessionFile: sessionState.sessionFile,
+              sessionName: sessionState.sessionName || null,
+              parentSession: null,
+              createdAt: Date.now(),
+              lastActivity: Date.now(),
+              cwd: null,
+            };
+          }
           if (!sess) {
             session.broadcast({ type: 'error', data: { message: `Session not found: ${sessionId}` } });
             sendJSON(res, { success: false, error: 'Session not found' }, 404);
             return;
           }
 
-          // Update all clients to view the switched session
-          session.setAllClientsSession(sessionId);
+          // Read clientId from cookie to update this client's session tracking
+          const cookies = parseCookies(req.headers.cookie || '');
+          const clientId = cookies['autere-client-id'];
+          if (clientId) {
+            session.setClientSessionByClientId(clientId, sessionId);
+          }
 
-          // Always load and broadcast state — the frontend may have lost its
-          // state (e.g. after remounting from a different route).
-          const alreadyActive = sessionState.sessionId === sessionId;
+          // Load history for the response — do NOT call setAllClientsSession
+          // here because that would make "active elsewhere" tabs receive
+          // this session's history via broadcastToSession.
+          const alreadyActive =
+            sessionState.sessionId === sessionId ||
+            (Boolean(sessionState.sessionFile) && sessionState.sessionFile === sess.sessionFile);
 
           const history = readSessionHistory(sess.sessionFile, 30);
-          streamHistory.length = 0;
-          sessionState.compacting = false;
+          const loadedHistory = [];
           if (history.length > 0) {
-            streamHistory.push({ role: 'system', text: `— Loaded ${history.length} messages from session —`, streaming: false, timestamp: Date.now() });
-            streamHistory.push(...history);
+            loadedHistory.push({ role: 'system', text: `— Loaded ${history.length} messages from session —`, streaming: false, timestamp: Date.now() });
+            loadedHistory.push(...history);
             session.state.historyLoadedSessionId = sess.id;
           } else {
-            streamHistory.push({ role: 'system', text: '— Switching session —', streaming: false, timestamp: Date.now() });
+            loadedHistory.push({ role: 'system', text: '— Switching session —', streaming: false, timestamp: Date.now() });
           }
+
+          // Update shared state so live streaming goes to the right place
           session.state.currentStreamText = '';
           session.state.currentStreamRole = '';
           sessionState.sessionId = sess.id;
           sessionState.sessionFile = sess.sessionFile;
           sessionState.sessionName = sess.sessionName;
+          sessionState.compacting = false;
+          session.setHistoryFor(sess.id, loadedHistory);
+          // Pi is moving to this session — it's no longer "external" activity
+          session.clearExternalActivity(sess.id);
 
           const fileStats = readSessionUsage(sess.sessionFile);
           sessionState.messageCount = fileStats.messageCount;
@@ -386,13 +426,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           sessionStats.cost = 0;
           sessionStats.contextUsage = null;
 
-          // Broadcast status to all clients so they know about the session switch
-          session.broadcast({ type: 'status', data: { ...sessionState } });
-          session.broadcast({ type: 'stats', data: { ...sessionStats } });
-          // Only send stream_history to clients viewing this session
-          session.broadcastToSession(sessionState.sessionId, { type: 'stream_history', data: dedupHistory(streamHistory).slice(-50) });
-
-          // Only tell pi to switch if this session isn't already active
+          // Tell pi to switch session
           if (!alreadyActive) {
             await rpc.switchSession(sess.sessionFile);
             setLastSession(token, sess.sessionFile);
@@ -403,9 +437,11 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
             const rpcStats = await rpc.getSessionStats();
             if (rpcStats.contextUsage) sessionStats.contextUsage = rpcStats.contextUsage;
             if (rpcStats.cost) sessionStats.cost = rpcStats.cost;
-            session.broadcast({ type: 'stats', data: { ...sessionStats } });
           } catch (err) { console.error("[autere] post-switch stats failed:", err); }
-          sendJSON(res, { success: true });
+
+          // Return history in the response so the requesting client gets it
+          // directly. Other clients keep their own session tracking unchanged.
+          sendJSON(res, { success: true, streamHistory: dedupHistory(loadedHistory).slice(-50), sessionState: { ...sessionState }, sessionStats: { ...sessionStats } });
         } catch (err) {
           sendJSON(res, { success: false, error: `Failed to switch session: ${err}` }, 500);
         }
@@ -425,6 +461,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
         if (!state.sessionId || !state.sessionFile) {
           throw new Error('pi created session but did not return a sessionId or sessionFile');
         }
+
+        // All clients must follow pi to the new session — the pi process
+        // is now on this session, so live streaming events are for it.
+        session.setAllClientsSession(state.sessionId);
 
         // 3. Update our in-memory state with the session pi confirmed
         sessionState.sessionId = state.sessionId;
@@ -450,12 +490,14 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
         };
         availableSessions.unshift(newSessionInfo);
 
+        session.setHistoryFor(state.sessionId, []);
+
         session.state.newSessionCreating = false;
 
-        // 6. Broadcast navigate event — pi has confirmed the session exists
-        session.broadcast({ type: 'navigate', data: { url: `/session/${state.sessionId}` } });
-
-        sendJSON(res, { success: true });
+        // Return navigate URL in response — do NOT broadcast via SSE
+        // because broadcast() sends to ALL clients, not just the one that
+        // requested the new session.
+        sendJSON(res, { success: true, navigateUrl: `/session/${state.sessionId}` });
       } catch (err) {
         session.state.newSessionCreating = false;
         console.error('[autere] /api/new-session failed:', err);
@@ -478,7 +520,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           }
           const trimmed = name.trim();
           sessionState.sessionName = trimmed || null;
-          session.broadcast({ type: 'status', data: { ...sessionState } });
+          session.broadcastToSession(sessionState.sessionId, { type: 'status', data: { ...sessionState } });
           const sess = availableSessions.find(s => s.id === sessionState.sessionId);
           if (sess) sess.sessionName = trimmed || null;
           session.broadcast({ type: 'sessions', data: availableSessions });
@@ -559,16 +601,26 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     // ── SSE endpoint ──
 
     if (url.pathname === '/events') {
+      // Generate a unique client ID for this SSE connection
+      const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      // Set clientId as a cookie so subsequent HTTP requests can identify
+      // which SSE connection they belong to. The frontend never sees this.
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
+        'Connection': 'keep-alive',
+        'Set-Cookie': `autere-client-id=${clientId}; Path=/; SameSite=Lax`,
       });
       // Track which session this client is viewing (starts with current session)
       session.sseClients.set(res, sessionState.sessionId);
-      req.on('close', () => session.sseClients.delete(res));
+      session.registerClientId(clientId, res);
 
-      // Send initial state to newly connected client
+      // Send initial state to newly connected client.
+      // Do NOT send stream_history here — sessionState.sessionId reflects the
+      // pi process's current session which may not be the session this client
+      // is viewing. The frontend gets the correct history from the switch-by-id
+      // response or the /api/sessions/:id/history endpoint.
       res.write(`data: ${JSON.stringify({ type: 'status', data: sessionState })}\n\n`);
       rpc.getSessionStats().then(stats => {
         if (stats.contextUsage) sessionStats.contextUsage = stats.contextUsage;
@@ -577,7 +629,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       }).catch(() => {
         res.write(`data: ${JSON.stringify({ type: 'stats', data: sessionStats })}\n\n`);
       });
-      res.write(`data: ${JSON.stringify({ type: 'stream_history', data: dedupHistory(streamHistory).slice(-50) })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'stream_history', data: [] })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: 'tool_end', data: { id: null, recentTools } })}\n\n`);
       // Log extensions being sent
 
@@ -609,8 +661,19 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       }
     }
     const newSessions = readSessions();
+    // Preserve in-memory entries for newly created sessions whose files don't
+    // exist on disk yet (pi only writes the session file on the first message).
+    // Without this, the poller wipes the entry injected by /api/new-session
+    // and a subsequent switch-by-id 404s with "Session not found".
+    const diskIds = new Set(newSessions.map(s => s.id));
+    const activeIds = new Set<string>();
+    for (const token of pm.activeTokens()) {
+      const s = pm.get(token);
+      if (s?.state?.sessionState?.sessionId) activeIds.add(s.state.sessionState.sessionId);
+    }
+    const pending = availableSessions.filter(s => !diskIds.has(s.id) && activeIds.has(s.id));
     availableSessions.length = 0;
-    availableSessions.push(...newSessions);
+    availableSessions.push(...pending, ...newSessions);
     // Update all sessions with new session list
     for (const token of pm.activeTokens()) {
       const session = pm.get(token);

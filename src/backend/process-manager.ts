@@ -12,6 +12,8 @@ export interface ProcessManagerOptions {
   model?: string;
   args?: string[];
   idleTimeoutMs?: number;
+  /** Resume the token's last session on pi startup (default true) */
+  resumeLastSession?: boolean;
 }
 
 export class ProcessManager {
@@ -42,6 +44,7 @@ export class ProcessManager {
       provider: this.options.provider,
       model: this.options.model,
       args: this.options.args,
+      resumeLastSession: this.options.resumeLastSession,
     }, this.defaultIdleTimeoutMs);
 
     session.onIdle(() => {

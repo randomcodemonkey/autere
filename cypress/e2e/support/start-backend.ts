@@ -60,6 +60,10 @@ export function startBackend(): Promise<void> {
       'src/backend/index.ts',
       '--port', String(TEST_PORT),
       '--monitor-auth', 'false',
+      // Always start a fresh pi session — the shared ~/.pi environment means
+      // resuming the last session would attach to a session real users may
+      // also be viewing, leaking test messages into their chat.
+      '--new-session',
     ];
 
     console.log(`[e2e] Starting autere backend on port ${TEST_PORT}...`);

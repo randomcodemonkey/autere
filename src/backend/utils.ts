@@ -65,15 +65,17 @@ export function extractFullText(message: any): string {
     const toolName = message.toolName || 'tool';
     const textContent = message.content.find((c: any) => c.type === 'text');
     const output = textContent?.text || '';
-    const prefix = message.isError ? `[${toolName} error]` : `[${toolName}]`;
-    return output ? prefix + ' ' + output : prefix;
+    // Match the streaming path (formatToolResult): no prefix for successful
+    // results, prefix only for errors. Errors keep the output if present.
+    return message.isError ? (output ? `[${toolName} error] ${output}` : `[${toolName} error]`) : output;
   }
-  const textContent = message.content.find((c: any) => c.type === 'text');
-  if (textContent?.text) {
-    return textContent.text;
-  }
-  const types = message.content.map((c: any) => c.type).filter(Boolean);
-  return types.length > 0 ? '[' + types.join(', ') + ']' : '';
+  // Only text blocks are shown while streaming (toolCall/thinking blocks are
+  // rendered as separate tool/thinking entries), so a message without text
+  // content yields '' — never a '[type, ...]' placeholder.
+  return message.content
+    .filter((c: any) => c.type === 'text')
+    .map((c: any) => c.text)
+    .join('');
 }
 
 // ── Session file I/O ──
@@ -132,6 +134,7 @@ export function readSessionHistory(sessionFile: string, limit: number = 30): Str
             const textContent = msg.content?.find((c: any) => c.type === 'text');
             const output = textContent?.text || '';
             const isError = msg.isError || false;
+            const ts = msg.timestamp || (entry.timestamp ? new Date(entry.timestamp).getTime() : Date.now());
 
             if (toolName === 'edit') {
               // Edit tool - use content.text as header, details.diff as body
@@ -139,19 +142,38 @@ export function readSessionHistory(sessionFile: string, limit: number = 30): Str
               const diff = msg.details?.diff || '';
               // Combine header and diff with empty line separator
               const text = diff ? header + '\n\n' + diff : header;
-              const ts = msg.timestamp || (entry.timestamp ? new Date(entry.timestamp).getTime() : Date.now());
               messages.push({ role: 'edit', text, streaming: false, timestamp: ts, isError });
             } else {
-              // Other tool - show as toolResult with prefix
-              const prefix = isError ? `[${toolName} error]` : `[${toolName}]`;
-              const displayText = output ? prefix + ' ' + output : prefix;
-              const ts = msg.timestamp || (entry.timestamp ? new Date(entry.timestamp).getTime() : Date.now());
+              // Match the streaming path (formatToolResult): raw output, error
+              // prefix only for errors. Skip empty results — streaming never
+              // emits empty tool result entries.
+              const displayText = isError ? (output ? `[${toolName} error] ${output}` : `[${toolName} error]`) : output;
+              if (!displayText) continue;
               messages.push({ role: 'toolResult', text: displayText, streaming: false, timestamp: ts, isError });
             }
           } else {
             // Regular message (user, assistant, thinking, etc.)
-            const text = extractFullText(msg);
             const ts = msg.timestamp || (entry.timestamp ? new Date(entry.timestamp).getTime() : Date.now());
+            const text = extractFullText(msg);
+
+            // Assistant messages can contain a thinking block before the text
+            // block. While streaming these render as separate entries (a
+            // 'thinking' entry from deltas, then the assistant text at
+            // message_end) — mirror that here.
+            if (role === 'assistant' && Array.isArray(msg.content)) {
+              const thinking = msg.content
+                .filter((c: any) => c.type === 'thinking')
+                .map((c: any) => c.thinking || '')
+                .join('')
+                .trim();
+              if (thinking) {
+                messages.push({ role: 'thinking', text: thinking, streaming: false, timestamp: ts });
+              }
+            }
+
+            // Skip messages with no text (e.g. assistant messages that only
+            // contain toolCall blocks) — the streaming path never shows them.
+            if (!text) continue;
             messages.push({ role, text, streaming: false, timestamp: ts });
           }
         }

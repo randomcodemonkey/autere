@@ -124,15 +124,12 @@ describe('Backend Utilities', () => {
         const toolName = message.toolName || 'tool';
         const textContent = message.content.find((c: any) => c.type === 'text');
         const output = textContent?.text || '';
-        const prefix = message.isError ? `[${toolName} error]` : `[${toolName}]`;
-        return output ? prefix + ' ' + output : prefix;
+        return message.isError ? (output ? `[${toolName} error] ${output}` : `[${toolName} error]`) : output;
       }
-      const textContent = message.content.find((c: any) => c.type === 'text');
-      if (textContent?.text) {
-        return textContent.text;
-      }
-      const types = message.content.map((c: any) => c.type).filter(Boolean);
-      return types.length > 0 ? '[' + types.join(', ') + ']' : '';
+      return message.content
+        .filter((c: any) => c.type === 'text')
+        .map((c: any) => c.text)
+        .join('');
     }
 
     it('returns empty string for null content', () => {
@@ -144,13 +141,13 @@ describe('Backend Utilities', () => {
       expect(extractFullText(msg)).to.equal('Hello World');
     });
 
-    it('extracts text from tool result', () => {
+    it('extracts text from tool result without prefix (matches streaming)', () => {
       const msg = {
         role: 'toolResult',
         toolName: 'bash',
         content: [{ type: 'text', text: 'command output' }]
       };
-      expect(extractFullText(msg)).to.equal('[bash] command output');
+      expect(extractFullText(msg)).to.equal('command output');
     });
 
     it('extracts error text from tool result', () => {
@@ -163,14 +160,19 @@ describe('Backend Utilities', () => {
       expect(extractFullText(msg)).to.equal('[bash error] error message');
     });
 
-    it('handles non-text content types', () => {
-      const msg = { role: 'assistant', content: [{ type: 'image' }] };
-      expect(extractFullText(msg)).to.equal('[image]');
+    it('returns empty string for non-text content types (streaming never shows placeholders)', () => {
+      const msg = { role: 'assistant', content: [{ type: 'toolCall' }] };
+      expect(extractFullText(msg)).to.equal('');
     });
 
-    it('handles multiple content types', () => {
+    it('returns empty string for mixed non-text content', () => {
       const msg = { role: 'assistant', content: [{ type: 'text' }, { type: 'image' }] };
-      expect(extractFullText(msg)).to.equal('[text, image]');
+      expect(extractFullText(msg)).to.equal('');
+    });
+
+    it('extracts thinking blocks from assistant messages', () => {
+      const msg = { role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }, { type: 'text', text: 'answer' }] };
+      expect(extractFullText(msg)).to.equal('answer');
     });
   });
 

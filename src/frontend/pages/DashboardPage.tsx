@@ -164,19 +164,13 @@ export function DashboardPage({
   }, [sseConnected]);
 
   useEffect(() => {
-    if (sseConnected && streamHistory.length === 0 && sessionState.sessionId) {
-      fetch(url(`/api/sessions/${sessionState.sessionId}/history?limit=50`))
-        .then((res) => res.json())
-        .then((data) => { if (data.success && data.data?.length > 0) setStreamHistory(data.data); })
-        .catch(() => {});
-    }
     if (sseConnected && stats.tokens.input === 0 && sessionState.sessionId) {
       fetch(url('/api/stats'))
         .then((res) => res.json())
         .then((data) => { if (data.success && data.data) setStats(data.data); })
         .catch(() => {});
     }
-  }, [sseConnected, streamHistory.length, sessionState.sessionId, stats.tokens.input]);
+  }, [sseConnected, sessionState.sessionId, stats.tokens.input]);
 
   // Apply chat-fullscreen class on mount if stored in localStorage
   useEffect(() => {
@@ -194,12 +188,30 @@ export function DashboardPage({
 
     
     if (urlSessionId === sessionState.sessionId) {
+      // If stream history is empty (e.g. after initial SSE sent empty data),
+      // fetch it from the API for the current session.
+      if (streamHistory.length === 0 && urlSessionId) {
+        fetch(url(`/api/sessions/${urlSessionId}/history?limit=50`))
+          .then((res) => res.json())
+          .then((data) => { if (data.success && data.data?.length > 0) setStreamHistory(data.data); })
+          .catch(() => {});
+      }
        return;
     }
         fetch(url('/api/sessions/switch-by-id'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId: urlSessionId }),
+    }).then(res => res.json()).then(data => {
+      if (data.success && data.streamHistory) {
+        setStreamHistory(data.streamHistory);
+      }
+      if (data.success && data.sessionState) {
+        setSessionState(data.sessionState);
+      }
+      if (data.success && data.sessionStats) {
+        setStats(data.sessionStats);
+      }
     }).catch(() => {});
   }, [authenticated, sseConnected, urlSessionId, sessionState.sessionId, creatingSession]);
 
@@ -232,7 +244,15 @@ export function DashboardPage({
     fetch(url('/api/new-session'), { method: 'POST' })
       .then(res => res.json())
       .then(data => {
-        if (!data.success) {
+        if (data.success && data.navigateUrl) {
+          // Navigate directly from the response — no SSE broadcast needed
+          setCreatingSession(false);
+          setStreamHistory([]);
+          setStats({ tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, cost: 0, contextUsage: null });
+          setActiveTools([]);
+          setRecentTools([]);
+          navigate(data.navigateUrl, { replace: true });
+        } else if (!data.success) {
           setCreatingSession(false);
           setSessionError(data.error || 'Failed to create session');
         }

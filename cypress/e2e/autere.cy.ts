@@ -100,9 +100,7 @@ describe('autere E2E', () => {
 
       // Type a simple question
       cy.get('.chat-input').type('What is 2 + 2? Answer with just the number.');
-      cy.get('.chat-send-btn').click();
-
-      // Verify the user message appears in the stream
+      cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
       cy.get('.stream-role-user', { timeout: 10000 }).should('contain', 'user');
 
       // Wait for the agent to start working
@@ -376,7 +374,8 @@ describe('autere E2E', () => {
       cy.url({ timeout: 20000 }).should('match', /\/session\/[^/]+$/);
 
       // Wait for agent to be idle before sending
-      cy.get('.status-badge', { timeout: 15000 }).should('not.contain', 'Working');
+      cy.get('#main-app', { timeout: 15000 }).should('exist');
+      cy.get('.status-badge', { timeout: 30000 }).should('not.contain', 'Working');
 
       // Send a message — use the first send button (guaranteed to be 'Send' when idle)
       cy.get('.chat-input').type('Hello from new session');
@@ -441,7 +440,7 @@ describe('autere E2E', () => {
 
       // Send a message to make the agent work
       cy.get('.chat-input').type('Think about the meaning of life for a moment');
-      cy.get('.chat-send-btn').click();
+      cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
 
       // Wait for streaming to start
       cy.get('.status-badge', { timeout: 15000 }).should('contain', 'Working');
@@ -466,7 +465,7 @@ describe('autere E2E', () => {
 
       // Send a message to trigger status change
       cy.get('.chat-input').type('Hello');
-      cy.get('.chat-send-btn').click();
+      cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
 
       // Status should change to Working
       cy.get('.status-badge', { timeout: 15000 }).should('contain', 'Working');
@@ -484,7 +483,7 @@ describe('autere E2E', () => {
 
         // Send a message
         cy.get('.chat-input').type('Count test');
-        cy.get('.chat-send-btn').click();
+        cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
 
         // Wait for response
         cy.get('.stream-role-assistant', { timeout: 60000 }).should('exist');

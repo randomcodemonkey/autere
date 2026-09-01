@@ -31,13 +31,20 @@ function App() {
     pageHandlerRef.current(msg);
   }, []);
 
-  const { connected: sseConnected, connect: sseConnect, disconnect: sseDisconnect } = useSSE({
+  const { connected: sseConnected, connecting: sseConnecting, connect: sseConnect, disconnect: sseDisconnect } = useSSE({
     onMessage: handleSSEMessage,
     autoConnect: authenticated,
   });
 
+  // A connection attempt is in flight (initial load, SPA navigation remount,
+  // or reconnect after a drop). Show "Loading" rather than "Disconnected" —
+  // the backend is fine, we're just re-establishing the SSE stream.
+  const sseLoading = !sseConnected && sseConnecting;
+
   const baseStatusType = !authenticated
     ? 'disconnected'
+    : sseLoading
+    ? 'loading'
     : !sseConnected
     ? 'disconnected'
     : restarting
@@ -45,6 +52,8 @@ function App() {
     : 'connected';
   const baseStatusText = !authenticated
     ? 'Disconnected'
+    : sseLoading
+    ? 'Loading…'
     : !sseConnected
     ? 'Disconnected'
     : restarting
