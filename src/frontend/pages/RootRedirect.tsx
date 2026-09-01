@@ -15,18 +15,21 @@ export function RootRedirect() {
           // Pick the most recently active session
           const latest = data.data[0];
           navigate(`/session/${latest.id}`, { replace: true });
-        } else {
-          // No sessions available — create a new one
+        } else if (data.success) {
+          // No sessions available — create one and go to it
           fetch(url('/api/new-session'), { method: 'POST' })
             .then(res => res.json())
             .then(d => {
-              if (d.success) {
-                // The backend will broadcast a navigate event
+              if (d.success && d.navigateUrl) {
+                navigate(d.navigateUrl, { replace: true });
               } else {
-                setError('No sessions available. Create one from the chat.');
+                setError(d.error || 'No sessions available. Create one from the chat.');
               }
             })
             .catch(() => setError('Failed to create session.'));
+        } else {
+          // Request failed (e.g. not authenticated yet) — surface the error
+          setError('Failed to load sessions.');
         }
       })
       .catch(() => setError('Failed to load sessions.'));

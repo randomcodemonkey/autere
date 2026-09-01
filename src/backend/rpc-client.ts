@@ -7,8 +7,6 @@
 
 import { spawn, ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { randomUUID } from 'node:crypto';
-import { statSync, existsSync } from 'node:fs';
 import type {
   RpcCommand,
   RpcResponse,
@@ -24,13 +22,6 @@ interface ModelInfo {
   name?: string;
   contextWindow?: number;
   reasoning?: boolean;
-}
-
-interface RpcSlashCommand {
-  name: string;
-  description?: string;
-  source: string;
-  sourceInfo?: any;
 }
 
 // ── Types ──
@@ -107,20 +98,9 @@ export class MonitorRpcClient {
   private exitError: Error | null = null;
   private options: RpcClientOptions;
   private _state: RpcSessionState | null = null;
-  private _availableModels: ModelInfo[] = [];
 
   constructor(options: RpcClientOptions = {}) {
     this.options = options;
-  }
-
-  /** Current cached session state */
-  get state(): RpcSessionState | null {
-    return this._state;
-  }
-
-  /** Current cached available models */
-  get availableModels(): ModelInfo[] {
-    return this._availableModels;
   }
 
   /** Whether the process is running */
@@ -131,11 +111,6 @@ export class MonitorRpcClient {
   /** Whether the agent is streaming */
   get isStreaming(): boolean {
     return this._state?.isStreaming ?? false;
-  }
-
-  /** Get collected stderr output */
-  getStderr(): string {
-    return this.stderr;
   }
 
   /**
@@ -325,15 +300,9 @@ export class MonitorRpcClient {
     return this.getData(response) as ModelInfo;
   }
 
-  async cycleModel(): Promise<{ model: ModelInfo; thinkingLevel: string; isScoped: boolean } | null> {
-    const response = await this.send({ type: 'cycle_model' });
-    return this.getData(response) as { model: ModelInfo; thinkingLevel: string; isScoped: boolean } | null;
-  }
-
   async getAvailableModels(): Promise<ModelInfo[]> {
     const response = await this.send({ type: 'get_available_models' });
     const data = this.getData(response) as { models: ModelInfo[] };
-    this._availableModels = data.models;
     return data.models;
   }
 
@@ -362,53 +331,6 @@ export class MonitorRpcClient {
     const response = await this.send({ type: 'get_messages' });
     const data = this.getData(response) as { messages: any[] };
     return data.messages;
-  }
-
-  async getEntries(since?: string): Promise<{ entries: any[]; leafId: string | null }> {
-    const response = await this.send({ type: 'get_entries', since });
-    return this.getData(response) as { entries: any[]; leafId: string | null };
-  }
-
-  async exportHtml(outputPath?: string): Promise<{ path: string }> {
-    const response = await this.send({ type: 'export_html', outputPath });
-    return this.getData(response) as { path: string };
-  }
-
-  async fork(entryId: string): Promise<{ text: string; cancelled: boolean }> {
-    const response = await this.send({ type: 'fork', entryId });
-    return this.getData(response) as { text: string; cancelled: boolean };
-  }
-
-  async getForkMessages(): Promise<Array<{ entryId: string; text: string }>> {
-    const response = await this.send({ type: 'get_fork_messages' });
-    const data = this.getData(response) as { messages: Array<{ entryId: string; text: string }> };
-    return data.messages;
-  }
-
-  async getCommands(): Promise<RpcSlashCommand[]> {
-    const response = await this.send({ type: 'get_commands' });
-    const data = this.getData(response) as { commands: RpcSlashCommand[] };
-    return data.commands;
-  }
-
-  /**
-   * Wait for agent to become idle.
-   */
-  waitForIdle(timeout = 60000): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        unsubscribe();
-        reject(new Error(`Timeout waiting for agent to become idle. Stderr: ${this.stderr}`));
-      }, timeout);
-
-      const unsubscribe = this.onEvent((event: any) => {
-        if (event.type === 'agent_settled') {
-          clearTimeout(timer);
-          unsubscribe();
-          resolve();
-        }
-      });
-    });
   }
 
   // ── Internal ──

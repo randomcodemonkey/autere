@@ -10,51 +10,30 @@ import { join, dirname, basename } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { ProcessManager } from './process-manager.js';
-import { getUser, getUserRole, hasRole, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getAuthPassword, getTokenFromRequest, setLastSession } from './auth.js';
+import { getUser, getUserRole, hasRole, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getAuthPassword, getTokenFromRequest, setLastSession, isRegisteredUser } from './auth.js';
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filterScopedModels } from './utils.js';
 import { extensionsState } from './state.js';
 import { log } from './logger.js';
 import type { SessionInfo } from './types.js';
 
-/**
- * Resolve a session by id, tolerating id drift: pi rewrites the session
- * header (with a fresh id) in the same file when a session is resumed,
- * while the filename keeps the original id. So an id known to the
- * frontend (bookmark / client tracking) may match a filename but no
- * longer match the header id that readSessions() uses. Fall back to a
- * filename match in that case.
- */
-export function findSession(sessionId: string, sessions: SessionInfo[]): SessionInfo | undefined {
-  const byId = sessions.find(s => s.id === sessionId);
-  if (byId) return byId;
-  const lower = sessionId.toLowerCase();
-  return sessions.find(s => basename(s.sessionFile).toLowerCase().includes(lower));
-}
+import { findSession } from './sessions.js';
+import { dedupHistory } from './stream-history.js';
 import { getUserSetting, getAllUserSettings, saveUserSettings, getUserSettingsSchema } from './user-settings.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// ── Local dedup function that accepts a history array ──
-function dedupHistory(history: any[]): any[] {
-  const byKey = new Map<string, any>();
-  const order: string[] = [];
-  for (const msg of history) {
-    if (msg.streaming) {
-      const key = `streaming-${msg.role}-${msg.timestamp || 0}`;
-      byKey.set(key, msg);
-      order.push(key);
-      continue;
-    }
-    const isThinking = msg.role === 'thinking';
-    const contentKey = isThinking
-      ? `${msg.role}|${msg.text?.slice(0, 200) || ''}`
-      : `${msg.role}|${msg.text || ''}|${msg.timestamp || 0}`;
-    byKey.set(contentKey, msg);
-    order.push(contentKey);
-  }
-  return order.map(key => byKey.get(key)!);
+/** Read and parse a JSON request body */
+function readBody(req: IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk: Buffer) => { body += chunk; });
+    req.on('end', () => {
+      try { resolve(JSON.parse(body)); } catch (err) { reject(err); }
+    });
+    req.on('error', reject);
+  });
 }
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── Base path detection ──
 
@@ -95,21 +74,18 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     // ── Auth endpoints (no auth required) ──
 
     if (url.pathname === '/api/auth/login' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', () => {
-        try {
-          const { user, password } = JSON.parse(body);
+      try {
+        (async () => {
+          const { user, password } = await readBody(req);
           if (!getAuthEnabled()) {
             sendJSON(res, { success: true, message: 'Authentication disabled' });
             return;
           }
-          // Validate user (for now only "admin" is supported)
           if (!user || typeof user !== 'string') {
             sendJSON(res, { success: false, error: 'User is required' }, 400);
             return;
           }
-          if (user !== 'admin') {
+          if (!isRegisteredUser(user)) {
             sendJSON(res, { success: false, error: 'Invalid user' }, 401);
             return;
           }
@@ -125,10 +101,12 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
             'Set-Cookie': `autere-token=${token}; Path=${basePath || '/'}; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(getAuthTokenExpiry() / 1000)}`
           });
           res.end(JSON.stringify({ success: true }));
-        } catch (err) {
+        })().catch((err) => {
           sendJSON(res, { success: false, error: `Invalid login request: ${err}` }, 400);
-        }
-      });
+        });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Invalid login request: ${err}` }, 400);
+      }
       return;
     }
 
@@ -197,7 +175,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       return;
     }
 
-    const { sessionState, sessionStats, recentMessages, activeTools, recentTools,
+    const { sessionState, sessionStats, activeTools, recentTools,
             availableModels } = session.state;
     const rpc = session.rpc;
 
@@ -209,10 +187,6 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     }
     if (url.pathname === '/api/stats') {
       sendJSON(res, { success: true, data: sessionStats });
-      return;
-    }
-    if (url.pathname === '/api/messages') {
-      sendJSON(res, { success: true, data: recentMessages });
       return;
     }
     if (url.pathname === '/api/tools') {
@@ -241,11 +215,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     }
 
     if (url.pathname === '/api/set-model' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', async () => {
-        try {
-          const { provider, modelId } = JSON.parse(body);
+      try {
+        const { provider, modelId } = await readBody(req);
+        {
           if (!provider || !modelId) {
             sendJSON(res, { success: false, error: 'provider and modelId are required' }, 400);
             return;
@@ -256,10 +228,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
             session.broadcast({ type: 'status', data: { ...sessionState } });
           }
           sendJSON(res, { success: true });
-        } catch (err) {
-          sendJSON(res, { success: false, error: `Failed to set model: ${err}` }, 500);
         }
-      });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to set model: ${err}` }, 500);
+      }
       return;
     }
 
@@ -324,11 +296,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     }
 
     if (url.pathname === '/api/sessions/delete' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', async () => {
-        try {
-          const { sessionId } = JSON.parse(body);
+      try {
+        {
+          const { sessionId } = await readBody(req);
           if (!sessionId || typeof sessionId !== 'string') {
             sendJSON(res, { success: false, error: 'sessionId is required' }, 400);
             return;
@@ -349,10 +319,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           if (idx !== -1) session.state.availableSessions.splice(idx, 1);
           session.broadcast({ type: 'sessions', data: session.state.availableSessions });
           sendJSON(res, { success: true });
-        } catch (err) {
-          sendJSON(res, { success: false, error: `Failed to delete session: ${err}` }, 500);
         }
-      });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to delete session: ${err}` }, 500);
+      }
       return;
     }
 
@@ -367,15 +337,14 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     }
 
     if (url.pathname === '/api/sessions/switch-by-id' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', async () => {
-        try {
-          const { sessionId } = JSON.parse(body);
+      try {
+        {
+          const { sessionId } = await readBody(req);
           if (!sessionId || typeof sessionId !== 'string') {
             sendJSON(res, { success: false, error: 'sessionId is required' }, 400);
             return;
           }
+          log.http.forSession(sessionState.sessionId).info(`switch-by-id request: ${sessionId}`);
           let sess = findSession(sessionId, session.state.availableSessions);
           if (!sess && sessionId === sessionState.sessionId && sessionState.sessionFile) {
             // The active session may not be in availableSessions yet (its file
@@ -453,11 +422,12 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
 
           // Return history in the response so the requesting client gets it
           // directly. Other clients keep their own session tracking unchanged.
+          log.http.forSession(sessionState.sessionId).info(`switch-by-id done: alreadyActive=${alreadyActive}`);
           sendJSON(res, { success: true, streamHistory: dedupHistory(loadedHistory).slice(-50), sessionState: { ...sessionState }, sessionStats: { ...sessionStats } });
-        } catch (err) {
-          sendJSON(res, { success: false, error: `Failed to switch session: ${err}` }, 500);
         }
-      });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to switch session: ${err}` }, 500);
+      }
       return;
     }
 
@@ -465,8 +435,21 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       try {
         session.state.newSessionCreating = true;
 
+        // If pi is mid-turn, new_session gets CANCELLED by pi (it refuses to
+        // switch while streaming). Earlier this silently "succeeded" with the
+        // OLD session's state — messages then went to the previous session.
+        // Abort in-flight work first so the switch actually happens.
+        if (rpc.isStreaming || sessionState.isStreaming) {
+          log.http.forSession(sessionState.sessionId).info('Aborting in-flight work before creating new session');
+          try { await rpc.abort(); } catch {}
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
         // 1. Create new session in pi over RPC
-        await rpc.newSession();
+        const result = await rpc.newSession();
+        if (result.cancelled) {
+          throw new Error('pi refused to create a new session (agent busy) — try again');
+        }
 
         // 2. Get the state pi reports AFTER creating the session
         const state = await rpc.getState();
@@ -478,12 +461,20 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
         // is now on this session, so live streaming events are for it.
         session.setAllClientsSession(state.sessionId);
 
-        // 3. Update our in-memory state with the session pi confirmed
+        // 3. Update our in-memory state with the session pi confirmed.
+        // Also reset usage counters — the new session starts with zero
+        // messages and zero tokens; keeping the previous session's usage
+        // would make the Usage card lie about the brand-new session.
         sessionState.sessionId = state.sessionId;
         sessionState.sessionFile = state.sessionFile;
         sessionState.sessionName = state.sessionName || null;
         sessionState.isStreaming = state.isStreaming;
         sessionState.compacting = state.isCompacting;
+        sessionState.messageCount = 0;
+        sessionState.requestCount = 0;
+        sessionStats.tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+        sessionStats.cost = 0;
+        sessionStats.contextUsage = null;
         if (state.model) {
           sessionState.model = { provider: state.model.provider, id: state.model.id, name: state.model.name || state.model.id };
         }
@@ -504,6 +495,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
 
         session.setHistoryFor(state.sessionId, []);
 
+        // Push the reset state to connected clients (handleSessionStart's
+        // broadcast may have raced ahead of this reset with stale counts).
+        session.broadcastToSession(state.sessionId, { type: 'status', data: { ...sessionState } });
+
         session.state.newSessionCreating = false;
 
         // Return navigate URL in response — do NOT broadcast via SSE
@@ -522,11 +517,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     }
 
     if (url.pathname === '/api/session-name' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', async () => {
-        try {
-          const { name } = JSON.parse(body);
+      try {
+        {
+          const { name } = await readBody(req);
           if (typeof name !== 'string') {
             sendJSON(res, { success: false, error: 'name must be a string' }, 400);
             return;
@@ -539,10 +532,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           session.broadcast({ type: 'sessions', data: session.state.availableSessions });
           await rpc.setSessionName(trimmed);
           sendJSON(res, { success: true });
-        } catch (err) {
-          sendJSON(res, { success: false, error: `Failed to set session name: ${err}` }, 400);
         }
-      });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to set session name: ${err}` }, 400);
+      }
       return;
     }
 
@@ -561,11 +554,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     }
 
     if (url.pathname === '/api/settings' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', async () => {
-        try {
-          const settings = JSON.parse(body);
+      try {
+        {
+          const settings = await readBody(req);
           if (!settings || typeof settings !== 'object') {
             sendJSON(res, { success: false, error: 'Settings must be an object' }, 400);
             return;
@@ -576,19 +567,17 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           await pm.terminate(token);
           session = await pm.getOrCreate(token, user);
           sendJSON(res, { success: true });
-        } catch (err) {
-          sendJSON(res, { success: false, error: `Failed to save settings: ${err}` }, 500);
         }
-      });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to save settings: ${err}` }, 500);
+      }
       return;
     }
 
     if (url.pathname === '/api/send' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', async () => {
-        try {
-          const { message, type } = JSON.parse(body);
+      try {
+        {
+          const { message, type } = await readBody(req);
           if (!message || typeof message !== 'string' || !message.trim()) {
             sendJSON(res, { success: false, error: 'Message is required' }, 400);
             return;
@@ -606,10 +595,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
             await rpc.prompt(text);
           }
           sendJSON(res, { success: true });
-        } catch (err) {
-          sendJSON(res, { success: false, error: `Failed to send message: ${err}` }, 400);
         }
-      });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to send message: ${err}` }, 400);
+      }
       return;
     }
 

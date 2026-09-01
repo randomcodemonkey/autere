@@ -54,6 +54,10 @@ export function useAuth() {
       if (data.success) {
         setAuthenticated(true);
         setLoginError('');
+        // The login response doesn't carry user info (username/role) —
+        // fetch it now, otherwise the status modal shows '—' after a
+        // logout-login cycle.
+        await checkAuthStatus();
         return true;
       } else {
         setLoginError(data.error || 'Login failed');
@@ -63,7 +67,7 @@ export function useAuth() {
       setLoginError('Connection error');
       return false;
     }
-  }, []);
+  }, [checkAuthStatus]);
 
   const logout = useCallback(async () => {
     try {

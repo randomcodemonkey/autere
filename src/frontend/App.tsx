@@ -14,7 +14,6 @@ function App() {
   // Auth
   const { authenticated, authEnabled, loginError, userRole, username, checkAuthStatus, login, logout } = useAuth();
   const [authChecked, setAuthChecked] = useState(false);
-  const [showLoginScreen, setShowLoginScreen] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [restartingBackend, setRestartingBackend] = useState(false);
 
@@ -40,7 +39,6 @@ function App() {
   // or reconnect after a drop). Show "Loading" rather than "Disconnected" —
   // the backend is fine, we're just re-establishing the SSE stream.
   const sseLoading = !sseConnected && sseConnecting;
-
   const baseStatusType = !authenticated
     ? 'disconnected'
     : sseLoading
@@ -63,26 +61,25 @@ function App() {
   useEffect(() => {
     checkAuthStatus().then((ok) => {
       setAuthChecked(true);
-      if (!ok) setShowLoginScreen(true);
     });
   }, [checkAuthStatus]);
 
-  useEffect(() => {
-    if (authenticated) setShowLoginScreen(false);
-  }, [authenticated]);
-
   const handleLogin = useCallback(async (user: string, password: string): Promise<boolean> => {
-    const success = await login(user, password);
-    if (success) setShowLoginScreen(false);
-    return success;
+    return login(user, password);
   }, [login]);
 
   if (!authChecked) return null;
 
+  // Unauthenticated: show ONLY the login screen. Routes (and their data
+  // fetching, e.g. RootRedirect's session list) stay unmounted until login
+  // succeeds — otherwise they fire 401s on page load and get stuck in
+  // error states that never retry after login.
+  if (!authenticated) {
+    return <LoginScreen open={true} error={loginError} onLogin={handleLogin} />;
+  }
+
   return (
     <>
-      <LoginScreen open={showLoginScreen} error={loginError} onLogin={handleLogin} />
-
       <Routes>
         <Route path="/" element={
           <RootRedirect />

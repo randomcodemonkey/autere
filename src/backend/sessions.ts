@@ -1,9 +1,24 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, basename } from 'path';
 import { SessionInfo } from './types.js';
 import { PI_DIR } from './constants.js';
 import { getPiEnvDir } from './pi-env.js';
 import { log } from './logger.js';
+
+/**
+ * Resolve a session by id, tolerating id drift: pi rewrites the session
+ * header (with a fresh id) in the same file when a session is resumed,
+ * while the filename keeps the original id. So an id known to the
+ * frontend (bookmark / client tracking) may match a filename but no
+ * longer match the header id that readSessions() uses. Fall back to a
+ * filename match in that case.
+ */
+export function findSession(sessionId: string, sessions: SessionInfo[]): SessionInfo | undefined {
+  const byId = sessions.find(s => s.id === sessionId);
+  if (byId) return byId;
+  const lower = sessionId.toLowerCase();
+  return sessions.find(s => basename(s.sessionFile).toLowerCase().includes(lower));
+}
 
 const SESSIONS_DIR = join(PI_DIR, 'sessions');
 

@@ -151,5 +151,5 @@ export function useSSE(options: UseSSEOptions = {}) {
     return () => clearInterval(interval);
   }, [autoConnect, connect]);
 
-  return { connected, connecting, connect, disconnect, reconnectAttempts };
+  return { connected, connecting, connect, disconnect };
 }

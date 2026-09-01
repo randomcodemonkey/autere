@@ -9,7 +9,7 @@ import { StreamCard } from '../components/StreamCard';
 import { StatusModal } from '../components/StatusModal';
 import { SessionModal } from '../components/SessionModal';
 import { Modal } from '../components/Modal';
-import { url } from '../base-path';
+import { url, basePath } from '../base-path';
 import type {
   SessionState,
   SessionStats,
@@ -21,6 +21,21 @@ import type {
   SessionInfo,
   SSEMessage,
 } from '../types';
+
+const EMPTY_STATS: SessionStats = {
+  tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  cost: 0,
+  contextUsage: null,
+};
+
+/** Combine base auth/SSE status with session streaming state */
+function computeStatus(baseType: string, baseText: string, s: SessionState): { type: string; text: string } {
+  if (baseType === 'disconnected') return { type: 'disconnected', text: 'Disconnected' };
+  if (baseType === 'loading') return { type: 'loading', text: 'Loading…' };
+  if (s.compacting) return { type: 'streaming', text: 'Compacting' };
+  if (s.isStreaming) return { type: 'streaming', text: 'Working' };
+  return { type: 'connected', text: baseText === 'Disconnected' ? 'Disconnected' : 'Idle' };
+}
 
 interface DashboardPageProps {
   authenticated: boolean;
@@ -71,11 +86,7 @@ export function DashboardPage({
     compacting: false,
   });
 
-  const [stats, setStats] = useState<SessionStats>({
-    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    cost: 0,
-    contextUsage: null,
-  });
+  const [stats, setStats] = useState<SessionStats>(EMPTY_STATS);
 
   const [streamHistory, setStreamHistory] = useState<StreamMessage[]>([]);
   const [activeTools, setActiveTools] = useState<ActiveTool[]>([]);
@@ -89,9 +100,6 @@ export function DashboardPage({
   const [showSessionModal, setShowSessionModal] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
-
-  // Ref to track the current session ID so SSE handler comparisons aren't stale
-  const sessionIdRef = useRef<string | null>(null);
 
   // SSE message handler
   // Guards fetch responses and status events against session changes: a
@@ -121,21 +129,22 @@ export function DashboardPage({
         break;
       case 'navigate':
         if (msg.data?.url) {
-	  // clear data before navigating. TODO: move this to utility function.
-	  setCreatingSession(false);
-          setStreamHistory([]);
-          setStats({ tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, cost: 0, contextUsage: null });
-          setActiveTools([]);
-          setRecentTools([]);	
+          setCreatingSession(false);
+          resetSessionUI();
           navigate(msg.data.url, { replace: true });
         }
         break;
       case 'stats':
         setStats(msg.data);
         break;
-      case 'stream_history':
+      case 'stream_history': {
+        // Ignore history from a session other than the one being viewed
+        // (defense against cross-session bleed during switch races).
+        const viewed = viewedSessionRef.current;
+        if (msg.sessionId && viewed && msg.sessionId !== viewed) break;
         setStreamHistory(msg.data || []);
         break;
+      }
       case 'models':
         setModels(msg.data || []);
         break;
@@ -189,6 +198,32 @@ export function DashboardPage({
     }
   }, [sseConnected, sessionState.sessionId, stats.tokens.input]);
 
+  // Load chat history for the URL session IMMEDIATELY on mount/navigation —
+  // don't wait for the SSE stream (which itself waits for the pi process to
+  // spawn). This removes the 'Waiting for messages…' delay after login:
+  // the history fetch runs in parallel with the SSE setup instead of after
+  // it. Only applies when the chat is still empty, so live SSE updates that
+  // arrived first (e.g. a switch-by-id response) are never overwritten.
+  const streamHistoryRef = useRef<StreamMessage[]>([]);
+  streamHistoryRef.current = streamHistory;
+  useEffect(() => {
+    if (!authenticated || !urlSessionId) return;
+    const sid = urlSessionId;
+    let cancelled = false;
+    fetch(url(`/api/sessions/${sid}/history?limit=50`))
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data.success && data.data?.length > 0
+            && viewedSessionRef.current === sid
+            && streamHistoryRef.current.length === 0) {
+          setStreamHistory(data.data);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [authenticated, urlSessionId]);
+
   // Apply chat-fullscreen class on mount if stored in localStorage
   useEffect(() => {
     if (localStorage.getItem('autere-chat-fullscreen') === '1') {
@@ -200,9 +235,12 @@ export function DashboardPage({
   // When URL changes (browser back/forward, direct navigation, or programmatic
   // navigate), send a switch request. React Router handles the URL — we just
   // react to param changes.
+  const prevUrlSessionRef = useRef<string | null>(null);
   useEffect(() => {
     if (!authenticated || !sseConnected || !urlSessionId) return;
     const sid = urlSessionId;
+    const urlChanged = prevUrlSessionRef.current !== sid;
+    prevUrlSessionRef.current = sid;
 
     if (sid === sessionState.sessionId) {
       // If stream history is empty (e.g. after initial SSE sent empty data),
@@ -218,6 +256,12 @@ export function DashboardPage({
       }
        return;
     }
+    // Only switch when the URL itself changed (user navigation). A render
+    // where only sessionState changed (e.g. the optimistic update from
+    // handleNewSession landing before the router updates the URL) must NOT
+    // switch the backend — it would switch BACK to the stale URL's session
+    // right after creating a new one, sending subsequent messages there.
+    if (!urlChanged) return;
     fetch(url('/api/sessions/switch-by-id'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -242,9 +286,21 @@ export function DashboardPage({
     }).catch(() => {});
   }, [authenticated, sseConnected, urlSessionId, sessionState.sessionId, creatingSession]);
 
+  // Clear per-session UI state (used when entering a fresh session)
+  const resetSessionUI = useCallback(() => {
+    setStreamHistory([]);
+    setStats(EMPTY_STATS);
+    setActiveTools([]);
+    setRecentTools([]);
+  }, []);
+
   const handleLogout = useCallback(async () => {
     await logout();
     setShowStatusModal(false);
+    // Full reload to index: resets all SPA state (session view, SSE, modals)
+    // and presents a clean login screen. After re-login the app starts from
+    // the root redirect as on a fresh visit.
+    window.location.href = (basePath() || '/') as string;
   }, [logout]);
 
   const handleRestart = useCallback(async () => {
@@ -286,14 +342,11 @@ export function DashboardPage({
           const newId = data.navigateUrl.split('/').pop();
           // Navigate directly from the response — no SSE broadcast needed
           setCreatingSession(false);
-          setStreamHistory([]);
           // Update sessionState immediately so the URL effect doesn't fire a
           // redundant switch-by-id while sessionState still holds the previous
           // session's id (the SSE status event may lag behind).
           if (newId) setSessionState((prev: any) => ({ ...prev, sessionId: newId }));
-          setStats({ tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, cost: 0, contextUsage: null });
-          setActiveTools([]);
-          setRecentTools([]);
+          resetSessionUI();
           navigate(data.navigateUrl, { replace: true });
         } else if (!data.success) {
           setCreatingSession(false);
@@ -313,26 +366,7 @@ export function DashboardPage({
   }, [navigate]);
 
   const activeModelId = sessionState.model?.id || null;
-
-  // Full status computation (combines base auth/SSE status with session streaming state)
-  const statusType = baseStatusType === 'disconnected'
-    ? 'disconnected'
-    : baseStatusType === 'loading'
-    ? 'loading'
-    : sessionState.compacting
-    ? 'streaming'
-    : sessionState.isStreaming
-    ? 'streaming'
-    : 'connected';
-  const statusText = baseStatusText === 'Disconnected'
-    ? 'Disconnected'
-    : baseStatusText === 'Loading…'
-    ? 'Loading…'
-    : sessionState.compacting
-    ? 'Compacting'
-    : sessionState.isStreaming
-    ? 'Working'
-    : 'Idle';
+  const { type: statusType, text: statusText } = computeStatus(baseStatusType, baseStatusText, sessionState);
 
   if (creatingSession) {
     return (

@@ -5,136 +5,32 @@
  * event handlers, and SSE clients for a single authenticated user.
  */
 
-import { randomUUID } from 'crypto';
-import { existsSync, readFileSync, statSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import type { ServerResponse } from 'http';
 import { MonitorRpcClient } from './rpc-client.js';
 import { filterScopedModels } from './utils.js';
 import { log, userLog } from './logger.js';
-import { getLastSession, setLastSession } from './auth.js';
+import { getLastSession, setLastSession, hasRole } from './auth.js';
 import { ensurePiEnv } from './pi-env.js';
 import { readSessions } from './sessions.js';
 import type { SessionInfo } from './types.js';
 import { registerExternalActivityInterest, notifyExternalActivity, type ExternalActivityInterest } from './external-activity.js';
-
-/**
- * Read messages directly from a session JSONL file.
- * Used for external activity detection where RPC cached messages are stale.
- */
-function readMessagesFromFile(sessionFile: string, limit: number = 100): any[] {
-  try {
-    const content = readFileSync(sessionFile, 'utf-8');
-    const lines = content.split('\n').filter(Boolean);
-    const messages: any[] = [];
-    // Read from end (most recent) up to limit
-    for (let i = lines.length - 1; i >= 0 && messages.length < limit; i--) {
-      try {
-        const obj = JSON.parse(lines[i]);
-        if (obj.type === 'message') messages.unshift(obj);
-      } catch {}
-    }
-    return messages;
-  } catch { return []; }
-}
-
-// ── Helpers for detecting rm commands ──
-
-function isRmCommand(command?: string): boolean {
-  if (!command) return false;
-  const trimmed = command.trim();
-  return /^\S*\brm\b/.test(trimmed);
-}
-
-function extractRmPaths(command: string): string[] {
-  const paths: string[] = [];
-  const parts = command.trim().split(/\s+/);
-  let seenRm = false;
-  for (const part of parts) {
-    if (!seenRm) {
-      if (/rm$/.test(part)) seenRm = true;
-      continue;
-    }
-    if (part.startsWith('-')) continue;
-    paths.push(part);
-  }
-  return paths;
-}
-
-/**
- * Shared formatting for tool results into stream history entries.
- * Used by both live tool_end events and history loading from session files.
- */
-function formatToolResult(
-  toolName: string,
-  toolArgs: any,
-  resultContent: any[] | undefined,
-  isError: boolean,
-  timestamp?: number,
-  resultDetails?: any,
-  rmSnapshots?: Record<string, string>,
-): { role: string; text: string; streaming: boolean; timestamp?: number; isError?: boolean } | null {
-  let text = '';
-  let role: string;
-
-  if (toolName === 'edit') {
-    // Edit tools: content.text as header, details.diff as body
-    const header = resultContent
-      ?.filter((c: any) => c.type === 'text')
-      .map((c: any) => c.text)
-      .join('\n') || '';
-    const diff = resultDetails?.diff || '';
-    text = diff ? header + '\n\n' + diff : header;
-    role = 'edit';
-  } else if (toolName === 'write') {
-    // Write as edit with all lines shown as added
-    const filePath = toolArgs.path || '';
-    const content = toolArgs.content || '';
-    const lines = typeof content === 'string' ? content.split('\n') : [];
-    const diffLines = lines.map((line: string) => '+ ' + line);
-    const header = filePath ? `Write ${filePath}` : 'Write';
-    text = header + '\n' + diffLines.join('\n');
-    role = 'edit';
-  } else if (toolName === 'bash' && isRmCommand(toolArgs.command)) {
-    // Rm commands as edit with removed lines
-    const paths = extractRmPaths(toolArgs.command);
-    const parts: string[] = [];
-    for (const p of paths) {
-      let content = '';
-      // Use snapshot if available (live events), otherwise try to read (history)
-      if (rmSnapshots && p in rmSnapshots) {
-        content = rmSnapshots[p];
-      } else {
-        try { if (existsSync(p)) content = readFileSync(p, 'utf-8'); } catch {}
-      }
-      const lines = content.split('\n');
-      const diffLines = lines.map((line: string) => '- ' + line);
-      parts.push(`Delete ${p}\n` + diffLines.join('\n'));
-    }
-    text = parts.length > 0 ? parts.join('\n\n') : paths.map(p => `Delete ${p}`).join(', ');
-    role = 'edit';
-  } else if (resultContent) {
-    text = resultContent
-      .filter((c: any) => c.type === 'text')
-      .map((c: any) => c.text)
-      .join('\n');
-    role = 'toolResult';
-  } else {
-    return null;
-  }
-
-  const prefix = isError ? `[${toolName} error]` : '';
-  const displayText = prefix ? (text ? prefix + ' ' + text : prefix) : text;
-  if (!displayText) return null;
-
-  return { role, text: displayText, streaming: false, timestamp, ...(isError ? { isError: true } : {}) };
-}
+import {
+  isRmCommand,
+  extractRmPaths,
+  formatToolResult,
+  readMessageEntries,
+  buildStreamHistoryFromMessages,
+  accumulateUsage,
+} from './stream-history.js';
+import { ExternalActivityWatcher } from './external-watcher.js';
+import { formatToolArgs } from '../shared/format.js';
 
 // ── Per-user state types ──
 
 export interface UserSessionState {
   sessionState: any;
   sessionStats: any;
-  recentMessages: any[];
   activeTools: Map<string, any>;
   recentTools: any[];
   availableModels: any[];
@@ -171,7 +67,6 @@ function createInitialState(): UserSessionState {
       cost: 0,
       contextUsage: null,
     },
-    recentMessages: [],
     activeTools: new Map(),
     recentTools: [],
     availableModels: [],
@@ -204,11 +99,9 @@ export class UserSession {
   private _idleTimeoutMs: number;
   private _onIdle: (() => void) | null = null;
 
-  // External activity detection — watches the session file for writes by other pi processes
-  private externalCheckTimer: ReturnType<typeof setInterval> | null = null;
-  private lastKnownFileSizes: Map<string, number> = new Map(); // sessionFile -> size
-  private externalActivitySessions: Map<string, number> = new Map(); // sessionId -> last external activity ts
+  // External activity detection — watches session files for writes by other pi processes
   private consecutiveEventsFromPi: number = 0;
+  private externalWatcher: ExternalActivityWatcher;
 
   // Isolation mode: exclude legacy global sessions from this user's listing
   private isolatedSessions: boolean;
@@ -240,6 +133,53 @@ export class UserSession {
       getSessionFile: () => this.state.sessionState.sessionFile,
       onExternalActivity: () => this.handleInstantExternalActivity(),
     };
+
+    this.externalWatcher = new ExternalActivityWatcher({
+      getViewedSessions: () => {
+        const viewed: { sessionId: string; sessionFile: string | undefined; isCurrent: boolean }[] = [];
+        if (this.state.sessionState.sessionId) {
+          viewed.push({
+            sessionId: this.state.sessionState.sessionId,
+            sessionFile: this.state.sessionState.sessionFile || undefined,
+            isCurrent: true,
+          });
+        }
+        for (const [, clientSessionId] of this.sseClients) {
+          if (!clientSessionId || viewed.some(v => v.sessionId === clientSessionId)) continue;
+          const isCurrent = clientSessionId === this.state.sessionState.sessionId;
+          viewed.push({
+            sessionId: clientSessionId,
+            sessionFile: isCurrent
+              ? this.state.sessionState.sessionFile || undefined
+              : this.state.availableSessions.find((si: SessionInfo) => si.id === clientSessionId)?.sessionFile,
+            isCurrent,
+          });
+        }
+        return viewed;
+      },
+      hasRecentPiEvent: () => this.consecutiveEventsFromPi > 0,
+      consumePiEvent: () => { this.consecutiveEventsFromPi--; },
+      onCurrentExternalActivity: (sessionId) => {
+        this.state.sessionState.externalActivity = true;
+        this.broadcastToSession(sessionId, { type: 'status', data: { ...this.state.sessionState } });
+      },
+      onViewedExternalActivity: (sessionId) => {
+        this.broadcastToSession(sessionId, { type: 'external_activity', data: { sessionId, active: true } });
+      },
+      onExpired: (sessionId, isCurrent) => {
+        if (isCurrent) {
+          this.state.sessionState.externalActivity = false;
+          log.userSession.forSession(sessionId).debug('External activity cleared (60s timeout)');
+          this.broadcastToSession(sessionId, { type: 'status', data: { ...this.state.sessionState } });
+        } else {
+          this.broadcastToSession(sessionId, { type: 'external_activity', data: { sessionId, active: false } });
+        }
+      },
+      onHistoryReload: (sessionId, entries) => {
+        this.setHistoryFor(sessionId, entries);
+        this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: entries });
+      },
+    });
   }
 
   /**
@@ -249,7 +189,12 @@ export class UserSession {
    * on disk yet (pi writes the file on the first message).
    */
   refreshSessions(): SessionInfo[] {
-    const fresh = readSessions(this.user, !this.isolatedSessions);
+    // Legacy global sessions (~/.pi/agent/sessions) are only included for
+    // admin-role users — that directory is admin's home agent dir, so
+    // exposing it to other users would leak admin's sessions (chat
+    // history!) into their session list. Non-admin users only ever see
+    // their own env's sessions.
+    const fresh = readSessions(this.user, hasRole(this.user, 'admin') && !this.isolatedSessions);
     const diskIds = new Set(fresh.map(s => s.id));
     const viewed = new Set<string | null>();
     viewed.add(this.state.sessionState.sessionId);
@@ -282,11 +227,10 @@ export class UserSession {
     }, this._idleTimeoutMs);
   }
 
-  /** Broadcast an SSE event to all connected clients */
   /**
-   * Broadcast an SSE event to clients viewing the current session.
-   * Automatically injects sessionId into event data if not already present,
-   * so only clients viewing that session receive the event.
+   * Broadcast an SSE event to all connected clients.
+   * (Prefer broadcastToSession() — most events should only reach the
+   * clients viewing the session they belong to.)
    */
   broadcast(data: any) {
     const msg = `data: ${JSON.stringify(data)}\n\n`;
@@ -313,7 +257,7 @@ export class UserSession {
 
   /** Clear the external-activity flag for a session and notify its viewers */
   clearExternalActivity(sessionId: string | null) {
-    this.externalActivitySessions.delete(sessionId || '__none__');
+    if (sessionId) this.externalWatcher.clear(sessionId);
     if (sessionId) {
       this.broadcastToSession(sessionId, { type: 'external_activity', data: { sessionId, active: false } });
     }
@@ -369,8 +313,8 @@ export class UserSession {
     // Start idle timer
     this.resetIdleTimer();
 
-    // Start watching session file for external writes
-    this.startExternalActivityWatch();
+    // Start watching session files for external writes
+    this.externalWatcher.start();
 
     // Register for instant cross-session external-activity notifications
     this.unregisterExternalInterest = registerExternalActivityInterest(this.externalInterest);
@@ -384,7 +328,7 @@ export class UserSession {
       clearTimeout(this.cleanupTimer);
       this.cleanupTimer = null;
     }
-    this.stopExternalActivityWatch();
+    this.externalWatcher.stop();
     this.unregisterExternalInterest?.();
     this.unregisterExternalInterest = null;
     try {
@@ -449,7 +393,7 @@ export class UserSession {
         const messages = await this.rpc.getMessages();
         if (messages && messages.length > 0) {
           const buf = this.historyFor(this.state.sessionState.sessionId);
-          buf.push(...this.buildStreamHistoryFromMessages(messages));
+          buf.push(...buildStreamHistoryFromMessages(messages));
           if (buf.length > 50) buf.splice(0, buf.length - 50);
         }
       } catch (err) {
@@ -554,9 +498,9 @@ export class UserSession {
       // Reload history for the new session so the buffer reflects its content
       try {
         if (s.sessionState.sessionFile && existsSync(s.sessionState.sessionFile)) {
-          const rawMessages = readMessagesFromFile(s.sessionState.sessionFile, 50);
+          const rawMessages = readMessageEntries(s.sessionState.sessionFile, 50);
           if (rawMessages.length > 0) {
-            this.setHistoryFor(s.sessionState.sessionId, this.buildStreamHistoryFromMessages(rawMessages).slice(-50));
+            this.setHistoryFor(s.sessionState.sessionId, buildStreamHistoryFromMessages(rawMessages).slice(-50));
           }
         }
       } catch {}
@@ -678,14 +622,7 @@ export class UserSession {
     // Skip toolResult and thinking messages — they are handled by handleToolEnd and handleMessageUpdate
     if (rawRole === 'toolResult' || rawRole === 'thinking') {
       // Still update stats
-      const usage = event.message.usage;
-      if (usage) {
-        if (usage.input) s.sessionStats.tokens.input = (s.sessionStats.tokens.input || 0) + usage.input;
-        if (usage.output) s.sessionStats.tokens.output = (s.sessionStats.tokens.output || 0) + usage.output;
-        if (usage.cacheRead) s.sessionStats.tokens.cacheRead = (s.sessionStats.tokens.cacheRead || 0) + usage.cacheRead;
-        if (usage.cacheWrite) s.sessionStats.tokens.cacheWrite = (s.sessionStats.tokens.cacheWrite || 0) + usage.cacheWrite;
-        if (usage.cost) s.sessionStats.cost = (s.sessionStats.cost || 0) + (usage.cost.total || 0);
-      }
+      accumulateUsage(s.sessionStats, event.message.usage);
       this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
       return;
     }
@@ -743,14 +680,7 @@ export class UserSession {
     }
 
     // Update stats
-    const usage = event.message.usage;
-    if (usage) {
-      if (usage.input) s.sessionStats.tokens.input = (s.sessionStats.tokens.input || 0) + usage.input;
-      if (usage.output) s.sessionStats.tokens.output = (s.sessionStats.tokens.output || 0) + usage.output;
-      if (usage.cacheRead) s.sessionStats.tokens.cacheRead = (s.sessionStats.tokens.cacheRead || 0) + usage.cacheRead;
-      if (usage.cacheWrite) s.sessionStats.tokens.cacheWrite = (s.sessionStats.tokens.cacheWrite || 0) + usage.cacheWrite;
-      if (usage.cost) s.sessionStats.cost = (s.sessionStats.cost || 0) + (usage.cost.total || 0);
-    }
+    accumulateUsage(s.sessionStats, event.message.usage);
 
     this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
     this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
@@ -763,7 +693,7 @@ export class UserSession {
 
   private handleToolStart(event: any): void {
     const s = this.state;
-    const cmd = this.formatToolArgs(event.toolName, event.args);
+    const cmd = formatToolArgs(event.toolName, event.args);
 
     // Close any previously active tool (it terminated without sending tool_end)
     for (const [id, tool] of s.activeTools) {
@@ -822,62 +752,6 @@ export class UserSession {
     }
   }
 
-  private buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
-    const messages = rawMessages.map((m: any) => m.message || m).filter(Boolean);
-
-    // Build a map of toolCallId -> tool call args from assistant messages
-    const toolCallArgs = new Map<string, any>();
-    for (const msg of messages) {
-      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (block.type === 'toolCall' && block.id && block.arguments) {
-            toolCallArgs.set(block.id, { name: block.name, args: block.arguments });
-          }
-        }
-      }
-    }
-
-    return messages
-      .flatMap((msg: any) => {
-        const role = msg.role || '';
-        const timestamp = msg.timestamp ? new Date(msg.timestamp).getTime() : undefined;
-
-        if (role === 'toolResult') {
-          const call = msg.toolCallId ? toolCallArgs.get(msg.toolCallId) : undefined;
-          const toolArgs = call?.args || {};
-          const formatted = formatToolResult(msg.toolName, toolArgs, msg.content, msg.isError, timestamp, msg.details);
-          return formatted ? [formatted] : [];
-        }
-
-        // Assistant messages can contain a thinking block before the text
-        // block. While streaming these render as separate entries (a
-        // 'thinking' entry from deltas, then the assistant text at
-        // message_end) — mirror that here.
-        if (role === 'assistant' && Array.isArray(msg.content)) {
-          const entries: any[] = [];
-          const thinking = msg.content
-            .filter((c: any) => c.type === 'thinking')
-            .map((c: any) => c.thinking || '')
-            .join('')
-            .trim();
-          if (thinking) {
-            entries.push({ role: 'thinking', text: thinking, streaming: false, timestamp });
-          }
-          const text = msg.content
-            .filter((c: any) => c.type === 'text')
-            .map((c: any) => c.text)
-            .join('');
-          if (text) {
-            entries.push({ role, text, streaming: false, timestamp });
-          }
-          return entries;
-        }
-
-        const text = msg.content?.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('') || '';
-        return text ? [{ role, text, streaming: false, timestamp }] : [];
-      });
-  }
-
   private handleModelSelect(event: any): void {
     const s = this.state;
     if (event.model) {
@@ -890,25 +764,7 @@ export class UserSession {
     }
   }
 
-  private formatToolArgs(name: string, args: any): string {
-    if (!args) return '';
-    if (name === 'bash' && typeof args.command === 'string') return args.command;
-    if (name === 'read' && typeof args.path === 'string') return args.path;
-    if (name === 'write' && typeof args.path === 'string') return args.path;
-    if (name === 'edit' && typeof args.path === 'string') return args.path;
-    for (const v of Object.values(args)) {
-      if (typeof v === 'string' && v.length > 0) return v;
-    }
-    return '';
-  }
-
   // ── External activity detection ──
-
-  private startExternalActivityWatch(): void {
-    this.externalCheckTimer = setInterval(() => {
-      this.checkExternalActivity();
-    }, 3000);
-  }
 
   /**
    * Instant external-activity notification: another autere-managed pi process
@@ -924,16 +780,16 @@ export class UserSession {
 
     log.userSession.forSession(sessionId).info('External activity (instant notification)');
     s.sessionState.externalActivity = true;
-    this.externalActivitySessions.set(sessionId, Date.now());
+    this.externalWatcher.flagActivity(sessionId);
     this.broadcastToSession(sessionId, { type: 'status', data: { ...s.sessionState } });
 
     // Reload the stream history directly from the file so viewers see the
     // other process's messages immediately.
     try {
       if (existsSync(sessionFile)) {
-        const rawMessages = readMessagesFromFile(sessionFile);
+        const rawMessages = readMessageEntries(sessionFile);
         if (rawMessages.length > 0) {
-          const built = this.buildStreamHistoryFromMessages(rawMessages);
+          const built = buildStreamHistoryFromMessages(rawMessages);
           if (built.length > 50) built.splice(0, built.length - 50);
           this.setHistoryFor(sessionId, built);
           this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: built });
@@ -941,97 +797,6 @@ export class UserSession {
       }
     } catch (err) {
       log.userSession.forSession(sessionId).error('handleInstantExternalActivity: failed to reload history:', err);
-    }
-  }
-
-  private stopExternalActivityWatch(): void {
-    if (this.externalCheckTimer) {
-      clearInterval(this.externalCheckTimer);
-      this.externalCheckTimer = null;
-    }
-  }
-
-  /**
-   * Watch session files for writes by OTHER pi processes.
-   *
-   * Tracks the file of pi's CURRENT session (using consecutiveEventsFromPi
-   * credits to distinguish our own writes) plus the files of every session
-   * currently viewed by a connected client — growth of those files is always
-   * external, since our pi process only writes to its current session.
-   */
-  private checkExternalActivity(): void {
-    const s = this.state;
-
-    try {
-      // Build the set of sessions being viewed: pi's current session plus
-      // every session any SSE client is viewing.
-      const viewed = new Set<string | null>();
-      viewed.add(s.sessionState.sessionId);
-      for (const [, clientSessionId] of this.sseClients) {
-        if (clientSessionId) viewed.add(clientSessionId);
-      }
-
-      const now = Date.now();
-
-      // Clear external flags after 60s of no external writes
-      for (const [sessionId, ts] of this.externalActivitySessions) {
-        if (now - ts > 60_000) {
-          this.externalActivitySessions.delete(sessionId);
-          if (sessionId === s.sessionState.sessionId) {
-            s.sessionState.externalActivity = false;
-            log.userSession.forSession(sessionId).debug('External activity cleared (60s timeout)');
-            this.broadcastToSession(sessionId, { type: 'status', data: { ...s.sessionState } });
-          } else {
-            this.broadcastToSession(sessionId, { type: 'external_activity', data: { sessionId, active: false } });
-          }
-        }
-      }
-
-      for (const sessionId of viewed) {
-        if (!sessionId) continue;
-        const isCurrent = sessionId === s.sessionState.sessionId;
-        const sessionFile = isCurrent
-          ? s.sessionState.sessionFile
-          : s.availableSessions.find((si: any) => si.id === sessionId)?.sessionFile;
-        if (!sessionFile || !existsSync(sessionFile)) continue;
-
-        const currentSize = statSync(sessionFile).size;
-        const lastKnown = this.lastKnownFileSizes.get(sessionFile);
-        this.lastKnownFileSizes.set(sessionFile, currentSize);
-        if (lastKnown === undefined || currentSize <= lastKnown) continue;
-
-        if (isCurrent) {
-          // File grew — did we receive events from our pi process recently?
-          if (this.consecutiveEventsFromPi > 0) {
-            this.consecutiveEventsFromPi--;
-            continue;
-          }
-          // No events from pi recently — external process wrote to the file
-          log.userSession.forSession(sessionId).info(`External activity detected (file grew from ${lastKnown} to ${currentSize} bytes)`);
-          s.sessionState.externalActivity = true;
-          this.externalActivitySessions.set(sessionId, Date.now());
-          this.broadcastToSession(sessionId, { type: 'status', data: { ...s.sessionState } });
-        } else {
-          log.userSession.forSession(sessionId).info(`External activity detected on viewed session (file grew from ${lastKnown} to ${currentSize} bytes)`);
-          this.externalActivitySessions.set(sessionId, Date.now());
-          this.broadcastToSession(sessionId, { type: 'external_activity', data: { sessionId, active: true } });
-        }
-
-        // Reload the stream history for THIS session directly from its file and
-        // stream it to its viewers (RPC cached messages may be stale/other-session).
-        const rawMessages = readMessagesFromFile(sessionFile);
-        if (rawMessages.length > 0) {
-          const built = this.buildStreamHistoryFromMessages(rawMessages);
-          if (built.length > 50) built.splice(0, built.length - 50);
-          this.setHistoryFor(sessionId, built);
-          this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: built });
-        }
-      }
-
-      // Drop size tracking for files we no longer care about
-      if (this.lastKnownFileSizes.size > 100) this.lastKnownFileSizes.clear();
-    } catch (e) {
-      log.userSession.error('Failure in checkExternalActivity:', e);
     }
   }
 }

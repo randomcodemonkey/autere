@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { StreamEntry, SessionUsageResult } from './types.js';
 import { getUserSetting } from './user-settings.js';
 import { log } from './logger.js';
+import { buildStreamHistoryFromMessages, readAllMessageEntries } from './stream-history.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -58,26 +59,7 @@ export function getDashboardHTML(basePath: string = ''): string {
   return html;
 }
 
-// ── Message extraction ──
-
-export function extractFullText(message: any): string {
-  if (!message.content) return '';
-  if (message.role === 'toolResult') {
-    const toolName = message.toolName || 'tool';
-    const textContent = message.content.find((c: any) => c.type === 'text');
-    const output = textContent?.text || '';
-    // Match the streaming path (formatToolResult): no prefix for successful
-    // results, prefix only for errors. Errors keep the output if present.
-    return message.isError ? (output ? `[${toolName} error] ${output}` : `[${toolName} error]`) : output;
-  }
-  // Only text blocks are shown while streaming (toolCall/thinking blocks are
-  // rendered as separate tool/thinking entries), so a message without text
-  // content yields '' — never a '[type, ...]' placeholder.
-  return message.content
-    .filter((c: any) => c.type === 'text')
-    .map((c: any) => c.text)
-    .join('');
-}
+export { extractFullText } from '../shared/format.js';
 
 // ── Session file I/O ──
 
@@ -117,71 +99,10 @@ export function readSessionUsage(sessionFile: string): SessionUsageResult {
 export function readSessionHistory(sessionFile: string, limit: number = 30): StreamEntry[] {
   try {
     if (!existsSync(sessionFile)) return [];
-    const content = readFileSync(sessionFile, 'utf-8');
-    const lines = content.split('\n').filter(l => l.trim());
-    const messages: StreamEntry[] = [];
-
-    for (let i = 1; i < lines.length; i++) {
-      try {
-        const entry = JSON.parse(lines[i]);
-        if (entry.type === 'message' && entry.message) {
-          const msg = entry.message;
-          const role = msg.role || '';
-          if (!role || role === 'model_change') continue;
-
-          // Handle toolResult messages - detect edit tool specially
-          if (role === 'toolResult') {
-            const toolName = msg.toolName || 'tool';
-            const textContent = msg.content?.find((c: any) => c.type === 'text');
-            const output = textContent?.text || '';
-            const isError = msg.isError || false;
-            const ts = msg.timestamp || (entry.timestamp ? new Date(entry.timestamp).getTime() : Date.now());
-
-            if (toolName === 'edit') {
-              // Edit tool - use content.text as header, details.diff as body
-              const header = output; // e.g. "Successfully replaced 1 block(s) in /path/to/file"
-              const diff = msg.details?.diff || '';
-              // Combine header and diff with empty line separator
-              const text = diff ? header + '\n\n' + diff : header;
-              messages.push({ role: 'edit', text, streaming: false, timestamp: ts, isError });
-            } else {
-              // Match the streaming path (formatToolResult): raw output, error
-              // prefix only for errors. Skip empty results — streaming never
-              // emits empty tool result entries.
-              const displayText = isError ? (output ? `[${toolName} error] ${output}` : `[${toolName} error]`) : output;
-              if (!displayText) continue;
-              messages.push({ role: 'toolResult', text: displayText, streaming: false, timestamp: ts, isError });
-            }
-          } else {
-            // Regular message (user, assistant, thinking, etc.)
-            const ts = msg.timestamp || (entry.timestamp ? new Date(entry.timestamp).getTime() : Date.now());
-            const text = extractFullText(msg);
-
-            // Assistant messages can contain a thinking block before the text
-            // block. While streaming these render as separate entries (a
-            // 'thinking' entry from deltas, then the assistant text at
-            // message_end) — mirror that here.
-            if (role === 'assistant' && Array.isArray(msg.content)) {
-              const thinking = msg.content
-                .filter((c: any) => c.type === 'thinking')
-                .map((c: any) => c.thinking || '')
-                .join('')
-                .trim();
-              if (thinking) {
-                messages.push({ role: 'thinking', text: thinking, streaming: false, timestamp: ts });
-              }
-            }
-
-            // Skip messages with no text (e.g. assistant messages that only
-            // contain toolCall blocks) — the streaming path never shows them.
-            if (!text) continue;
-            messages.push({ role, text, streaming: false, timestamp: ts });
-          }
-        }
-      } catch (lineErr) { log.utils.error('Failed to parse history line:', lineErr); continue; }
-    }
-
-    return messages.slice(-limit);
+    // Rendering is shared with the live streaming path (stream-history.ts) so
+    // file-loaded history always matches what live events produce — including
+    // edit/write/rm tool rendering that this function used to reimplement.
+    return buildStreamHistoryFromMessages(readAllMessageEntries(sessionFile)).slice(-limit) as StreamEntry[];
   } catch (err) {
     log.utils.error('Failed to read session history:', err);
     return [];

@@ -11,6 +11,9 @@ import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { AUTH_TOKENS_FILE, AUTH_TOKEN_EXPIRY_MS } from './constants.js';
 import { log } from './logger.js';
+import { parseCookies } from '../shared/format.js';
+
+export { parseCookies };
 
 // ── Auth state ──
 
@@ -27,6 +30,7 @@ interface UserEntry {
 // User registry — for now only admin is supported
 const users: Record<string, UserEntry> = {
   admin: { password: '', role: 'admin' }, // password set at init
+  user: { password: '', role: 'user' },   // normal (non-admin) user, same password
 };
 
 let authTokens: Map<string, TokenEntry> = new Map();
@@ -87,17 +91,6 @@ export function saveAuthTokens() {
   }
 }
 
-// ── Cookie parsing ──
-
-export function parseCookies(header: string): Record<string, string> {
-  const cookies: Record<string, string> = {};
-  for (const part of header.split(';')) {
-    const [key, ...val] = part.split('=');
-    if (key) cookies[key.trim()] = val.join('=').trim();
-  }
-  return cookies;
-}
-
 // ── Token lookup ──
 
 function findValidToken(req: IncomingMessage): TokenEntry | null {
@@ -129,21 +122,11 @@ export function checkAuth(req: IncomingMessage): boolean {
 /** Get the auth token from the request, or null */
 export function getTokenFromRequest(req: IncomingMessage): string | null {
   if (!authEnabled) return 'noauth'; // single session when auth is disabled
-  const now = Date.now();
-  // Check cookie
   const cookies = parseCookies(req.headers.cookie || '');
   const cookieToken = cookies['autere-token'];
-  if (cookieToken) {
-    const entry = authTokens.get(cookieToken);
-    if (entry && entry.expiry > now) return cookieToken;
-  }
-  // Check Authorization header
+  if (cookieToken && findValidToken(req)) return cookieToken;
   const auth = req.headers.authorization;
-  if (auth?.startsWith('Bearer ')) {
-    const token = auth.slice(7);
-    const entry = authTokens.get(token);
-    if (entry && entry.expiry > now) return token;
-  }
+  if (auth?.startsWith('Bearer ') && findValidToken(req)) return auth.slice(7);
   return null;
 }
 
@@ -152,6 +135,11 @@ export function getUser(req: IncomingMessage): string | null {
   if (!authEnabled) return 'admin'; // default user when auth is disabled
   const entry = findValidToken(req);
   return entry?.user || null;
+}
+
+/** Whether the user exists in the user registry */
+export function isRegisteredUser(user: string): boolean {
+  return user in users;
 }
 
 /** Get the role for a user */
@@ -180,8 +168,8 @@ export function resolveAuth(pi: { getFlag: (name: string) => any }) {
   if (authEnabled && !authPassword) {
     throw new Error('[autere] Authentication is enabled but no password was provided. Set --monitor-password or PI_MONITOR_PASSWORD environment variable, or disable with --monitor-auth false');
   }
-  // Set admin password
-  if (users.admin) users.admin.password = authPassword;
+  // Set passwords (all accounts share the configured password for now)
+  for (const u of Object.values(users)) u.password = authPassword;
   loadAuthTokens();
   if (!authEnabled) {
     log.auth.info('Authentication disabled (--monitor-auth false)');

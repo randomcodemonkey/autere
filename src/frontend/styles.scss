@@ -135,7 +135,8 @@ body {
   height: 1.1em;
   width: auto;
   flex-shrink: 0;
-  display: block;
+  display: inline-block;
+  vertical-align: middle;
   margin-right: 0.3rem;
 }
 
