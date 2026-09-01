@@ -137,7 +137,7 @@ export function SettingsPage({
         sessionId={null}
         sessionName={null}
         onSessionClick={() => navigate('/', { replace: true })}
-        externalActivity={false}
+        workingExternal={false}
         isActive={false}
       />
 

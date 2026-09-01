@@ -118,9 +118,12 @@ export type SSEEventType =
   | 'new_session_creating'
   | 'navigate'
   | 'error'
+  | 'external_activity'
   | 'heartbeat';
 
 export interface SSEMessage {
   type: SSEEventType;
   data: any;
+  /** Session the event belongs to, when known (e.g. stream_history) */
+  sessionId?: string | null;
 }

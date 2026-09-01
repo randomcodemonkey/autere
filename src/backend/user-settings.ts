@@ -18,6 +18,8 @@ import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { USER_SETTINGS_DIR, PI_DIR } from './constants.js';
+import { getPiEnvDir, ensurePiEnv } from './pi-env.js';
+import { log } from './logger.js';
 
 interface UserSettings {
   [key: string]: any;
@@ -56,7 +58,7 @@ function readJsonCached(filePath: string): any | null {
     settingsCache.set(filePath, { data, mtime: stat.mtimeMs });
     return data;
   } catch (err) {
-    console.error(`[autere] readJsonCached(${filePath}) failed:`, err);
+    log.settings.error(`readJsonCached(${filePath}) failed:`, err);
     return null;
   }
 }
@@ -127,6 +129,61 @@ export function getAllUserSettings(user: string): UserSettings {
 
 export function saveUserSettings(user: string, settings: UserSettings): void {
   writeUserSettingsFile(user, settings);
+  applySettingsToPiEnv(user, settings);
+}
+
+/**
+ * Write user settings through to the per-user pi environment so the
+ * user's pi process picks them up. The env dir is seeded from the global
+ * ~/.pi/agent on first use; this overrides the seeded defaults per user.
+ */
+function applySettingsToPiEnv(user: string, settings: UserSettings): void {
+  const envDir = ensurePiEnv(user);
+
+  try {
+    // Merge model/package settings into the env's settings.json
+    const piSettingsPath = join(envDir, 'settings.json');
+    let piSettings: UserSettings = {};
+    if (existsSync(piSettingsPath)) {
+      try { piSettings = JSON.parse(readFileSync(piSettingsPath, 'utf-8')); } catch {}
+    }
+    let piSettingsChanged = false;
+    if ('enabledModels' in settings) {
+      piSettings.enabledModels = settings.enabledModels;
+      piSettingsChanged = true;
+    }
+    if ('packages' in settings) {
+      piSettings.packages = settings.packages;
+      piSettingsChanged = true;
+    }
+    if (piSettingsChanged) {
+      const tmp = join(envDir, `.settings-tmp-${randomUUID()}`);
+      writeFileSync(tmp, JSON.stringify(piSettings, null, 2), 'utf-8');
+      renameSync(tmp, piSettingsPath);
+      invalidateCache(piSettingsPath);
+    }
+
+    // Write 9router settings into the env's 9router-config.json
+    const nineRouterKeys = ['nineRouterBaseUrl', 'nineRouterApiKey', 'nineRouterPassword', 'nineRouterEnableReasoning'];
+    const present = nineRouterKeys.filter(k => k in settings);
+    if (present.length > 0) {
+      const configPath = join(envDir, '9router-config.json');
+      let config: UserSettings = {};
+      if (existsSync(configPath)) {
+        try { config = JSON.parse(readFileSync(configPath, 'utf-8')); } catch {}
+      }
+      if ('nineRouterBaseUrl' in settings) config.baseUrl = settings.nineRouterBaseUrl;
+      if ('nineRouterApiKey' in settings) config.apiKey = settings.nineRouterApiKey;
+      if ('nineRouterPassword' in settings) config.password = settings.nineRouterPassword;
+      if ('nineRouterEnableReasoning' in settings) config.enableReasoning = settings.nineRouterEnableReasoning;
+      const tmp = join(envDir, `.9router-config-tmp-${randomUUID()}`);
+      writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf-8');
+      renameSync(tmp, configPath);
+      invalidateCache(configPath);
+    }
+  } catch (err) {
+    log.settings.error(`Failed to apply settings to pi env for user "${user}":`, err);
+  }
 }
 
 // ── Settings schema (based on enabled extensions) ──

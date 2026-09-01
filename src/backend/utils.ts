@@ -5,6 +5,7 @@ import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { StreamEntry, SessionUsageResult } from './types.js';
 import { getUserSetting } from './user-settings.js';
+import { log } from './logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -107,9 +108,9 @@ export function readSessionUsage(sessionFile: string): SessionUsageResult {
         if (entry.type === 'message' && entry.message?.role === 'user') {
           stats.requestCount++;
         }
-      } catch (lineErr) { console.error('[autere] Failed to parse session usage line:', lineErr); continue; }
+      } catch (lineErr) { log.utils.error('Failed to parse session usage line:', lineErr); continue; }
     }
-  } catch (err) { console.error('[autere] Failed to read session usage:', err); }
+  } catch (err) { log.utils.error('Failed to read session usage:', err); }
   return stats;
 }
 
@@ -177,12 +178,12 @@ export function readSessionHistory(sessionFile: string, limit: number = 30): Str
             messages.push({ role, text, streaming: false, timestamp: ts });
           }
         }
-      } catch (lineErr) { console.error('[autere] Failed to parse history line:', lineErr); continue; }
+      } catch (lineErr) { log.utils.error('Failed to parse history line:', lineErr); continue; }
     }
 
     return messages.slice(-limit);
   } catch (err) {
-    console.error('[autere] Failed to read session history:', err);
+    log.utils.error('Failed to read session history:', err);
     return [];
   }
 }

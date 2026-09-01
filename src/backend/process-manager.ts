@@ -6,6 +6,7 @@
  */
 
 import { UserSession } from './user-session.js';
+import { log } from './logger.js';
 
 export interface ProcessManagerOptions {
   provider?: string;
@@ -14,6 +15,8 @@ export interface ProcessManagerOptions {
   idleTimeoutMs?: number;
   /** Resume the token's last session on pi startup (default true) */
   resumeLastSession?: boolean;
+    /** Exclude legacy global sessions from listing (isolation mode) */
+  isolatedSessions?: boolean;
 }
 
 export class ProcessManager {
@@ -45,10 +48,11 @@ export class ProcessManager {
       model: this.options.model,
       args: this.options.args,
       resumeLastSession: this.options.resumeLastSession,
-    }, this.defaultIdleTimeoutMs);
+      isolatedSessions: this.options.isolatedSessions,
+    }, this.defaultIdleTimeoutMs, user);
 
     session.onIdle(() => {
-      console.log(`[autere] Terminating idle session for token "${token.slice(0, 8)}..."`);
+      log.processMgr.info(`Terminating idle session for token "${token.slice(0, 8)}…"`);
       this.terminate(token);
     });
 
@@ -57,7 +61,7 @@ export class ProcessManager {
     try {
       await session.start();
     } catch (err) {
-      console.error(`[autere] Failed to start pi process for token "${token.slice(0, 8)}...":`, err);
+      log.processMgr.error(`Failed to start pi process for token "${token.slice(0, 8)}…":`, err);
       this.sessions.delete(token);
       throw err;
     }

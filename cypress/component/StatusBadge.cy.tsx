@@ -20,9 +20,9 @@ describe('StatusBadge', () => {
     cy.get('.dot-red').should('exist');
   });
 
-  it('shows external activity indicator', () => {
-    cy.mount(<StatusBadge status="connected" text="Idle" externalActivity={true} />);
-    cy.get('.status-badge').should('contain', 'Idle · active elsewhere');
+  it('shows working-external indicator', () => {
+    cy.mount(<StatusBadge status="connected" text="Idle" workingExternal={true} />);
+    cy.get('.status-badge').should('contain', 'Working (external)');
     cy.get('.dot-pulse-amber').should('exist');
   });
 

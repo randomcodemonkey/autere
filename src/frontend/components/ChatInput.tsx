@@ -3,6 +3,8 @@ import { url } from '../base-path';
 
 interface ChatInputProps {
   onNewSession: () => void;
+  onCompact?: () => void;
+  onError?: (message: string) => void;
   disabled?: boolean; // true when compacting — disables everything
   isStreaming?: boolean; // true when agent is streaming — shows Steer/Followup
   isActive?: boolean; // true when streaming or compacting — blocks /new command
@@ -12,9 +14,17 @@ interface ChatInputProps {
 // insert a newline, not submit.  Users tap the Send button instead.
 const IS_TOUCH_DEVICE = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
 
-export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, disabled, isStreaming, isActive }) => {
+/** Available slash commands, shown by /help */
+const SLASH_COMMANDS: { cmd: string; description: string }[] = [
+  { cmd: '/new', description: 'Start a new session (alias: /clear). Idle only.' },
+  { cmd: '/compact', description: 'Compact the conversation context. Idle only.' },
+  { cmd: '/help', description: 'Show available commands.' },
+];
+
+export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, onError, disabled, isStreaming, isActive }) => {
   const [value, setValue] = useState('');
   const [sending, setSending] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const autoResize = useCallback(() => {
@@ -29,12 +39,39 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, disabled, is
     const text = value.trim();
     if (!text) return;
 
-    if (text === '/new' || text === '/clear') {
-      if (isActive) return; // don't create new session while active
+    // Slash commands are frontend-only — they never reach the backend/LLM.
+    if (text.startsWith('/')) {
+      const [cmd] = text.split(/\s+/);
       setValue('');
       if (textareaRef.current) textareaRef.current.style.height = 'auto';
-      onNewSession();
-      return;
+
+      switch (cmd) {
+        case '/new':
+        case '/clear':
+          if (isActive) {
+            onError?.('/new can only be used when idle — wait for the agent to finish working.');
+            return;
+          }
+          onNewSession();
+          return;
+        case '/compact':
+          if (isActive) {
+            onError?.('/compact can only be used when idle — wait for the agent to finish working.');
+            return;
+          }
+          if (!onCompact) {
+            onError?.('/compact is not available.');
+            return;
+          }
+          onCompact();
+          return;
+        case '/help':
+          setShowHelp(true);
+          return;
+        default:
+          onError?.(`Unknown command: ${cmd} — type /help to see available commands.`);
+          return;
+      }
     }
 
     setSending(true);
@@ -56,7 +93,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, disabled, is
     } finally {
       setSending(false);
     }
-  }, [value, onNewSession]);
+  }, [value, onNewSession, onCompact, onError, isActive]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -73,7 +110,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, disabled, is
       <textarea
         ref={textareaRef}
         className="chat-input"
-        placeholder={isStreaming ? 'Steer the agent...' : 'Type a message...'}
+        placeholder={isStreaming ? 'Steer the agent...' : 'Type a message... (/help for commands)'}
         rows={1}
         value={value}
         onChange={(e) => {
@@ -89,6 +126,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, disabled, is
         }}
         disabled={isDisabled}
       />
+      {showHelp && (
+        <div className="chat-help-overlay" onClick={() => setShowHelp(false)}>
+          <div className="chat-help-box" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-help-title">Available commands</div>
+            {SLASH_COMMANDS.map(({ cmd, description }) => (
+              <div key={cmd} className="chat-help-item">
+                <span className="chat-help-cmd">{cmd}</span>
+                <span className="chat-help-desc">{description}</span>
+              </div>
+            ))}
+            <button className="chat-help-close" onClick={() => setShowHelp(false)}>Close</button>
+          </div>
+        </div>
+      )}
       {isStreaming ? (
         <div className="chat-action-buttons">
           <button
@@ -103,7 +154,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, disabled, is
             onClick={() => send('followUp')}
             disabled={isDisabled || !value.trim()}
           >
-            Followup
+            Follow-up
           </button>
         </div>
       ) : (

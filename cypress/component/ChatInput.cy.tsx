@@ -1,129 +1,73 @@
 import React from 'react';
 import { ChatInput } from '../../src/frontend/components/ChatInput';
 
-describe('ChatInput', () => {
-  beforeEach(() => {
-    // Intercept the fetch call to /api/send
-    cy.intercept('POST', '/api/send', { success: true }).as('sendMessage');
-  });
-
-  it('renders with send button when idle', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={false} />);
-    cy.get('.chat-input').should('exist');
-    cy.get('.chat-send-btn').should('contain', 'Send');
-    cy.get('.chat-input').should('have.attr', 'placeholder', 'Type a message...');
-  });
-
-  it('renders with steer/followup buttons when streaming', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={true} />);
-    cy.get('.chat-steer-btn').should('contain', 'Steer');
-    cy.get('.chat-followup-btn').should('contain', 'Followup');
-    cy.get('.chat-input').should('have.attr', 'placeholder', 'Steer the agent...');
-  });
-
-  it('disables input when disabled prop is true', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} disabled={true} />);
-    cy.get('.chat-input').should('be.disabled');
-    cy.get('.chat-send-btn').should('be.disabled');
-  });
-
-  it('disables send button when input is empty', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={false} />);
-    cy.get('.chat-send-btn').should('be.disabled');
-  });
-
-  it('enables send button when input has text', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={false} />);
-    cy.get('.chat-input').type('Hello');
-    cy.get('.chat-send-btn').should('not.be.disabled');
-  });
-
-  it('sends prompt when Send button is clicked', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={false} />);
-    cy.get('.chat-input').type('Hello world');
-    cy.get('.chat-send-btn').click();
-    cy.wait('@sendMessage').its('request.body').should('deep.equal', {
-      message: 'Hello world',
-      type: 'prompt',
-    });
-  });
-
-  it('sends steer when Steer button is clicked', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={true} />);
-    cy.get('.chat-input').type('Change direction');
-    cy.get('.chat-steer-btn').click();
-    cy.wait('@sendMessage').its('request.body').should('deep.equal', {
-      message: 'Change direction',
-      type: 'steer',
-    });
-  });
-
-  it('sends followUp when Followup button is clicked', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={true} />);
-    cy.get('.chat-input').type('Continue please');
-    cy.get('.chat-followup-btn').click();
-    cy.wait('@sendMessage').its('request.body').should('deep.equal', {
-      message: 'Continue please',
-      type: 'followUp',
-    });
-  });
-
-  it('clears input after successful send', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={false} />);
-    cy.get('.chat-input').type('Hello world');
-    cy.get('.chat-send-btn').click();
-    cy.wait('@sendMessage');
-    cy.get('.chat-input').should('have.value', '');
-  });
-
-  it('calls onNewSession when /new is typed', () => {
+describe('ChatInput slash commands', () => {
+  it('/new triggers onNewSession when idle', () => {
     const onNewSession = cy.stub().as('onNewSession');
-    cy.mount(<ChatInput onNewSession={onNewSession} isStreaming={false} />);
-    cy.get('.chat-input').type('/new');
-    cy.get('.chat-send-btn').click();
+    cy.mount(<ChatInput onNewSession={onNewSession} />);
+    cy.get('.chat-input').type('/new{enter}');
     cy.get('@onNewSession').should('have.been.calledOnce');
   });
 
-  it('calls onNewSession when /clear is typed', () => {
+  it('/clear is an alias for /new', () => {
     const onNewSession = cy.stub().as('onNewSession');
-    cy.mount(<ChatInput onNewSession={onNewSession} isStreaming={false} />);
-    cy.get('.chat-input').type('/clear');
-    cy.get('.chat-send-btn').click();
+    cy.mount(<ChatInput onNewSession={onNewSession} />);
+    cy.get('.chat-input').type('/clear{enter}');
     cy.get('@onNewSession').should('have.been.calledOnce');
   });
 
-  it('does not call onNewSession when /new is typed while active', () => {
+  it('/new shows an error when active (Working state)', () => {
     const onNewSession = cy.stub().as('onNewSession');
-    cy.mount(<ChatInput onNewSession={onNewSession} isStreaming={true} isActive={true} />);
-    cy.get('.chat-input').type('/new');
-    // When streaming, there are two buttons - click the first one (Steer)
-    cy.get('.chat-steer-btn').click();
-    // /new should not trigger onNewSession when isActive is true
+    const onError = cy.stub().as('onError');
+    cy.mount(<ChatInput onNewSession={onNewSession} onError={onError} isActive={true} />);
+    cy.get('.chat-input').type('/new{enter}');
     cy.get('@onNewSession').should('not.have.been.called');
+    cy.get('@onError').should('have.been.calledOnce');
+    cy.get('@onError').its('firstCall.args.0').should('contain', 'only be used when idle');
   });
 
-  it('sends steer on Enter when streaming', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={true} />);
-    cy.get('.chat-input').type('Hello world{enter}');
-    cy.wait('@sendMessage').its('request.body').should('deep.equal', {
-      message: 'Hello world',
-      type: 'steer',
-    });
+  it('/compact triggers onCompact when idle', () => {
+    const onCompact = cy.stub().as('onCompact');
+    cy.mount(<ChatInput onNewSession={() => {}} onCompact={onCompact} />);
+    cy.get('.chat-input').type('/compact{enter}');
+    cy.get('@onCompact').should('have.been.calledOnce');
   });
 
-  it('sends prompt on Enter when idle', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={false} />);
-    cy.get('.chat-input').type('Hello world{enter}');
-    cy.wait('@sendMessage').its('request.body').should('deep.equal', {
-      message: 'Hello world',
-      type: 'prompt',
-    });
+  it('/compact shows an error when active (Working state)', () => {
+    const onCompact = cy.stub().as('onCompact');
+    const onError = cy.stub().as('onError');
+    cy.mount(<ChatInput onNewSession={() => {}} onCompact={onCompact} onError={onError} isActive={true} />);
+    cy.get('.chat-input').type('/compact{enter}');
+    cy.get('@onCompact').should('not.have.been.called');
+    cy.get('@onError').should('have.been.calledOnce');
   });
 
-  it('allows Shift+Enter for newlines without sending', () => {
-    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={false} />);
-    cy.get('.chat-input').type('Line 1{shift+enter}Line 2');
-    cy.get('.chat-input').should('have.value', 'Line 1\nLine 2');
-    cy.get('@sendMessage').should('not.exist');
+  it('/help shows the available commands without contacting the backend', () => {
+    cy.intercept('POST', '**/api/send', { statusCode: 500, body: { success: false } }).as('send');
+    cy.mount(<ChatInput onNewSession={() => {}} />);
+    cy.get('.chat-input').type('/help{enter}');
+    cy.get('.chat-help-box').should('be.visible');
+    cy.get('.chat-help-cmd').should('contain', '/new');
+    cy.get('.chat-help-cmd').should('contain', '/compact');
+    cy.get('.chat-help-cmd').should('contain', '/help');
+    // Close it
+    cy.get('.chat-help-close').click();
+    cy.get('.chat-help-box').should('not.exist');
+    cy.get('@send.all').should('have.length', 0);
+  });
+
+  it('unknown slash command shows an error', () => {
+    const onError = cy.stub().as('onError');
+    cy.mount(<ChatInput onNewSession={() => {}} onError={onError} />);
+    cy.get('.chat-input').type('/frobnicate{enter}');
+    cy.get('@onError').should('have.been.calledWith', 'Unknown command: /frobnicate — type /help to see available commands.');
+  });
+
+  it('regular messages do not trigger commands and go to the backend', () => {
+    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.mount(<ChatInput onNewSession={() => {}} />);
+    cy.get('.chat-input').type('hello world{enter}');
+    cy.wait('@send');
+    cy.get('.chat-help-box').should('not.exist');
   });
 });

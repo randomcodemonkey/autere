@@ -16,6 +16,7 @@ import { PI_DIR, NPM_EXTENSIONS_DIR, EXTENSIONS_DIR } from './constants.js';
 import { extensionsState } from './state.js';
 import { getExtensionHandler } from './extension-handlers.js';
 import { getUserSetting } from './user-settings.js';
+import { log } from './logger.js';
 
 // ── Extension discovery ──
 
@@ -109,7 +110,7 @@ function discoverLocalExtensions(): DiscoveredExtension[] {
       }
     }
   } catch (err) {
-    console.error('[autere] Failed to read extensions directory:', err);
+    log.extensions.error('Failed to read extensions directory:', err);
   }
 
   return discovered;
@@ -219,7 +220,7 @@ export async function readExtensions(): Promise<void> {
       try {
         info = await handler.enrich(info);
       } catch (err) {
-        console.error(`[autere] Extension handler error for ${ext.id}:`, err);
+        log.extensions.error(`Extension handler error for ${ext.id}:`, err);
         info.status = 'error';
       }
     }

@@ -184,6 +184,7 @@ body {
 .status-connected  { background: #0a3322; color: #4ade80; }
 .status-streaming  { background: #3d3000; color: #fbbf24; animation: pulse 1.5s infinite; }
 .status-idle       { background: #2a2a2a; color: #888; }
+.status-loading    { background: #1e293b; color: #60a5fa; animation: pulse 1.5s infinite; }
 .status-disconnected { background: #3b1216; color: #f87171; }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
@@ -201,8 +202,8 @@ body {
 }
 
 .status-external {
-  background: rgba(245, 158, 11, 0.15);
-  color: #f59e0b;
+  background: rgba(217, 119, 6, 0.18);
+  color: #d97706;
   white-space: nowrap;
   animation: pulse-external 2s ease-in-out infinite;
 }
@@ -211,7 +212,7 @@ body {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #f59e0b;
+  background: #d97706;
   margin-right: 0.35rem;
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
@@ -997,6 +998,7 @@ body {
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid #333;
+  position: relative;
 }
 
 .scroll-down-btn {
@@ -1206,6 +1208,64 @@ body {
 
 .tool-cmd.expanded {
   white-space: pre-wrap;
+}
+
+// -- Chat slash-command help --------------------------------------------------
+.chat-help-overlay {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  padding: 0.5rem;
+}
+
+.chat-help-box {
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.chat-help-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #ccc;
+  margin-bottom: 0.5rem;
+}
+
+.chat-help-item {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.72rem;
+  padding: 0.2rem 0;
+}
+
+.chat-help-cmd {
+  color: #4ade80;
+  font-family: monospace;
+  min-width: 5.5rem;
+}
+
+.chat-help-desc {
+  color: #999;
+}
+
+.chat-help-close {
+  margin-top: 0.5rem;
+  padding: 0.2rem 0.8rem;
+  font-size: 0.7rem;
+  background: #2a2a2a;
+  color: #ccc;
+  border: 1px solid #444;
+  border-radius: 0.3rem;
+  cursor: pointer;
+
+  &:hover {
+    background: #333;
+  }
 }
 
 // -- Extensions -----------------------------------------------------------------

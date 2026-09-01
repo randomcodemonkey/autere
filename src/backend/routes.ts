@@ -12,9 +12,9 @@ import { fileURLToPath } from 'url';
 import { ProcessManager } from './process-manager.js';
 import { getUser, getUserRole, hasRole, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getAuthPassword, getTokenFromRequest, setLastSession } from './auth.js';
 import { readExtensions } from './extensions.js';
-import { readSessions } from './sessions.js';
 import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filterScopedModels } from './utils.js';
-import { extensionsState, availableSessions } from './state.js';
+import { extensionsState } from './state.js';
+import { log } from './logger.js';
 import type { SessionInfo } from './types.js';
 
 /**
@@ -25,11 +25,11 @@ import type { SessionInfo } from './types.js';
  * longer match the header id that readSessions() uses. Fall back to a
  * filename match in that case.
  */
-export function findSession(sessionId: string): SessionInfo | undefined {
-  const byId = availableSessions.find(s => s.id === sessionId);
+export function findSession(sessionId: string, sessions: SessionInfo[]): SessionInfo | undefined {
+  const byId = sessions.find(s => s.id === sessionId);
   if (byId) return byId;
   const lower = sessionId.toLowerCase();
-  return availableSessions.find(s => basename(s.sessionFile).toLowerCase().includes(lower));
+  return sessions.find(s => basename(s.sessionFile).toLowerCase().includes(lower));
 }
 import { getUserSetting, getAllUserSettings, saveUserSettings, getUserSettingsSchema } from './user-settings.js';
 
@@ -233,7 +233,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
             provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
           }));
         } catch (err) {
-          console.error('[autere] Failed to fetch models on demand:', err);
+          log.http.error('Failed to fetch models on demand:', err);
         }
       }
       sendJSON(res, { success: true, data: availableModels });
@@ -285,6 +285,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     }
 
     if (url.pathname === '/api/abort' && req.method === 'POST') {
+      log.http.forSession(sessionState.sessionId).info('Abort requested');
       try {
         await rpc.abort();
         sendJSON(res, { success: true });
@@ -295,19 +296,30 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     }
 
     if (url.pathname === '/api/compact' && req.method === 'POST') {
+      log.http.forSession(sessionState.sessionId).info('Compaction requested');
       if (sessionState.compacting) {
         sendJSON(res, { success: false, error: 'Compaction already in progress' }, 409);
         return;
       }
       try { await rpc.compact(); sendJSON(res, { success: true }); }
-      catch (err) { sendJSON(res, { success: false, error: `Failed to compact: ${err}` }); }
+      catch (err) {
+        // A genuine compaction error (RPC error response / process death):
+        // reset the compacting state so the UI doesn't stay stuck on
+        // "Compacting", and surface the error to the user.
+        if (sessionState.compacting) {
+          sessionState.compacting = false;
+          sessionState.isStreaming = false;
+          session.broadcastToSession(sessionState.sessionId, { type: 'status', data: { ...sessionState } });
+        }
+        sendJSON(res, { success: false, error: `Failed to compact: ${err}` });
+      }
       return;
     }
 
     // ── Session management ──
 
     if (url.pathname === '/api/sessions' && req.method === 'GET') {
-      sendJSON(res, { success: true, data: availableSessions });
+      sendJSON(res, { success: true, data: session.refreshSessions() });
       return;
     }
 
@@ -325,7 +337,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
             sendJSON(res, { success: false, error: 'Cannot delete the active session' }, 400);
             return;
           }
-          const sess = findSession(sessionId);
+          const sess = findSession(sessionId, session.state.availableSessions);
           if (!sess) {
             sendJSON(res, { success: false, error: 'Session not found' }, 404);
             return;
@@ -333,9 +345,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           const deletedDir = join(homedir(), '.autere', 'deleted-sessions');
           mkdirSync(deletedDir, { recursive: true });
           renameSync(sess.sessionFile, join(deletedDir, basename(sess.sessionFile)));
-          const idx = availableSessions.indexOf(sess);
-          if (idx !== -1) availableSessions.splice(idx, 1);
-          session.broadcast({ type: 'sessions', data: availableSessions });
+          const idx = session.state.availableSessions.indexOf(sess);
+          if (idx !== -1) session.state.availableSessions.splice(idx, 1);
+          session.broadcast({ type: 'sessions', data: session.state.availableSessions });
           sendJSON(res, { success: true });
         } catch (err) {
           sendJSON(res, { success: false, error: `Failed to delete session: ${err}` }, 500);
@@ -347,7 +359,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     const historyMatch = url.pathname.match(/^\/api\/sessions\/([\w-]+)\/history$/);
     if (historyMatch && req.method === 'GET') {
       const sessionId = historyMatch[1];
-      const sess = findSession(sessionId);
+      const sess = findSession(sessionId, session.state.availableSessions);
       if (!sess) { sendJSON(res, { success: false, error: 'Session not found' }, 404); return; }
       const limit = parseInt(url.searchParams.get('limit') || '30');
       sendJSON(res, { success: true, data: readSessionHistory(sess.sessionFile, Math.min(limit, 100)) });
@@ -364,7 +376,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
             sendJSON(res, { success: false, error: 'sessionId is required' }, 400);
             return;
           }
-          let sess = findSession(sessionId);
+          let sess = findSession(sessionId, session.state.availableSessions);
           if (!sess && sessionId === sessionState.sessionId && sessionState.sessionFile) {
             // The active session may not be in availableSessions yet (its file
             // hasn't been written to disk). Allow switching to it anyway.
@@ -437,7 +449,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
             const rpcStats = await rpc.getSessionStats();
             if (rpcStats.contextUsage) sessionStats.contextUsage = rpcStats.contextUsage;
             if (rpcStats.cost) sessionStats.cost = rpcStats.cost;
-          } catch (err) { console.error("[autere] post-switch stats failed:", err); }
+          } catch (err) { log.http.error('Post-switch stats failed:', err); }
 
           // Return history in the response so the requesting client gets it
           // directly. Other clients keep their own session tracking unchanged.
@@ -488,7 +500,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           lastActivity: Date.now(),
           cwd: null,
         };
-        availableSessions.unshift(newSessionInfo);
+        session.state.availableSessions.unshift(newSessionInfo);
 
         session.setHistoryFor(state.sessionId, []);
 
@@ -497,10 +509,11 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
         // Return navigate URL in response — do NOT broadcast via SSE
         // because broadcast() sends to ALL clients, not just the one that
         // requested the new session.
+        log.http.info(`New session created -> /session/${state.sessionId}`);
         sendJSON(res, { success: true, navigateUrl: `/session/${state.sessionId}` });
       } catch (err) {
         session.state.newSessionCreating = false;
-        console.error('[autere] /api/new-session failed:', err);
+        log.http.error('/api/new-session failed:', err);
         // Broadcast error so the frontend can show it to the user
         session.broadcast({ type: 'error', data: { message: `Failed to create new session: ${err}` } });
         sendJSON(res, { success: false, error: `Failed to start new session: ${err}` });
@@ -521,9 +534,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           const trimmed = name.trim();
           sessionState.sessionName = trimmed || null;
           session.broadcastToSession(sessionState.sessionId, { type: 'status', data: { ...sessionState } });
-          const sess = availableSessions.find(s => s.id === sessionState.sessionId);
+          const sess = session.state.availableSessions.find(s => s.id === sessionState.sessionId);
           if (sess) sess.sessionName = trimmed || null;
-          session.broadcast({ type: 'sessions', data: availableSessions });
+          session.broadcast({ type: 'sessions', data: session.state.availableSessions });
           await rpc.setSessionName(trimmed);
           sendJSON(res, { success: true });
         } catch (err) {
@@ -581,6 +594,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
             return;
           }
           const text = message.trim();
+          log.http.forSession(sessionState.sessionId).info(
+            `${type || 'prompt'}: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"`);
           if (type === 'steer') {
             await rpc.steer(text);
           } else if (type === 'followUp') {
@@ -635,7 +650,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
 
       res.write(`data: ${JSON.stringify({ type: 'extensions', data: extensionsState })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: 'models', data: availableModels })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: 'sessions', data: availableSessions })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'sessions', data: session.refreshSessions() })}\n\n`);
       return;
     }
 
@@ -643,10 +658,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     res.end('Not Found');
   });
 
-  // ── Periodic polling for extensions and sessions (global) ──
+  // ── Periodic polling for extensions and sessions ──
   readExtensions();
-  availableSessions.length = 0;
-  availableSessions.push(...readSessions());
   sessionRefreshInterval = setInterval(async () => {
     const prevExt = JSON.stringify(extensionsState);
     await readExtensions();
@@ -660,25 +673,16 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
         }
       }
     }
-    const newSessions = readSessions();
-    // Preserve in-memory entries for newly created sessions whose files don't
-    // exist on disk yet (pi only writes the session file on the first message).
-    // Without this, the poller wipes the entry injected by /api/new-session
-    // and a subsequent switch-by-id 404s with "Session not found".
-    const diskIds = new Set(newSessions.map(s => s.id));
-    const activeIds = new Set<string>();
-    for (const token of pm.activeTokens()) {
-      const s = pm.get(token);
-      if (s?.state?.sessionState?.sessionId) activeIds.add(s.state.sessionState.sessionId);
-    }
-    const pending = availableSessions.filter(s => !diskIds.has(s.id) && activeIds.has(s.id));
-    availableSessions.length = 0;
-    availableSessions.push(...pending, ...newSessions);
-    // Update all sessions with new session list
+    // Per-user session refresh: each user sees only their own env's sessions
+    // (plus the legacy global dir unless in isolation mode). refreshSessions()
+    // preserves in-memory entries for newly created sessions whose files
+    // don't exist on disk yet (pi only writes the file on the first message),
+    // so a subsequent switch-by-id doesn't 404 with "Session not found".
     for (const token of pm.activeTokens()) {
       const session = pm.get(token);
       if (session) {
-        session.state.availableSessions = [...availableSessions];
+        const sessions = session.refreshSessions();
+        session.broadcast({ type: 'sessions', data: sessions });
       }
     }
   }, 2000);
@@ -693,14 +697,14 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
 
   server.on('error', (err: any) => {
     if (err.code === 'EADDRINUSE') {
-      console.error(`[autere] Port ${PORT} is already in use — dashboard server not started.`);
+      log.http.error(`Port ${PORT} is already in use — dashboard server not started.`);
     } else {
-      console.error('[autere] Server error:', err);
+      log.http.error('Server error:', err);
     }
   });
 
   server.listen(PORT, () => {
-    console.log(`[autere] Dashboard running at http://localhost:${PORT}`);
+    log.http.info(`Dashboard running at http://localhost:${PORT}`);
   });
 
   process.on('SIGTERM', () => shutdown(server, pm, sessionRefreshInterval, heartbeatInterval));

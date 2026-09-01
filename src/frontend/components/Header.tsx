@@ -9,16 +9,16 @@ interface HeaderProps {
   sessionId: string | null;
   sessionName: string | null;
   onSessionClick: () => void;
-  externalActivity?: boolean;
+  workingExternal?: boolean;
   isActive?: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({ statusType, statusText, onStatusClick, sessionId, sessionName, onSessionClick, externalActivity, isActive }) => {
+export const Header: React.FC<HeaderProps> = ({ statusType, statusText, onStatusClick, sessionId, sessionName, onSessionClick, workingExternal, isActive }) => {
   const displayName = sessionName
     ? (sessionName.length > 64 ? sessionName.slice(0, 62) + '…' : sessionName)
     : (sessionId ? sessionId.slice(0, 6) + '…' : 'session');
   return (
-    <div className={`header${statusType === 'disconnected' ? ' header-disconnected' : ''}${externalActivity ? ' header-external' : ''}`}>
+    <div className={`header${statusType === 'disconnected' ? ' header-disconnected' : ''}${workingExternal ? ' header-external' : ''}`}>
       <h1><img className="logo-icon" src={url('/logo.svg')} alt="autere" /> autere</h1>
       <div>
         <span
@@ -29,7 +29,7 @@ export const Header: React.FC<HeaderProps> = ({ statusType, statusText, onStatus
           <span className="session-badge-icon">◉</span>
           <span className="session-badge-text">{displayName}</span>
         </span>
-        <StatusBadge status={statusType} text={statusText} externalActivity={externalActivity} onClick={onStatusClick} />
+        <StatusBadge status={statusType} text={statusText} workingExternal={workingExternal} onClick={onStatusClick} />
       </div>
     </div>
   );

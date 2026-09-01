@@ -132,7 +132,7 @@ describe('Header', () => {
         sessionId="abc123"
         sessionName="Test"
         onSessionClick={cy.stub()}
-        externalActivity={true}
+        workingExternal={true}
       />
     );
     cy.get('.header').should('have.class', 'header-external');

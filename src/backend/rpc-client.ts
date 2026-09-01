@@ -15,6 +15,7 @@ import type {
   RpcSessionState,
   JsonAgentSessionEvent,
 } from '@earendil-works/pi-coding-agent';
+import { log } from './logger.js';
 
 // Inline types not exported from the package
 interface ModelInfo {
@@ -43,6 +44,8 @@ export interface RpcClientOptions {
   model?: string;
   /** Additional CLI arguments */
   args?: string[];
+  /** pi agent directory (PI_CODING_AGENT_DIR) — isolates config/sessions per user */
+  agentDir?: string;
 }
 
 export type RpcEventListener = (event: JsonAgentSessionEvent) => void;
@@ -155,11 +158,14 @@ export class MonitorRpcClient {
       args.push(...this.options.args);
     }
 
-    console.log('[autere] Starting pi RPC process:', args.join(' '));
+    log.rpc.info('Starting pi RPC process:', args.join(' '));
 
     const childProcess = spawn('pi', args, {
       cwd: this.options.cwd,
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        ...(this.options.agentDir ? { PI_CODING_AGENT_DIR: this.options.agentDir } : {}),
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true, // create a new process group so we can kill all children
     });
@@ -232,7 +238,7 @@ export class MonitorRpcClient {
       throw error;
     }
 
-    console.log('[autere] Pi RPC process started (pid=' + childProcess.pid + ')');
+    log.rpc.info(`pi RPC process started (pid=${childProcess.pid})`);
   }
 
   /**
@@ -284,17 +290,17 @@ export class MonitorRpcClient {
   // ── Commands ──
 
   async prompt(message: string): Promise<void> {
-    console.log(`[autere] RPC: prompt("${message.slice(0, 80)}${message.length > 80 ? '...' : ''}")`);
+    log.rpc.debug(`RPC: prompt("${message.slice(0, 80)}${message.length > 80 ? '…' : ''}")`);
     await this.send({ type: 'prompt', message });
   }
 
   async steer(message: string): Promise<void> {
-    console.log(`[autere] RPC: steer("${message.slice(0, 80)}${message.length > 80 ? '...' : ''}")`);
+    log.rpc.debug(`RPC: steer("${message.slice(0, 80)}${message.length > 80 ? '…' : ''}")`);
     await this.send({ type: 'steer', message });
   }
 
   async followUp(message: string): Promise<void> {
-    console.log(`[autere] RPC: followUp("${message.slice(0, 80)}${message.length > 80 ? '...' : ''}")`);
+    log.rpc.debug(`RPC: follow_up("${message.slice(0, 80)}${message.length > 80 ? '…' : ''}")`);
     await this.send({ type: 'follow_up', message });
   }
 
@@ -332,7 +338,9 @@ export class MonitorRpcClient {
   }
 
   async compact(): Promise<any> {
-    const response = await this.send({ type: 'compact' });
+    // Compaction can take minutes on large contexts — no arbitrary timeout;
+    // pi's RPC response (or an error response) settles this.
+    const response = await this.send({ type: 'compact' }, 0);
     return this.getData(response);
   }
 
@@ -425,7 +433,7 @@ export class MonitorRpcClient {
         const pending = this.pendingRequests.get(data.id)!;
         this.pendingRequests.delete(data.id);
         if (!data.success) {
-          console.log(`[autere] RPC response ERROR: ${data.command} failed: ${data.error}`);
+          log.rpc.error(`RPC response error: ${data.command} failed: ${data.error}`);
         }
         pending.resolve(data);
         return;
@@ -436,7 +444,7 @@ export class MonitorRpcClient {
         try {
           listener(data);
         } catch (err) {
-          console.error('[autere] Event listener error:', err);
+          log.rpc.error('Event listener error:', err);
         }
       }
     } catch {
@@ -457,7 +465,7 @@ export class MonitorRpcClient {
     this.pendingRequests.clear();
   }
 
-  private send(command: RpcCommand): Promise<RpcResponse> {
+  private send(command: RpcCommand, timeoutMs = 30000): Promise<RpcResponse> {
     const childProcess = this.process;
     const stdin = childProcess?.stdin;
     if (!childProcess || !stdin) {
@@ -486,22 +494,28 @@ export class MonitorRpcClient {
     const fullCommand = { ...command, id };
 
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(id);
-        reject(
-          new Error(
-            `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`
-          )
-        );
-      }, 30000);
+      // Commands that can legitimately take a long time (e.g. compaction) are
+      // given no timeout (timeoutMs <= 0) — the RPC response, a genuine RPC
+      // error response, or process death via rejectPendingRequests will settle
+      // the promise.
+      const timeout = timeoutMs > 0
+        ? setTimeout(() => {
+            this.pendingRequests.delete(id);
+            reject(
+              new Error(
+                `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`
+              )
+            );
+          }, timeoutMs)
+        : null;
 
       this.pendingRequests.set(id, {
         resolve: (response) => {
-          clearTimeout(timeout);
+          if (timeout) clearTimeout(timeout);
           resolve(response);
         },
         reject: (error) => {
-          clearTimeout(timeout);
+          if (timeout) clearTimeout(timeout);
           reject(error);
         },
       });

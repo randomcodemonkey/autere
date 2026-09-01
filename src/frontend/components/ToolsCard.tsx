@@ -23,21 +23,26 @@ interface ToolsCardProps {
 
 export const ToolsCard: React.FC<ToolsCardProps> = ({ activeTools, recentTools }) => {
   const { collapsed, toggle } = useCardState('tools');
-  const [expandedCmds, setExpandedCmds] = useState<Set<number>>(new Set());
+  const [expandedCmds, setExpandedCmds] = useState<Set<string>>(new Set());
 
-  const toggleCmd = (idx: number) => {
+  const toggleCmd = (key: string) => {
     setExpandedCmds((prev) => {
       const next = new Set(prev);
-      if (next.has(idx)) {
-        next.delete(idx);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(idx);
+        next.add(key);
       }
       return next;
     });
   };
 
   const recentToolsCmds = recentTools.map((t) => formatToolCmd(t.name, t.args));
+
+  const truncateCmd = (cmd: string, isExpanded: boolean): { display: string; truncated: boolean } => {
+    if (cmd.length <= 128) return { display: cmd, truncated: false };
+    return { display: isExpanded ? cmd : cmd.slice(0, 128) + '…', truncated: true };
+  };
 
   return (
     <div className={`card${collapsed ? ' collapsed' : ''}`}>
@@ -59,15 +64,24 @@ export const ToolsCard: React.FC<ToolsCardProps> = ({ activeTools, recentTools }
         {activeTools.length === 0 ? (
           <span className="tool-empty">No active tools</span>
         ) : (
-          activeTools.map((tool) => (
-            <div key={tool.id} className="tool-chip">
-              <div className="spinner" />
-              {tool.name}
-              {tool.cmd && (
-                <div className="tool-cmd tool-cmd-active">{tool.cmd}</div>
-              )}
-            </div>
-          ))
+          activeTools.map((tool) => {
+            const { display: displayCmd, truncated } = truncateCmd(tool.cmd || '', expandedCmds.has(tool.id));
+            const isExpanded = expandedCmds.has(tool.id) && truncated;
+            return (
+              <div key={tool.id} className="tool-chip">
+                <div className="spinner" />
+                {tool.name}
+                {tool.cmd && (
+                  <div
+                    className={`tool-cmd tool-cmd-active${truncated ? ' tool-cmd-truncated' : ''}${isExpanded ? ' expanded' : ''}`}
+                    onClick={() => truncated && toggleCmd(tool.id)}
+                  >
+                    {displayCmd}
+                  </div>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
       {recentTools.length > 0 && (
@@ -75,8 +89,8 @@ export const ToolsCard: React.FC<ToolsCardProps> = ({ activeTools, recentTools }
           <div className="recent-tools-title">Last {recentTools.length} tools</div>
           {recentTools.map((t, i) => {
             const cmd = recentToolsCmds[i];
+            const isExpanded = expandedCmds.has(`r${i}`) && cmd.length > 64;
             const truncated = cmd.length > 64;
-            const isExpanded = expandedCmds.has(i) && truncated;
             const displayCmd = truncated && !isExpanded ? cmd.slice(0, 64) + '…' : cmd;
             return (
               <div key={i} className="recent-tool-item">
@@ -88,7 +102,7 @@ export const ToolsCard: React.FC<ToolsCardProps> = ({ activeTools, recentTools }
                   <div className="recent-tool-cmd-wrap">
                     <div
                       className={`tool-cmd${truncated ? ' tool-cmd-truncated' : ''}${isExpanded ? ' expanded' : ''}`}
-                      onClick={() => truncated && toggleCmd(i)}
+                      onClick={() => truncated && toggleCmd(`r${i}`)}
                     >
                       {displayCmd}
                     </div>

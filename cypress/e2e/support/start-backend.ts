@@ -24,28 +24,36 @@ export { TEST_PORT };
 let backendProcess: ChildProcess | null = null;
 
 /**
- * Kill any orphaned pi RPC processes that are children of the given PID.
- * Called after stopping the backend to clean up processes that may have
- * escaped the process group kill (pi is spawned with detached: true).
+ * Recursively collect all descendant PIDs of the given PID via the /proc/ps
+ * parent-child tree. Must be called BEFORE killing the parent — once the
+ * parent dies, children are reparented to PID 1 and can no longer be found
+ * by ppid lookups.
  */
-function killOrphanedChildren(parentPid: number): void {
+function collectDescendants(pid: number, acc: number[] = []): number[] {
   try {
-    // Find all child PIDs recursively via the /proc tree or pgrep
-    // Use ps to find processes whose PPID is the parent or any of its children
     const pids = execSync(
-      `ps -o pid= --ppid ${parentPid} 2>/dev/null || true`,
+      `ps -o pid= --ppid ${pid} 2>/dev/null || true`,
       { encoding: 'utf-8' }
     ).trim().split('\n').filter(Boolean).map(Number);
 
     for (const childPid of pids) {
-      // Recursively kill grandchildren too (e.g. pi spawned by the backend)
-      killOrphanedChildren(childPid);
-      try {
-        process.kill(childPid, 'SIGTERM');
-        console.log(`[e2e] Killed orphaned child pid ${childPid}`);
-      } catch {}
+      acc.push(childPid);
+      collectDescendants(childPid, acc);
     }
   } catch {}
+  return acc;
+}
+
+/**
+ * Kill a list of PIDs with the given signal, ignoring failures (already dead).
+ */
+function killPids(pids: number[], signal: NodeJS.Signals): void {
+  for (const pid of pids) {
+    try {
+      process.kill(pid, signal);
+      console.log(`[e2e] Killed leftover pid ${pid} (${signal})`);
+    } catch {}
+  }
 }
 
 export function startBackend(): Promise<void> {
@@ -132,12 +140,22 @@ export function stopBackend(): Promise<void> {
     const pid = backendProcess.pid;
     console.log(`[e2e] Stopping autere backend (pid=${pid})...`);
 
+    // CRITICAL: collect the full descendant tree BEFORE killing anything.
+    // pi is spawned detached (own process group), so the backend's group
+    // kill never reaches it; and once the backend dies, its children are
+    // reparented to PID 1 and can no longer be found by ppid lookups.
+    const descendants = pid ? collectDescendants(pid) : [];
+    if (descendants.length > 0) {
+      console.log(`[e2e] Backend descendants: ${descendants.join(', ')}`);
+    }
+
     backendProcess.on('exit', () => {
       backendProcess = null;
       console.log('[e2e] Backend stopped');
     });
 
-    // Kill only the process group we created (detached spawn gives us a unique pgid)
+    // Kill only the process group we created (detached spawn gives us a unique pgid).
+    // The backend handles SIGTERM and terminates its pi children itself.
     if (backendProcess.pid) {
       try {
         process.kill(-backendProcess.pid, 'SIGTERM');
@@ -149,7 +167,8 @@ export function stopBackend(): Promise<void> {
       backendProcess.kill('SIGTERM');
     }
 
-    // Force kill after 3 seconds if still alive, then clean up orphans
+    // Force kill after 3 seconds if still alive, then clean up ALL
+    // descendants (by recorded PID — valid even after reparenting).
     const forceKillTimer = setTimeout(() => {
       if (backendProcess) {
         console.log('[e2e] Force killing backend...');
@@ -162,11 +181,16 @@ export function stopBackend(): Promise<void> {
           console.error('[e2e] Failed to force kill:', err);
         }
         backendProcess = null;
-
-        // Clean up any orphaned child processes (pi RPC etc.)
-        if (killPid) {
-          killOrphanedChildren(killPid);
-        }
+      }
+      // Kill any descendants still alive — graceful shutdown may have been
+      // interrupted by the force kill, leaving pi processes orphaned.
+      killPids(descendants, 'SIGKILL');
+      // Last-resort sweep scoped to this test run's port argument, in case
+      // anything escaped both the group kill and the descendant tree.
+      if (pid) {
+        try {
+          execSync(`pkill -KILL -f "index.ts --port ${TEST_PORT} " 2>/dev/null || true`);
+        } catch {}
       }
       resolve();
     }, 3000);
@@ -174,11 +198,12 @@ export function stopBackend(): Promise<void> {
     // Also resolve if the process exits normally before the force-kill timer
     backendProcess.on('exit', () => {
       clearTimeout(forceKillTimer);
-      // Clean up orphans even on normal exit
-      if (pid) {
-        killOrphanedChildren(pid);
-      }
-      resolve();
+      // Kill any descendants that outlived the backend
+      killPids(descendants, 'SIGTERM');
+      setTimeout(() => {
+        killPids(descendants, 'SIGKILL');
+        resolve();
+      }, 500);
     });
   });
 }

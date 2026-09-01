@@ -1,3 +1,4 @@
+import { log } from './logger.js';
 /**
  * Cross-session external-activity registry.
  *
@@ -32,7 +33,7 @@ export function notifyExternalActivity(sessionFile: string | null, source: Exter
         interest.onExternalActivity();
       }
     } catch (err) {
-      console.error('[autere] Error notifying external activity interest:', err);
+      log.extActivity.error('Error notifying external activity interest:', err);
     }
   }
 }

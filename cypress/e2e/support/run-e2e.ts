@@ -5,6 +5,14 @@ import { startBackend, stopBackend, TEST_PORT } from './start-backend';
 import { execSync } from 'child_process';
 
 async function main() {
+  // Ensure the backend (and its pi children) die even if the runner is
+  // interrupted — no matter if tests fail or succeed.
+  const cleanup = () => {
+    stopBackend().then(() => process.exit(1));
+  };
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
+
   try {
     console.log(`[run-e2e] Starting backend on port ${TEST_PORT}...`);
     await startBackend();

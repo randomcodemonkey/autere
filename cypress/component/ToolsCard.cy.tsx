@@ -63,3 +63,43 @@ describe('ToolsCard', () => {
     cy.get('.tool-cmd').should('have.class', 'tool-cmd-truncated');
   });
 });
+
+  it('truncates active tool command over 128 chars with ...', () => {
+    const longCommand = 'a'.repeat(200);
+    const activeTools: ActiveTool[] = [
+      { id: 'a1', name: 'bash', cmd: longCommand, args: { command: longCommand }, startTime: Date.now() },
+    ];
+    cy.mount(<ToolsCard activeTools={activeTools} recentTools={[]} />);
+    cy.get('.tool-cmd-active')
+      .should('have.class', 'tool-cmd-truncated')
+      .and('contain', '…')
+      .and('not.contain', 'a'.repeat(200));
+  });
+
+  it('does not truncate active tool command under 128 chars', () => {
+    const cmd = 'a'.repeat(100);
+    const activeTools: ActiveTool[] = [
+      { id: 'a2', name: 'bash', cmd, args: { command: cmd }, startTime: Date.now() },
+    ];
+    cy.mount(<ToolsCard activeTools={activeTools} recentTools={[]} />);
+    cy.get('.tool-cmd-active').should('not.have.class', 'tool-cmd-truncated');
+    cy.get('.tool-cmd-active').should('contain', cmd);
+  });
+
+  it('expands and collapses truncated active tool command on click', () => {
+    const longCommand = 'b'.repeat(200);
+    const activeTools: ActiveTool[] = [
+      { id: 'a3', name: 'bash', cmd: longCommand, args: { command: longCommand }, startTime: Date.now() },
+    ];
+    cy.mount(<ToolsCard activeTools={activeTools} recentTools={[]} />);
+    // Truncated initially — full command not visible
+    cy.get('.tool-cmd-active').should('not.contain', 'b'.repeat(200));
+    // Click to expand
+    cy.get('.tool-cmd-active').click();
+    cy.get('.tool-cmd-active').should('have.class', 'expanded');
+    cy.get('.tool-cmd-active').should('contain', 'b'.repeat(200));
+    // Click again to collapse
+    cy.get('.tool-cmd-active').click();
+    cy.get('.tool-cmd-active').should('not.have.class', 'expanded');
+    cy.get('.tool-cmd-active').should('not.contain', 'b'.repeat(200));
+  });

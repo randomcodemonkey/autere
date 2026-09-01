@@ -8,6 +8,7 @@
 import { ProcessManager } from './process-manager.js';
 import { resolveAuth } from './auth.js';
 import { createMonitorServer } from './routes.js';
+import { log } from './logger.js';
 
 // ── CLI argument parsing ──
 
@@ -81,7 +82,7 @@ async function main() {
   try {
     resolveAuth(mockPi as any);
   } catch (err: any) {
-    console.error(err.message);
+    log.server.error(err.message);
     process.exit(1);
   }
 
@@ -91,16 +92,20 @@ async function main() {
     args: config.piArgs,
     idleTimeoutMs: config.idleTimeoutMinutes * 60 * 1000,
     resumeLastSession: !config.newSession,
+    // Isolation mode: each user's session listing excludes the legacy global
+    // sessions dir — used by e2e tests so they never see (or navigate into)
+    // sessions belonging to real users.
+    isolatedSessions: config.newSession,
   });
 
   // Start the HTTP server
   createMonitorServer(config.port, pm);
 
-  console.log(`[autere] Dashboard running at http://localhost:${config.port}`);
-  console.log(`[autere] Pi processes will be spawned on user login (idle timeout: ${config.idleTimeoutMinutes}min)`);
+  log.server.info(`Dashboard running at http://localhost:${config.port}`);
+  log.server.info(`pi processes will be spawned on user login (idle timeout: ${config.idleTimeoutMinutes}min)`);
 }
 
 main().catch((err) => {
-  console.error('[autere] Fatal error:', err);
+  log.server.error('Fatal error:', err);
   process.exit(1);
 });

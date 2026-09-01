@@ -11,6 +11,7 @@ import { homedir } from 'os';
 import type { ExtensionHandler, ExtensionInfo, ExtensionSection } from './types.js';
 import { PI_DIR } from './constants.js';
 import { getUserSetting } from './user-settings.js';
+import { log } from './logger.js';
 
 // ── 9router handler ──
 
@@ -62,7 +63,7 @@ async function loginNineRouter(baseUrl: string, password: string): Promise<strin
       clearTimeout(timeout);
     }
   } catch (err: any) {
-    console.error('[autere] 9router: failed to login:', err?.message || err);
+    log.extHandlers.error('9router: failed to login:', err?.message || err);
     return null;
   }
 }
@@ -86,7 +87,7 @@ async function fetchRecentRequests(baseUrl: string, password: string): Promise<N
     // Login to get session cookie
     const token = await loginNineRouter(baseUrl, password);
     if (!token) {
-      console.log('[autere] 9router: failed to login for stats');
+      log.extHandlers.warn('9router: failed to login for stats');
       return [];
     }
 
@@ -106,7 +107,7 @@ async function fetchRecentRequests(baseUrl: string, password: string): Promise<N
       clearTimeout(timeout);
     }
   } catch (err: any) {
-    console.log(`[autere] 9router: fetchRecentRequests failed:`, err?.message || err);
+    log.extHandlers.warn('9router: fetchRecentRequests failed:', err?.message || err);
     return [];
   }
 }

@@ -10,7 +10,11 @@ import { existsSync, readFileSync, statSync } from 'fs';
 import type { ServerResponse } from 'http';
 import { MonitorRpcClient } from './rpc-client.js';
 import { filterScopedModels } from './utils.js';
+import { log, userLog } from './logger.js';
 import { getLastSession, setLastSession } from './auth.js';
+import { ensurePiEnv } from './pi-env.js';
+import { readSessions } from './sessions.js';
+import type { SessionInfo } from './types.js';
 import { registerExternalActivityInterest, notifyExternalActivity, type ExternalActivityInterest } from './external-activity.js';
 
 /**
@@ -206,13 +210,21 @@ export class UserSession {
   private externalActivitySessions: Map<string, number> = new Map(); // sessionId -> last external activity ts
   private consecutiveEventsFromPi: number = 0;
 
+  // Isolation mode: exclude legacy global sessions from this user's listing
+  private isolatedSessions: boolean;
+
   // Cross-process instant external-activity notification (see external-activity.ts)
   private externalInterest: ExternalActivityInterest;
   private unregisterExternalInterest: (() => void) | null = null;
 
-  constructor(token: string, user: string, rpcOptions: { provider?: string; model?: string; args?: string[]; resumeLastSession?: boolean }, idleTimeoutMs: number = 30 * 60 * 1000) {
+  constructor(token: string, user: string, rpcOptions: { provider?: string; model?: string; args?: string[]; resumeLastSession?: boolean; isolatedSessions?: boolean }, idleTimeoutMs: number = 30 * 60 * 1000, envUser?: string) {
     this.token = token;
     this.user = user;
+    // Isolation mode (e.g. e2e tests): exclude legacy global sessions from listing
+    this.isolatedSessions = rpcOptions.isolatedSessions === true;
+    // Per-user pi environment: isolated agent dir (settings, sessions,
+    // extension state) seeded from the global ~/.pi/agent as defaults.
+    const piEnvDir = ensurePiEnv(envUser || user);
     // Resume this token's last session if known (unless disabled, e.g. e2e tests)
     const args = [...(rpcOptions.args || [])];
     if (rpcOptions.resumeLastSession !== false) {
@@ -221,13 +233,34 @@ export class UserSession {
         args.push('--session', lastSession);
       }
     }
-    this.rpc = new MonitorRpcClient({ ...rpcOptions, args });
+    this.rpc = new MonitorRpcClient({ ...rpcOptions, args, agentDir: piEnvDir });
     this.state = createInitialState();
     this._idleTimeoutMs = idleTimeoutMs;
     this.externalInterest = {
       getSessionFile: () => this.state.sessionState.sessionFile,
       onExternalActivity: () => this.handleInstantExternalActivity(),
     };
+  }
+
+  /**
+   * Refresh this user's session list from disk (user env dir, plus the
+   * legacy global dir unless in isolation mode). Preserves in-memory
+   * entries for sessions currently active/viewed whose files don't exist
+   * on disk yet (pi writes the file on the first message).
+   */
+  refreshSessions(): SessionInfo[] {
+    const fresh = readSessions(this.user, !this.isolatedSessions);
+    const diskIds = new Set(fresh.map(s => s.id));
+    const viewed = new Set<string | null>();
+    viewed.add(this.state.sessionState.sessionId);
+    for (const [, clientSessionId] of this.sseClients) {
+      if (clientSessionId) viewed.add(clientSessionId);
+    }
+    const pending = this.state.availableSessions.filter(
+      (s: SessionInfo) => !diskIds.has(s.id) && viewed.has(s.id),
+    );
+    this.state.availableSessions = [...pending, ...fresh];
+    return this.state.availableSessions;
   }
 
   /** Set callback for when session goes idle */
@@ -244,7 +277,7 @@ export class UserSession {
   private resetIdleTimer() {
     if (this.cleanupTimer) clearTimeout(this.cleanupTimer);
     this.cleanupTimer = setTimeout(() => {
-      console.log(`[autere] User "${this.user}" idle timeout, terminating pi process`);
+      userLog(this.user).info('Idle timeout, terminating pi process');
       this._onIdle?.();
     }, this._idleTimeoutMs);
   }
@@ -342,7 +375,7 @@ export class UserSession {
     // Register for instant cross-session external-activity notifications
     this.unregisterExternalInterest = registerExternalActivityInterest(this.externalInterest);
 
-    console.log(`[autere] User "${this.user}" pi process started`);
+    userLog(this.user).info('pi process started');
   }
 
   /** Stop the pi RPC process */
@@ -357,14 +390,14 @@ export class UserSession {
     try {
       await this.rpc.stop();
     } catch (err) {
-      console.error('[autere] UserSession.stop: failed to stop RPC:', err);
+      userLog(this.user).error('Failed to stop RPC:', err);
     }
     // Disconnect all SSE clients
     for (const [client] of this.sseClients) {
       try { client.end(); } catch {}
     }
     this.sseClients.clear();
-    console.log(`[autere] User "${this.user}" pi process stopped`);
+    userLog(this.user).info('pi process stopped');
   }
 
   /** Whether the pi process is running */
@@ -398,7 +431,7 @@ export class UserSession {
         this.state.sessionStats.cost = stats.cost || 0;
         if (stats.contextUsage) this.state.sessionStats.contextUsage = stats.contextUsage;
       } catch (err) {
-        console.error('[autere] UserSession.fetchInitialState: failed to get session stats:', err);
+        log.userSession.error('fetchInitialState: failed to get session stats:', err);
       }
 
       try {
@@ -408,7 +441,7 @@ export class UserSession {
           provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
         }));
       } catch (err) {
-        console.error('[autere] UserSession.fetchInitialState: failed to get available models:', err);
+        log.userSession.error('fetchInitialState: failed to get available models:', err);
       }
 
       // Load session history into the buffer for this specific session
@@ -420,10 +453,10 @@ export class UserSession {
           if (buf.length > 50) buf.splice(0, buf.length - 50);
         }
       } catch (err) {
-        console.error('[autere] UserSession.fetchInitialState: failed to load session history:', err);
+        log.userSession.error('fetchInitialState: failed to load session history:', err);
       }
     } catch (err) {
-      console.error(`[autere] User "${this.user}" failed to fetch initial state:`, err);
+      userLog(this.user).error('Failed to fetch initial state:', err);
     }
   }
 
@@ -433,7 +466,7 @@ export class UserSession {
 
     rpc.onEvent((event: any) => {
       if (event.type !== 'message_update') {
-        console.log(`[autere] User "${this.user}" RPC event: ${event.type}`);
+        log.userSession.forSession(s.sessionState.sessionId).debug(`RPC event: ${event.type}`);
       }
 
       // We received an event from pi — this process is active, clear external flag
@@ -544,7 +577,7 @@ export class UserSession {
       this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
       const buf = this.historyFor(s.sessionState.sessionId);
       this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', sessionId: s.sessionState.sessionId, data: buf.slice(-50) });
-    }).catch((err) => { console.error('[autere] UserSession.handleSessionStart: failed to get state:', err); });
+    }).catch((err) => { log.userSession.error('handleSessionStart: failed to get state:', err); });
   }
 
   private handleSessionInfoChanged(event: any): void {
@@ -637,11 +670,9 @@ export class UserSession {
       .map((c: any) => c.text)
       .join('') || '';
 
-    // Debug: log all assistant messages from pi
     if (rawRole === 'assistant') {
-      const contentTypes = (event.message.content || []).map((c: any) => c.type);
-      console.log(`[autere] assistant message_end: text_len=${text.length}, content_types=[${contentTypes}]`);
-      if (text) console.log(`[autere] assistant message text: ${text}`);
+      log.userSession.forSession(s.sessionState.sessionId).debug(
+        `assistant message_end: text_len=${text.length}, content_types=[${(event.message.content || []).map((c: any) => c.type).join(',')}]`);
     }
 
     // Skip toolResult and thinking messages — they are handled by handleToolEnd and handleMessageUpdate
@@ -727,7 +758,7 @@ export class UserSession {
     this.rpc.getSessionStats().then(stats => {
       if (stats.contextUsage) s.sessionStats.contextUsage = stats.contextUsage;
       this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
-    }).catch((err) => { console.error('[autere] UserSession.handleMessageEnd: failed to get session stats:', err); });
+    }).catch((err) => { log.userSession.forSession(s.sessionState.sessionId).error('handleMessageEnd: failed to get session stats:', err); });
   }
 
   private handleToolStart(event: any): void {
@@ -891,7 +922,7 @@ export class UserSession {
     if (!sessionId || !sessionFile) return;
     if (s.sessionState.externalActivity) return; // already flagged
 
-    console.log(`[autere] External activity (instant) on current session: ${sessionId}`);
+    log.userSession.forSession(sessionId).info('External activity (instant notification)');
     s.sessionState.externalActivity = true;
     this.externalActivitySessions.set(sessionId, Date.now());
     this.broadcastToSession(sessionId, { type: 'status', data: { ...s.sessionState } });
@@ -909,7 +940,7 @@ export class UserSession {
         }
       }
     } catch (err) {
-      console.error('[autere] handleInstantExternalActivity: failed to reload history:', err);
+      log.userSession.forSession(sessionId).error('handleInstantExternalActivity: failed to reload history:', err);
     }
   }
 
@@ -948,7 +979,7 @@ export class UserSession {
           this.externalActivitySessions.delete(sessionId);
           if (sessionId === s.sessionState.sessionId) {
             s.sessionState.externalActivity = false;
-            console.log('[autere] External activity cleared (60s timeout)');
+            log.userSession.forSession(sessionId).debug('External activity cleared (60s timeout)');
             this.broadcastToSession(sessionId, { type: 'status', data: { ...s.sessionState } });
           } else {
             this.broadcastToSession(sessionId, { type: 'external_activity', data: { sessionId, active: false } });
@@ -976,12 +1007,12 @@ export class UserSession {
             continue;
           }
           // No events from pi recently — external process wrote to the file
-          console.log(`[autere] External activity detected on current session: file grew from ${lastKnown} to ${currentSize}`);
+          log.userSession.forSession(sessionId).info(`External activity detected (file grew from ${lastKnown} to ${currentSize} bytes)`);
           s.sessionState.externalActivity = true;
           this.externalActivitySessions.set(sessionId, Date.now());
           this.broadcastToSession(sessionId, { type: 'status', data: { ...s.sessionState } });
         } else {
-          console.log(`[autere] External activity detected on viewed session ${sessionId}: file grew from ${lastKnown} to ${currentSize}`);
+          log.userSession.forSession(sessionId).info(`External activity detected on viewed session (file grew from ${lastKnown} to ${currentSize} bytes)`);
           this.externalActivitySessions.set(sessionId, Date.now());
           this.broadcastToSession(sessionId, { type: 'external_activity', data: { sessionId, active: true } });
         }
@@ -1000,7 +1031,7 @@ export class UserSession {
       // Drop size tracking for files we no longer care about
       if (this.lastKnownFileSizes.size > 100) this.lastKnownFileSizes.clear();
     } catch (e) {
-      console.log(`[autere] Failure in checkExternalActivity: ${e}`);
+      log.userSession.error('Failure in checkExternalActivity:', e);
     }
   }
 }

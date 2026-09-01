@@ -10,6 +10,7 @@ import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { AUTH_TOKENS_FILE, AUTH_TOKEN_EXPIRY_MS } from './constants.js';
+import { log } from './logger.js';
 
 // ── Auth state ──
 
@@ -66,7 +67,7 @@ export function loadAuthTokens() {
       saveAuthTokens();
     }
   } catch (err) {
-    console.error('[autere] Failed to load auth tokens:', err);
+    log.auth.error('Failed to load auth tokens:', err);
     authTokens = new Map();
   }
 }
@@ -82,7 +83,7 @@ export function saveAuthTokens() {
     writeFileSync(tmp, JSON.stringify(data), 'utf-8');
     renameSync(tmp, AUTH_TOKENS_FILE);
   } catch (err) {
-    console.error('[autere] Failed to save auth tokens:', err);
+    log.auth.error('Failed to save auth tokens:', err);
   }
 }
 
@@ -183,7 +184,7 @@ export function resolveAuth(pi: { getFlag: (name: string) => any }) {
   if (users.admin) users.admin.password = authPassword;
   loadAuthTokens();
   if (!authEnabled) {
-    console.log('[autere] Authentication disabled (--monitor-auth false)');
+    log.auth.info('Authentication disabled (--monitor-auth false)');
   }
 }
 
@@ -237,6 +238,6 @@ export function setLastSession(token: string, sessionFile: string): void {
     writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
     renameSync(tmp, LAST_SESSION_FILE);
   } catch (err) {
-    console.error('[autere] Failed to save last session:', err);
+    log.auth.error('Failed to save last session:', err);
   }
 }

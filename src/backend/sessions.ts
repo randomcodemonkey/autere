@@ -2,17 +2,29 @@ import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { SessionInfo } from './types.js';
 import { PI_DIR } from './constants.js';
+import { getPiEnvDir } from './pi-env.js';
+import { log } from './logger.js';
 
 const SESSIONS_DIR = join(PI_DIR, 'sessions');
 
 // ── Session listing ──
 
-export function readSessions(): SessionInfo[] {
+/**
+ * Read session files, user-scoped.
+ *
+ * With per-user pi environments, each user's sessions live in
+ * ~/.autere/pi-envs/{user}/sessions. Passing a user scans only that
+ * user's environment (plus optionally the legacy global ~/.pi/agent
+ * sessions, which predate per-user envs). Without a user, scans the
+ * global dir and ALL user envs — only appropriate for tools that need
+ * a global view; dashboard routes should always pass the user.
+ */
+export function readSessions(user?: string, includeGlobal: boolean = true): SessionInfo[] {
   try {
     const sessions: SessionInfo[] = [];
-    if (!existsSync(SESSIONS_DIR)) return sessions;
 
     function findJsonlFiles(dir: string) {
+      if (!existsSync(dir)) return;
       const entries = readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         const fullPath = join(dir, entry.name);
@@ -34,7 +46,7 @@ export function readSessions(): SessionInfo[] {
                       sessionName = e.name;
                       break;
                     }
-                  } catch (lineErr) { console.error('[autere] Failed to parse session name:', lineErr); break; }
+                  } catch (lineErr) { log.sessions.error('Failed to parse session name:', lineErr); break; }
                 }
 
                 let lastActivity = header.timestamp ? new Date(header.timestamp).getTime() : 0;
@@ -47,7 +59,7 @@ export function readSessions(): SessionInfo[] {
                       if (ts > lastActivity) lastActivity = ts;
                       break;
                     }
-                  } catch (lineErr) { console.error('[autere] Failed to parse session timestamp:', lineErr); break; }
+                  } catch (lineErr) { log.sessions.error('Failed to parse session timestamp:', lineErr); break; }
                 }
 
                 sessions.push({
@@ -61,16 +73,25 @@ export function readSessions(): SessionInfo[] {
                 });
               }
             }
-          } catch (lineErr) { console.error('[autere] Failed to parse session file:', lineErr); }
+          } catch (lineErr) { log.sessions.error('Failed to parse session file:', lineErr); }
         }
       }
     }
 
-    findJsonlFiles(SESSIONS_DIR);
+    // Legacy global sessions (pre-per-user-env, and CLI sessions)
+    if (includeGlobal) {
+      findJsonlFiles(SESSIONS_DIR);
+    }
+
+    // The user's own pi environment sessions
+    if (user) {
+      findJsonlFiles(join(getPiEnvDir(user), 'sessions'));
+    }
+
     sessions.sort((a, b) => b.lastActivity - a.lastActivity);
     return sessions;
   } catch (err) {
-    console.error('[autere] Failed to read sessions:', err);
+    log.sessions.error('Failed to read sessions:', err);
     return [];
   }
 }

@@ -153,9 +153,11 @@ interface StreamCardProps {
   isStreaming: boolean;
   compacting?: boolean;
   onNewSession: () => void;
+  onCompact?: () => void;
+  onCommandError?: (message: string) => void;
 }
 
-export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession }) => {
+export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const [filters, setFilters] = useState({
     thinking: localStorage.getItem('autere-filter-thinking') !== 'off',
@@ -349,7 +351,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
           </button>
         )}
       </div>
-      <ChatInput onNewSession={onNewSession} disabled={compacting} isStreaming={isStreaming} isActive={isStreaming || compacting} />
+      <ChatInput onNewSession={onNewSession} onCompact={onCompact} onError={onCommandError} disabled={compacting} isStreaming={isStreaming} isActive={isStreaming || compacting} />
     </div>
   );
 };
