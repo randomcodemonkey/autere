@@ -6,6 +6,8 @@
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -64,13 +66,16 @@ export function startBackend(): Promise<void> {
     }
 
     // Start autere backend on test port with auth disabled
+    // Isolated pi envs dir: tests must not read/write real user sessions
+    // (the default ~/.autere/pi-envs/admin is shared with the real
+    // dashboard instance for the admin user).
+    const testEnvsDir = mkdtempSync(join(tmpdir(), 'autere-e2e-envs-'));
     const args = [
       'src/backend/index.ts',
       '--port', String(TEST_PORT),
       '--monitor-auth', 'false',
-      // Always start a fresh pi session — the shared ~/.pi environment means
-      // resuming the last session would attach to a session real users may
-      // also be viewing, leaking test messages into their chat.
+      // Always start a fresh pi session — resuming the last session would
+      // attach to whatever state a previous run left behind.
       '--new-session',
     ];
 
@@ -82,6 +87,7 @@ export function startBackend(): Promise<void> {
       env: {
         ...process.env,
         PI_MONITOR_AUTH: 'false',
+        AUTERE_PI_ENVS_DIR: testEnvsDir,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,

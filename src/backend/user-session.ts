@@ -61,6 +61,8 @@ function createInitialState(): UserSessionState {
       startTime: Date.now(),
       externalActivity: false,
       compacting: false,
+      steerPending: 0,
+      followUpPending: 0,
     },
     sessionStats: {
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -439,6 +441,13 @@ export class UserSession {
         case 'agent_end':
         case 'agent_settled':
           s.sessionState.isStreaming = false;
+          this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
+          break;
+        case 'queue_update':
+          // pi reports its actual steering/follow-up queues — the
+          // authoritative pending counts for the chat buttons.
+          s.sessionState.steerPending = Array.isArray(event.steering) ? event.steering.length : 0;
+          s.sessionState.followUpPending = Array.isArray(event.followUp) ? event.followUp.length : 0;
           this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
           break;
         case 'message_update':

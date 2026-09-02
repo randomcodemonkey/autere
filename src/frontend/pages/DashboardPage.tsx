@@ -1,13 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Header } from '../components/Header';
-import { ModelCard } from '../components/ModelCard';
-import { UsageCard } from '../components/UsageCard';
-import { ToolsCard } from '../components/ToolsCard';
-import { ExtensionsCard } from '../components/ExtensionsCard';
+import { Header, ViewId } from '../components/Header';
+import { StatusCard } from '../components/StatusCard';
+import { SettingsCard } from '../components/SettingsCard';
 import { StreamCard } from '../components/StreamCard';
-import { StatusModal } from '../components/StatusModal';
-import { SessionModal } from '../components/SessionModal';
 import { Modal } from '../components/Modal';
 import { url, basePath } from '../base-path';
 import type {
@@ -66,8 +62,17 @@ export function DashboardPage({
   sseDisconnect,
   sseConnect,
 }: DashboardPageProps) {
-  const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>();
+  const { sessionId: urlSessionId, view } = useParams<{ sessionId?: string; view?: string }>();
   const navigate = useNavigate();
+
+  // View switching (chat / status / settings). On desktop the status card is
+  // always visible on the left and the selection swaps the right pane; on
+  // mobile each view is a full-screen card (CSS).
+  const activeView: ViewId = view === 'settings' ? 'settings' : view === 'status' ? 'status' : 'chat';
+  const handleSetView = useCallback((v: ViewId) => {
+    if (!urlSessionId) return;
+    navigate(v === 'chat' ? `/session/${urlSessionId}` : `/session/${urlSessionId}/${v}`);
+  }, [navigate, urlSessionId]);
 
   // Session state
   const [sessionState, setSessionState] = useState<SessionState>({
@@ -95,9 +100,7 @@ export function DashboardPage({
   const [models, setModels] = useState<AvailableModel[]>([]);
   const [availableSessions, setAvailableSessions] = useState<SessionInfo[]>([]);
   // UI state
-  const [showStatusModal, setShowStatusModal] = useState(false);
   const [restartingBackend, setRestartingBackend] = useState(false);
-  const [showSessionModal, setShowSessionModal] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
 
@@ -158,7 +161,14 @@ export function DashboardPage({
         });
         break;
       case 'tool_end':
-        setActiveTools((prev) => prev.filter((t) => t.id !== msg.data.id));
+        // id: null is the initial-state signal on (re)connect — no tools are
+        // active. Without this, stale tools from before a backend restart
+        // would stick around until a full page refresh.
+        if (msg.data.id == null) {
+          setActiveTools([]);
+        } else {
+          setActiveTools((prev) => prev.filter((t) => t.id !== msg.data.id));
+        }
         if (msg.data.recentTools) setRecentTools(msg.data.recentTools);
         break;
       case 'extensions':
@@ -224,14 +234,6 @@ export function DashboardPage({
     return () => { cancelled = true; };
   }, [authenticated, urlSessionId]);
 
-  // Apply chat-fullscreen class on mount if stored in localStorage
-  useEffect(() => {
-    if (localStorage.getItem('autere-chat-fullscreen') === '1') {
-      const container = document.querySelector('.container');
-      if (container) container.classList.add('chat-fullscreen');
-    }
-  }, []);
-
   // When URL changes (browser back/forward, direct navigation, or programmatic
   // navigate), send a switch request. React Router handles the URL — we just
   // react to param changes.
@@ -294,9 +296,20 @@ export function DashboardPage({
     setRecentTools([]);
   }, []);
 
+  // Badge click: on desktop the status card lives in the always-visible left
+  // column — scroll it into view and flash it so the click gives visible
+  // feedback. (On mobile onViewChange('status') shows the card full-screen.)
+  const handleStatusClick = useCallback(() => {
+    document.querySelector('.status-card-session')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  // Entering the status view (badge or menu) scrolls to and flashes the card
+  useEffect(() => {
+    if (activeView === 'status') handleStatusClick();
+  }, [activeView, handleStatusClick]);
+
   const handleLogout = useCallback(async () => {
     await logout();
-    setShowStatusModal(false);
     // Full reload to index: resets all SPA state (session view, SSE, modals)
     // and presents a clean login screen. After re-login the app starts from
     // the root redirect as on a fresh visit.
@@ -334,7 +347,6 @@ export function DashboardPage({
   const handleNewSession = useCallback(() => {
     setCreatingSession(true);
     setSessionError(null);
-    setShowSessionModal(false);
     fetch(url('/api/new-session'), { method: 'POST' })
       .then(res => res.json())
       .then(data => {
@@ -342,10 +354,15 @@ export function DashboardPage({
           const newId = data.navigateUrl.split('/').pop();
           // Navigate directly from the response — no SSE broadcast needed
           setCreatingSession(false);
-          // Update sessionState immediately so the URL effect doesn't fire a
-          // redundant switch-by-id while sessionState still holds the previous
-          // session's id (the SSE status event may lag behind).
-          if (newId) setSessionState((prev: any) => ({ ...prev, sessionId: newId }));
+          // Apply the fresh session state returned by the backend. The SSE
+          // status broadcast for the new session is dropped while we're still
+          // on the old URL (stale-snapshot guard), and the URL-change effect
+          // early-returns because sessionId was set optimistically — so this
+          // response is the only chance to sync sessionName/sessionFile etc.
+          // Without it, the session badge keeps the previous session's
+          // name/id until the next interaction.
+          if (data.sessionState) setSessionState(data.sessionState);
+          else if (newId) setSessionState((prev: any) => ({ ...prev, sessionId: newId }));
           resetSessionUI();
           navigate(data.navigateUrl, { replace: true });
         } else if (!data.success) {
@@ -362,15 +379,15 @@ export function DashboardPage({
   const handleSwitchSession = useCallback(async (sessionId: string) => {
     setSessionError(null);
     navigate(`/session/${sessionId}`);
-    setShowSessionModal(false);
-  }, [navigate]);
+    handleSetView('chat');
+  }, [navigate, handleSetView]);
 
   const activeModelId = sessionState.model?.id || null;
   const { type: statusType, text: statusText } = computeStatus(baseStatusType, baseStatusText, sessionState);
 
   if (creatingSession) {
     return (
-      <div id="main-app" className={authenticated ? 'authenticated' : ''}>
+      <div id="main-app" className={`authenticated view-${activeView}`}>
         <div className="loading-new-session">
             <>
               <div className="loading-spinner" />
@@ -382,58 +399,58 @@ export function DashboardPage({
   }
 
   return (
-    <div id="main-app" className={authenticated ? 'authenticated' : ''}>
+    <div id="main-app" className={`authenticated view-${activeView}`}>
       <Header
         statusType={statusType}
         statusText={statusText}
-        onStatusClick={() => setShowStatusModal(true)}
         sessionId={urlSessionId || sessionState.sessionId}
         sessionName={sessionState.sessionName}
-        onSessionClick={() => setShowSessionModal(true)}
+        activeView={activeView}
+        onViewChange={handleSetView}
         workingExternal={sessionState.externalActivity}
         isActive={sessionState.isStreaming || sessionState.compacting}
       />
 
       <div className="container">
         <div className="cards-scroll">
-          <ModelCard models={models} activeModelId={activeModelId} onModelsFetched={setModels} />
-          <UsageCard messageCount={sessionState.messageCount} requestCount={sessionState.requestCount} stats={stats} />
-          <ToolsCard activeTools={activeTools} recentTools={recentTools} />
-          <ExtensionsCard extensions={extensions} />
+          <StatusCard
+            sessionId={sessionState.sessionId}
+            sessionName={sessionState.sessionName}
+            compacting={sessionState.compacting}
+            statusType={statusType}
+            availableSessions={availableSessions}
+            onNewSession={handleNewSession}
+            onAbort={handleAbort}
+            onCompact={handleCompact}
+            onSwitchSession={handleSwitchSession}
+            onSessionNameSet={() => {}}
+            messageCount={sessionState.messageCount}
+            requestCount={sessionState.requestCount}
+            stats={stats}
+            activeTools={activeTools}
+            recentTools={recentTools}
+            extensions={extensions}
+            models={models}
+            activeModelId={activeModelId}
+            onModelsFetched={setModels}
+            username={username}
+            userRole={userRole}
+            restarting={restarting}
+            restartingBackend={restartingBackend}
+            onRestart={handleRestart}
+            onRestartBackend={handleRestartBackend}
+            onLogout={handleLogout}
+          />
         </div>
         <div className={`chat-wrapper${sessionState.externalActivity ? ' chat-external-activity' : ''}`}>
-          <StreamCard messages={streamHistory} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} />
+          {activeView === 'chat' && (
+            <StreamCard messages={streamHistory} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} />
+          )}
+          {activeView === 'settings' && (
+            <SettingsCard sseConnected={sseConnected} />
+          )}
         </div>
       </div>
-
-      <StatusModal
-        open={showStatusModal}
-        statusType={statusType}
-        statusText={statusText}
-        username={username}
-        onClose={() => setShowStatusModal(false)}
-        onRestart={handleRestart}
-        onRestartBackend={handleRestartBackend}
-        onLogout={handleLogout}
-        onSettings={() => { setShowStatusModal(false); navigate('/settings'); }}
-        restarting={restarting}
-        restartingBackend={restartingBackend}
-        userRole={userRole}
-      />
-
-      <SessionModal
-        open={showSessionModal}
-        statusType={statusType}
-        statusText={statusText}
-        currentSessionId={sessionState.sessionId}
-        currentSessionName={sessionState.sessionName}
-        compacting={sessionState.compacting}
-        isActive={sessionState.isStreaming || sessionState.compacting}
-        onClose={() => setShowSessionModal(false)}
-        onAbort={handleAbort}
-        onNewSession={handleNewSession}
-        onSwitchSession={handleSwitchSession}
-      />
 
       <Modal open={!!sessionError} onClose={() => setSessionError(null)} className="modal-status">
         <div className="modal-header">

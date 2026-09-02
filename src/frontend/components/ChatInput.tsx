@@ -8,6 +8,8 @@ interface ChatInputProps {
   disabled?: boolean; // true when compacting — disables everything
   isStreaming?: boolean; // true when agent is streaming — shows Steer/Followup
   isActive?: boolean; // true when streaming or compacting — blocks /new command
+  steerPending?: number; // queued steer messages (from pi's queue_update)
+  followUpPending?: number; // queued follow-up messages
 }
 
 // Detect touch devices: on mobile, the virtual keyboard's Return key should
@@ -21,7 +23,7 @@ const SLASH_COMMANDS: { cmd: string; description: string }[] = [
   { cmd: '/help', description: 'Show available commands.' },
 ];
 
-export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, onError, disabled, isStreaming, isActive }) => {
+export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, onError, disabled, isStreaming, isActive, steerPending, followUpPending }) => {
   const [value, setValue] = useState('');
   const [sending, setSending] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -147,14 +149,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
             onClick={() => send('steer')}
             disabled={isDisabled || !value.trim()}
           >
-            Steer
+            Steer{steerPending ? <span className="pending-count">{steerPending}</span> : null}
           </button>
           <button
             className="chat-send-btn chat-followup-btn"
             onClick={() => send('followUp')}
             disabled={isDisabled || !value.trim()}
           >
-            Follow-up
+            Follow-up{followUpPending ? <span className="pending-count">{followUpPending}</span> : null}
           </button>
         </div>
       ) : (

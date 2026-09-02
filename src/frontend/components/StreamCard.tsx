@@ -10,6 +10,8 @@ interface StreamCardProps {
   onNewSession: () => void;
   onCompact?: () => void;
   onCommandError?: (message: string) => void;
+  steerPending?: number;
+  followUpPending?: number;
 }
 
 /** Truncation limits per role (characters), for non-edit messages */
@@ -23,7 +25,7 @@ const TRUNC_LEN: Record<string, number> = {
 /** Collapse edit diffs longer than this many diff rows */
 const EDIT_COLLAPSE_ROWS = 12;
 
-export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError }) => {
+export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError, steerPending, followUpPending }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const [filters, setFilters] = useState({
     thinking: localStorage.getItem('autere-filter-thinking') !== 'off',
@@ -121,40 +123,11 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     }
   }, []);
 
-  // Full-screen toggle for mobile
-  const [fullscreen, setFullscreen] = useState(() => {
-    return localStorage.getItem('autere-chat-fullscreen') === '1';
-  });
-
-  const toggleFullscreen = useCallback(() => {
-    setFullscreen(prev => {
-      const next = !prev;
-      localStorage.setItem('autere-chat-fullscreen', next ? '1' : '0');
-      // Toggle the class on the container element
-      const container = document.querySelector('.container');
-      if (container) {
-        container.classList.toggle('chat-fullscreen', next);
-      }
-      return next;
-    });
-  }, []);
-
-  // Apply fullscreen class on mount and when fullscreen changes
-  useEffect(() => {
-    const container = document.querySelector('.container');
-    if (container) {
-      container.classList.toggle('chat-fullscreen', fullscreen);
-    }
-  }, [fullscreen]);
-
   return (
     <div className={`card stream-card${isStreaming ? ' working' : ''}`}>
-      <div className="card-title" onClick={toggleFullscreen} style={{ cursor: 'pointer' }}>
-        <span className="chat-title-group">
-          Chat
-          <span className="chat-collapse-icon">{fullscreen ? '▾' : '▸'}</span>
-        </span>
-        <div className="stream-filters" onClick={(e) => e.stopPropagation()}>
+      <div className="card-title">
+        <span>Chat</span>
+        <div className="stream-filters">
           <button
             className={`stream-toggle${filters.thinking ? ' active' : ''}`}
             onClick={() => toggleFilter('thinking')}
@@ -211,7 +184,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
           </button>
         )}
       </div>
-      <ChatInput onNewSession={onNewSession} onCompact={onCompact} onError={onCommandError} disabled={compacting} isStreaming={isStreaming} isActive={isStreaming || compacting} />
+      <ChatInput onNewSession={onNewSession} onCompact={onCompact} onError={onCommandError} disabled={compacting} isStreaming={isStreaming} isActive={isStreaming || compacting} steerPending={steerPending} followUpPending={followUpPending} />
     </div>
   );
 };

@@ -32,8 +32,13 @@ function safeUserName(user: string): string {
   return user.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
-/** Directory of per-user pi environments */
-export const PI_ENVS_DIR = join(AUTERE_DIR, 'pi-envs');
+/** Directory of per-user pi environments.
+ *  AUTERE_PI_ENVS_DIR overrides the location — used by the e2e suite to
+ *  fully isolate test pi processes (sessions, settings, auth) from real
+ *  user environments. */
+export const PI_ENVS_DIR = process.env.AUTERE_PI_ENVS_DIR
+  ? (existsSync(process.env.AUTERE_PI_ENVS_DIR) || mkdirSync(process.env.AUTERE_PI_ENVS_DIR, { recursive: true }), process.env.AUTERE_PI_ENVS_DIR)
+  : join(AUTERE_DIR, 'pi-envs');
 
 /** Get the pi agent dir for a user (may not exist yet) */
 export function getPiEnvDir(user: string): string {

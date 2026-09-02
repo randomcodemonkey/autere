@@ -12,6 +12,8 @@ export interface SessionState {
   startTime: number;
   externalActivity: boolean;
   compacting: boolean;
+  steerPending?: number;
+  followUpPending?: number;
 }
 
 export interface TokenUsage {

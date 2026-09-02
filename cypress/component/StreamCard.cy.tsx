@@ -8,7 +8,7 @@ describe('StreamCard', () => {
     cy.get('.card-title').should('contain', 'Chat');
   });
 
-  it('renders filter buttons and fullscreen toggle', () => {
+  it('renders filter buttons', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={cy.stub()} />);
     cy.get('.stream-toggle').should('have.length', 3);
     cy.get('.stream-toggle').eq(0).should('contain', 'thinking');

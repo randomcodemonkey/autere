@@ -6,6 +6,12 @@
  */
 
 describe('autere E2E', () => {
+  // Open the settings view via the header view menu (settings is a card
+  // inside the dashboard layout, not a standalone page).
+  function openSettings() {
+    cy.get('.view-btn-settings').click();
+    cy.get('.settings-card').should('be.visible');
+  }
   before(() => {
     // Wait for the backend to be ready (started by run-e2e.ts on random port)
     // Use baseUrl from Cypress config — don't hardcode ports
@@ -104,7 +110,7 @@ describe('autere E2E', () => {
       cy.get('.stream-role-user', { timeout: 10000 }).should('contain', 'user');
 
       // Wait for the agent to start working
-      cy.get('.status-badge', { timeout: 30000 }).should('contain', 'Working');
+      cy.get('.status-badge', { timeout: 30000 }).should('have.class', 'status-streaming');
 
       // Wait for the agent to finish and show response
       cy.get('.stream-role-assistant', { timeout: 60000 }).should('exist');
@@ -117,7 +123,7 @@ describe('autere E2E', () => {
       this.timeout(60000);
 
       // Wait for agent to be idle
-      cy.get('.status-badge', { timeout: 60000 }).should('not.contain', 'Working');
+      cy.get('.status-badge', { timeout: 60000 }).should('not.have.class', 'status-streaming');
 
       // Clear any leftover value, type message, and force-click send
       // (button may be disabled from prior test's sending/compacting state)
@@ -125,7 +131,7 @@ describe('autere E2E', () => {
       cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
 
       // Check for working status
-      cy.get('.status-badge', { timeout: 15000 }).should('contain', 'Working');
+      cy.get('.status-badge', { timeout: 15000 }).should('have.class', 'status-streaming');
 
       // The stream card should have the working class
       cy.get('.stream-card').should('have.class', 'working');
@@ -213,48 +219,62 @@ describe('autere E2E', () => {
   });
 
   describe('Session Management', () => {
-    it('opens session modal when session badge is clicked', () => {
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
+    it('shows the session card in the status column', () => {
+      cy.get('.status-card-session').should('be.visible');
     });
 
-    it('shows current session ID in modal', () => {
-      cy.get('.session-badge').click();
+    it('shows current session ID in session card', () => {
       cy.get('.session-current-id', { timeout: 10000 }).should('exist');
     });
 
-    it('can close session modal', () => {
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
-      cy.get('.modal-session .modal-close').click();
-      cy.get('.modal-session').should('not.be.visible');
-    });
-
     it('lists available sessions', () => {
-      cy.get('.session-badge').click();
       cy.get('.session-item', { timeout: 10000 }).should('have.length.greaterThan', 0);
     });
   });
 
-  describe('Status Modal', () => {
-    it('opens status modal when status badge is clicked', () => {
-      cy.get('.status-badge').click();
-      cy.get('.modal-status').should('be.visible');
+  describe('System Card', () => {
+    it('shows the system card in the status column', () => {
+      cy.get('.status-card-system').scrollIntoView().should('be.visible');
     });
 
-    it('shows connection status', () => {
-      cy.get('.status-badge').click();
-      cy.get('.modal-header-status-text').should('exist');
+    it('shows username', () => {
+      cy.get('.status-card-system .modal-username').should('exist');
+    });
+
+    it('shows uptime rows', () => {
+      cy.get('.status-card-system .modal-uptime-row').should('have.length', 2);
     });
 
     it('shows logout button', () => {
-      cy.get('.status-badge').click();
       cy.contains('Logout').should('exist');
     });
 
     it('shows restart button', () => {
-      cy.get('.status-badge').click();
       cy.contains('Restart PI').should('exist');
+    });
+  });
+
+  describe('View Menu', () => {
+    it('shows chat, status and settings views in the menu', () => {
+      cy.get('.view-btn-chat').should('exist');
+      cy.get('.view-btn-status').should('exist');
+      cy.get('.view-btn-settings').should('exist');
+    });
+
+    it('highlights the active view', () => {
+      cy.get('.view-btn-chat').should('have.class', 'active');
+      cy.get('.view-btn-settings').click();
+      cy.get('.view-btn-settings').should('have.class', 'active');
+      cy.get('.view-btn-chat').click();
+      cy.get('.view-btn-chat').should('have.class', 'active');
+    });
+
+    it('switches to settings view and back', () => {
+      openSettings();
+      cy.url().should('match', /\/session\/[^/]+\/settings$/);
+      cy.get('.view-btn-chat').click();
+      cy.get('.stream-card').should('exist');
+      cy.url().should('match', /\/session\/[^/]+$/);
     });
   });
 
@@ -333,29 +353,28 @@ describe('autere E2E', () => {
     it('creates a new session and navigates to it', function() {
       this.timeout(60000);
 
-      // Open session modal
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
-
       // Wait for New Session button to be enabled (disabled while streaming)
-      cy.get('.modal-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
-      cy.get('.modal-session .btn-primary').click();
+      cy.get('.status-card-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
+      cy.get('.status-card-session .btn-primary').click();
 
       // Should eventually navigate to a new session (loading page may be too fast to catch)
       cy.url({ timeout: 20000 }).should('match', /\/session\/[^/]+$/);
 
-      // Session modal should be closed after creating new session
-      cy.get('.modal-session').should('not.be.visible');
+      // Session badge must show the NEW session id immediately (no name yet,
+      // so it displays the first 6 chars of the id + ellipsis) — not the
+      // previous session's name/id.
+      cy.url().then((u) => {
+        const newId = u.split('/').pop() as string;
+        cy.get('.session-badge-text').should('have.text', newId.slice(0, 6) + '…');
+      });
     });
 
     it('new session has empty chat history', function() {
       this.timeout(60000);
 
       // Create new session (scope to modal)
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
-      cy.get('.modal-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
-      cy.get('.modal-session .btn-primary').click();
+      cy.get('.status-card-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
+      cy.get('.status-card-session .btn-primary').click();
       cy.url({ timeout: 20000 }).should('match', /\/session\/[^/]+$/);
 
       // Chat should have no messages (stream-box should have no .stream-msg children)
@@ -367,15 +386,13 @@ describe('autere E2E', () => {
       this.timeout(90000);
 
       // Create new session (scope to modal)
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
-      cy.get('.modal-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
-      cy.get('.modal-session .btn-primary').click();
+      cy.get('.status-card-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
+      cy.get('.status-card-session .btn-primary').click();
       cy.url({ timeout: 20000 }).should('match', /\/session\/[^/]+$/);
 
       // Wait for agent to be idle before sending
       cy.get('#main-app', { timeout: 15000 }).should('exist');
-      cy.get('.status-badge', { timeout: 30000 }).should('not.contain', 'Working');
+      cy.get('.status-badge', { timeout: 30000 }).should('not.have.class', 'status-streaming');
 
       // Send a message — use the first send button (guaranteed to be 'Send' when idle)
       cy.get('.chat-input').type('Hello from new session');
@@ -388,12 +405,8 @@ describe('autere E2E', () => {
   });
 
   describe('Switch Sessions', () => {
-    it('switches to a different session via modal', function() {
+    it('switches to a different session via the status card', function() {
       this.timeout(30000);
-
-      // Open session modal
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
 
       // Wait for sessions to load
       cy.get('.session-item', { timeout: 10000 }).should('have.length.greaterThan', 0);
@@ -401,21 +414,16 @@ describe('autere E2E', () => {
       // Find and click a different session
       cy.get('.session-item').not('.active').first().click();
 
-      // Should navigate to a session URL (modal closes and URL changes)
+      // Should navigate to a session URL
       cy.url({ timeout: 10000 }).should('match', /\/session\/[^/]+$/);
     });
 
     it('can switch sessions via URL', function() {
       this.timeout(30000);
 
-      // Open session modal to get a session ID
-      cy.get('.session-badge').click();
-      cy.get('.session-item', { timeout: 10000 }).should('have.length.greaterThan', 0);
-
       // Get a session ID from the list
+      cy.get('.session-item', { timeout: 10000 }).should('have.length.greaterThan', 0);
       cy.get('.session-item').not('.active').first().find('.session-item-id').invoke('text').then((sessionId) => {
-        // Close modal (scoped to session modal)
-        cy.get('.modal-session .modal-close').click();
 
         // Navigate directly to the session via URL
         cy.visit(`/session/${sessionId.trim()}`);
@@ -426,16 +434,14 @@ describe('autere E2E', () => {
     });
 
     it('session list shows multiple sessions', () => {
-      cy.get('.session-badge').click();
       cy.get('.session-item', { timeout: 10000 }).should('have.length.greaterThan', 1);
     });
 
     it('current session is highlighted in list', () => {
-      cy.get('.session-badge').click();
       cy.get('.session-item.active', { timeout: 10000 }).should('exist');
     });
 
-    it('can abort operation from session modal', function() {
+    it('can abort operation from the status card', function() {
       this.timeout(60000);
 
       // Send a message to make the agent work
@@ -443,10 +449,7 @@ describe('autere E2E', () => {
       cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
 
       // Wait for streaming to start
-      cy.get('.status-badge', { timeout: 15000 }).should('contain', 'Working');
-
-      // Open session modal
-      cy.get('.session-badge').click();
+      cy.get('.status-badge', { timeout: 15000 }).should('have.class', 'status-streaming');
 
       // Abort button should be visible
       cy.contains('Abort Operation').should('be.visible');
@@ -455,7 +458,7 @@ describe('autere E2E', () => {
       cy.contains('Abort Operation').click();
 
       // Should stop streaming
-      cy.get('.status-badge', { timeout: 15000 }).should('contain', 'Idle');
+      cy.get('.status-badge', { timeout: 15000 }).should('have.class', 'status-connected');
     });
   });
 
@@ -468,10 +471,10 @@ describe('autere E2E', () => {
       cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
 
       // Status should change to Working
-      cy.get('.status-badge', { timeout: 15000 }).should('contain', 'Working');
+      cy.get('.status-badge', { timeout: 15000 }).should('have.class', 'status-streaming');
 
       // Then back to Idle after response
-      cy.get('.status-badge', { timeout: 60000 }).should('contain', 'Idle');
+      cy.get('.status-badge', { timeout: 60000 }).should('have.class', 'status-connected');
     });
 
     it('updates message count after sending message', function() {
@@ -502,7 +505,7 @@ describe('autere E2E', () => {
       this.timeout(90000);
 
       // Wait for agent to be idle first (previous tests may have left it streaming)
-      cy.get('.status-badge', { timeout: 60000 }).should('not.contain', 'Working');
+      cy.get('.status-badge', { timeout: 60000 }).should('not.have.class', 'status-streaming');
 
       // Send a unique message in the current session so we can identify it
       const uniqueMsg = 'Test marker ' + Date.now();
@@ -514,16 +517,11 @@ describe('autere E2E', () => {
       cy.get('.stream-text').should('contain', uniqueMsg);
 
       // Create a new session (scope to modal)
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
-      cy.get('.modal-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
-      cy.get('.modal-session .btn-primary').click();
+      cy.get('.status-card-session .btn-primary', { timeout: 60000 }).should('not.be.disabled');
+      cy.get('.status-card-session .btn-primary').click();
 
       // Should navigate to a session URL (modal closes and URL changes)
       cy.url({ timeout: 20000 }).should('match', /\/session\/[^/]+$/);
-
-      // The session modal should be closed
-      cy.get('.modal-session').should('not.be.visible');
 
       // Stream history should be cleared by new_session_creating event
       cy.get('.stream-box .stream-msg').should('not.exist');
@@ -531,55 +529,54 @@ describe('autere E2E', () => {
   });
 
   describe('Settings Page', () => {
-    it('navigates to settings page from dashboard', () => {
-      cy.visit('/settings');
-      cy.get('#main-app').should('exist');
-      cy.get('.settings-page').should('exist');
+    it('navigates to settings view from the menu', () => {
+      openSettings();
+      cy.get('#main-app').should('have.class', 'view-settings');
     });
 
     it('shows settings card with title', () => {
-      cy.visit('/settings');
+      openSettings();
       cy.get('.settings-card').should('exist');
       cy.get('.settings-card .card-title').should('contain', 'Settings');
     });
 
     it('shows Models section with sortable list', () => {
-      cy.visit('/settings');
+      openSettings();
       cy.get('.settings-section-title').contains('Models').should('exist');
       cy.get('.sortable-list').should('exist');
     });
 
     it('shows 9Router section if extension is enabled', () => {
-      cy.visit('/settings');
+      openSettings();
       cy.get('.settings-section-title', { timeout: 10000 }).contains('9Router').should('exist');
     });
 
     it('shows enabled models in sortable list', () => {
-      cy.visit('/settings');
+      openSettings();
       cy.get('.sortable-list-item', { timeout: 10000 }).should('have.length.greaterThan', 0);
     });
 
     it('add model input is visible on its own row', () => {
-      cy.visit('/settings');
+      openSettings();
       cy.get('.sortable-list-add').should('exist');
       cy.get('.sortable-list-add .sortable-list-input').should('be.visible');
       cy.get('.sortable-list-add-btn').should('contain', 'Add Model');
     });
 
     it('add model button is disabled when input is empty', () => {
-      cy.visit('/settings');
+      openSettings();
       cy.get('.sortable-list-add .sortable-list-input').should('have.value', '');
       cy.get('.sortable-list-add-btn').should('be.disabled');
     });
 
     it('add model button enables when input has text', () => {
-      cy.visit('/settings');
+      openSettings();
       cy.get('.sortable-list-add .sortable-list-input').type('test/model-v1');
       cy.get('.sortable-list-add-btn').should('not.be.disabled');
     });
 
     it('can add a model to the list', () => {
-      cy.visit('/settings');
+      openSettings();
 
       // Get initial count
       cy.get('.sortable-list-item').then(($items) => {
@@ -601,7 +598,7 @@ describe('autere E2E', () => {
     });
 
     it('can add multiple models sequentially', () => {
-      cy.visit('/settings');
+      openSettings();
 
       cy.get('.sortable-list-item').then(($items) => {
         const initialCount = $items.length;
@@ -623,7 +620,7 @@ describe('autere E2E', () => {
     });
 
     it('can remove a model from the list', () => {
-      cy.visit('/settings');
+      openSettings();
 
       cy.get('.sortable-list-item', { timeout: 10000 }).then(($items) => {
         const initialCount = $items.length;
@@ -638,7 +635,7 @@ describe('autere E2E', () => {
     });
 
     it('can focus and interact with model entry inputs', () => {
-      cy.visit('/settings');
+      openSettings();
 
       cy.get('.sortable-list-item', { timeout: 10000 }).should('have.length.greaterThan', 0);
 
@@ -649,7 +646,7 @@ describe('autere E2E', () => {
     });
 
     it('prevents adding duplicate models', () => {
-      cy.visit('/settings');
+      openSettings();
 
       cy.get('.sortable-list-item', { timeout: 10000 }).should('have.length.greaterThan', 0);
 
@@ -667,7 +664,7 @@ describe('autere E2E', () => {
     });
 
     it('toggle fields work correctly', () => {
-      cy.visit('/settings');
+      openSettings();
 
       cy.get('.settings-toggle', { timeout: 10000 }).should('exist');
 
@@ -677,20 +674,20 @@ describe('autere E2E', () => {
     });
 
     it('save button is visible', () => {
-      cy.visit('/settings');
+      openSettings();
       cy.get('.settings-actions .btn-primary').should('contain', 'Save Settings');
     });
 
-    it('session badge navigates to latest session', () => {
-      cy.visit('/settings');
+    it('session badge switches to the status view', () => {
+      openSettings();
       cy.get('.session-badge').should('exist');
       cy.get('.session-badge').click();
-      cy.url({ timeout: 15000 }).should('match', /\/session\/[^/]+$/);
+      cy.get('.status-card-session').should('be.visible');
     });
 
-    it('settings page does not show dashboard cards', () => {
-      cy.visit('/settings');
-      cy.get('.container .card').should('not.exist');
+    it('settings view replaces the chat card', () => {
+      openSettings();
+      cy.get('.settings-card').should('exist');
       cy.get('.stream-card').should('not.exist');
     });
   });

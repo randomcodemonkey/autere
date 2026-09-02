@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { LoginScreen } from './components/LoginScreen';
 import { DashboardPage } from './pages/DashboardPage';
-import { SettingsPage } from './pages/SettingsPage';
 import { RootRedirect } from './pages/RootRedirect';
 import { NotFound } from './pages/NotFound';
 import { useSSE } from './hooks/useSSE';
@@ -84,7 +83,7 @@ function App() {
         <Route path="/" element={
           <RootRedirect />
         } />
-        <Route path="/session/:sessionId" element={
+        <Route path="/session/:sessionId/:view?" element={
           <DashboardPage
             authenticated={authenticated}
             username={username}
@@ -100,16 +99,7 @@ function App() {
             sseConnect={sseConnect}
           />
         } />
-        <Route path="/settings" element={
-          <SettingsPage
-            authenticated={authenticated}
-            username={username}
-            statusType={baseStatusType}
-            statusText={baseStatusText}
-            onStatusClick={() => {}}
-            sseConnected={sseConnected}
-          />
-        } />
+        <Route path="/settings" element={<RootRedirect />} />
         <Route path="*" element={
           <NotFound />
         } />

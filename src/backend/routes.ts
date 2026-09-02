@@ -144,7 +144,13 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       if (existsSync(staticPath)) {
         const ext = staticPath.split('.').pop();
         const mime: Record<string, string> = { js: 'application/javascript', css: 'text/css', json: 'application/json', png: 'image/png', svg: 'image/svg+xml' };
-        res.writeHead(200, { 'Content-Type': mime[ext || ''] || 'application/octet-stream', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
+        // Vite bundles live under /assets/ with content-hashed filenames —
+        // safe to cache forever. Everything else (index.html, sw.js,
+        // logo, manifest) must revalidate so deploys are picked up.
+        const cacheControl = url.pathname.startsWith('/assets/')
+          ? 'public, max-age=31536000, immutable'
+          : 'no-cache, no-store, must-revalidate';
+        res.writeHead(200, { 'Content-Type': mime[ext || ''] || 'application/octet-stream', 'Cache-Control': cacheControl });
         res.end(readFileSync(staticPath));
         return;
       }
@@ -290,6 +296,21 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
 
     // ── Session management ──
 
+    // Uptime info for the status modal. autere start = process start; pi
+    // start = when the user's pi RPC process was spawned (null if not
+    // currently running). The frontend computes elapsed time locally so no
+    // polling is needed.
+    if (url.pathname === '/api/status' && req.method === 'GET') {
+      sendJSON(res, {
+        success: true,
+        data: {
+          autereStartedAt: Date.now() - Math.round(process.uptime() * 1000),
+          piStartedAt: sessionState.connected ? sessionState.startTime : null,
+        },
+      });
+      return;
+    }
+
     if (url.pathname === '/api/sessions' && req.method === 'GET') {
       sendJSON(res, { success: true, data: session.refreshSessions() });
       return;
@@ -396,6 +417,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           sessionState.sessionFile = sess.sessionFile;
           sessionState.sessionName = sess.sessionName;
           sessionState.compacting = false;
+          sessionState.steerPending = 0;
+          sessionState.followUpPending = 0;
           session.setHistoryFor(sess.id, loadedHistory);
           // Pi is moving to this session — it's no longer "external" activity
           session.clearExternalActivity(sess.id);
@@ -472,6 +495,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
         sessionState.compacting = state.isCompacting;
         sessionState.messageCount = 0;
         sessionState.requestCount = 0;
+        sessionState.steerPending = 0;
+        sessionState.followUpPending = 0;
         sessionStats.tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
         sessionStats.cost = 0;
         sessionStats.contextUsage = null;
@@ -505,7 +530,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
         // because broadcast() sends to ALL clients, not just the one that
         // requested the new session.
         log.http.info(`New session created -> /session/${state.sessionId}`);
-        sendJSON(res, { success: true, navigateUrl: `/session/${state.sessionId}` });
+        // Include the fresh session state so the requesting client can update
+        // its badge immediately — the SSE status broadcast is dropped by
+        // clients still viewing the previous session (stale-snapshot guard).
+        sendJSON(res, { success: true, navigateUrl: `/session/${state.sessionId}`, sessionState: { ...sessionState } });
       } catch (err) {
         session.state.newSessionCreating = false;
         log.http.error('/api/new-session failed:', err);

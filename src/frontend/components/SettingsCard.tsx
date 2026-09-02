@@ -1,34 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Header } from '../components/Header';
-import { SortableList } from '../components/SortableList';
+import { SortableList } from './SortableList';
 import { url } from '../base-path';
 import type { SettingSection, SettingField } from '../types';
 
-interface SettingsPageProps {
-  authenticated: boolean;
-  username: string | null;
-  statusType: string;
-  statusText: string;
-  onStatusClick: () => void;
+interface SettingsCardProps {
   sseConnected: boolean;
 }
 
-export function SettingsPage({
-  authenticated,
-  username,
-  statusType,
-  statusText,
-  onStatusClick,
-  sseConnected,
-}: SettingsPageProps) {
+export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   const [schema, setSchema] = useState<SettingSection[]>([]);
   const [settings, setSettings] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const navigate = useNavigate();
   const prevSseConnectedRef = useRef(sseConnected);
 
   // Reset saved state when SSE reconnects after backend restart
@@ -129,53 +114,38 @@ export function SettingsPage({
   };
 
   return (
-    <div id="main-app" className={authenticated ? 'authenticated' : ''}>
-      <Header
-        statusType={statusType}
-        statusText={statusText}
-        onStatusClick={onStatusClick}
-        sessionId={null}
-        sessionName={null}
-        onSessionClick={() => navigate('/', { replace: true })}
-        workingExternal={false}
-        isActive={false}
-      />
+    <div className="card settings-card">
+      <div className="card-header">
+        <span className="card-title">Settings</span>
+      </div>
 
-      <div className="settings-page">
-        <div className="card settings-card">
-          <div className="card-header">
-            <span className="card-title">Settings</span>
+      {error && <div className="settings-error">{error}</div>}
+      {saved && <div className="settings-saved">Settings saved. Restarting…</div>}
+
+      {loading ? (
+        <div className="settings-loading">Loading settings…</div>
+      ) : schema.length === 0 ? (
+        <div className="settings-empty">No settings available for your enabled extensions.</div>
+      ) : (
+        <>
+          <div className="settings-sections">
+            {schema.map((section) => (
+              <div key={section.id} className="settings-section">
+                <h3 className="settings-section-title">{section.label}</h3>
+                <div className="settings-section-fields">
+                  {section.fields.map(renderField)}
+                </div>
+              </div>
+            ))}
           </div>
 
-          {error && <div className="settings-error">{error}</div>}
-          {saved && <div className="settings-saved">Settings saved. Restarting…</div>}
-
-          {loading ? (
-            <div className="settings-loading">Loading settings…</div>
-          ) : schema.length === 0 ? (
-            <div className="settings-empty">No settings available for your enabled extensions.</div>
-          ) : (
-            <>
-              <div className="settings-sections">
-                {schema.map((section) => (
-                  <div key={section.id} className="settings-section">
-                    <h3 className="settings-section-title">{section.label}</h3>
-                    <div className="settings-section-fields">
-                      {section.fields.map(renderField)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="settings-actions">
-                <button className="btn btn-primary" onClick={handleSave} disabled={saving || saved}>
-                  {saving ? 'Saving…' : saved ? 'Saved' : 'Save Settings'}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
+          <div className="settings-actions">
+            <button className="btn btn-primary" onClick={handleSave} disabled={saving || saved}>
+              {saving ? 'Saving…' : saved ? 'Saved' : 'Save Settings'}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
-}
+};
