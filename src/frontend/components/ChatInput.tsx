@@ -149,14 +149,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
             onClick={() => send('steer')}
             disabled={isDisabled || !value.trim()}
           >
-            Steer{steerPending ? <span className="pending-count">{steerPending}</span> : null}
+            Steer{steerPending ? <span className="badge warning pending-count">{steerPending}</span> : null}
           </button>
           <button
             className="chat-send-btn chat-followup-btn"
             onClick={() => send('followUp')}
             disabled={isDisabled || !value.trim()}
           >
-            Follow-up{followUpPending ? <span className="pending-count">{followUpPending}</span> : null}
+            Follow-up{followUpPending ? <span className="badge warning pending-count">{followUpPending}</span> : null}
           </button>
         </div>
       ) : (

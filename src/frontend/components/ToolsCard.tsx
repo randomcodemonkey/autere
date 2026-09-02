@@ -50,10 +50,10 @@ export const ToolsCard: React.FC<ToolsCardProps> = ({ activeTools, recentTools }
         <div className="card-title">
           Tools
           {collapsed && activeTools.length > 0 && (
-            <span className="tool-active-count">{activeTools.length} active</span>
+            <span className="badge success">{activeTools.length} active</span>
           )}
           {collapsed && recentTools.length > 0 && (
-            <span className="tool-recent-count">{recentTools.length} recent</span>
+            <span className="badge">{recentTools.length} recent</span>
           )}
         </div>
         <button className="card-toggle" title={collapsed ? 'Expand' : 'Collapse'}>

@@ -21,7 +21,7 @@ export default defineConfig({
     excludeSpecPattern: ['**/support/*.ts'],
     viewportWidth: 1280,
     viewportHeight: 800,
-    defaultCommandTimeout: 30000,
+    defaultCommandTimeout: 3000,
     requestTimeout: 15000,
     responseTimeout: 15000,
     pageLoadTimeout: 30000,

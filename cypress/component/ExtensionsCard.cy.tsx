@@ -47,7 +47,7 @@ describe('ExtensionsCard', () => {
     ];
     cy.mount(<ExtensionsCard extensions={extensions} />);
     cy.get('.dot-red').should('exist');
-    cy.get('.ext-status-error').should('exist');
+    cy.get('.badge.danger').should('exist');
   });
 
   it('shows connected status styling', () => {
@@ -62,7 +62,7 @@ describe('ExtensionsCard', () => {
       },
     ];
     cy.mount(<ExtensionsCard extensions={extensions} />);
-    cy.get('.ext-status-connected').should('exist');
+    cy.get('.badge.success').should('exist');
   });
 
   it('toggles collapse state', () => {

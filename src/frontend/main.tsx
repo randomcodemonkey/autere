@@ -29,15 +29,11 @@ if ('serviceWorker' in navigator) {
       });
       setInterval(check, 60_000);
 
-      // When a NEW worker takes control (i.e. an update was installed),
-      // reload once so the page runs the fresh code. The navigator
-      // .controller guard skips the very first claim on first install.
-      let reloaded = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!navigator.serviceWorker.controller || reloaded) return;
-        reloaded = true;
-        window.location.reload();
-      });
+      // NOTE: no auto-reload on controllerchange. An automatic reload was
+      // attempted but proved to fire spuriously (mid-session), killing open
+      // state like the sessions modal. New deployments reach standalone
+      // home-screen apps on their next app open (the SW is network-first),
+      // and the System card's 'Reload UI' button forces it immediately.
     }).catch(() => {
       // SW unsupported/blocked (e.g. insecure context) — app works as before
     });

@@ -25,6 +25,11 @@ export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount
     <div className={`card${collapsed ? ' collapsed' : ''}`}>
       <div className="card-header" onClick={toggle}>
         <div className="card-title">Usage</div>
+        {collapsed && ctxWindow > 0 && (
+          <div className="usage-header-bar" title={`Context ${Math.round(ctxPct)}%`}>
+            <div className="usage-header-bar-fill" style={{ width: `${ctxPct}%` }} />
+          </div>
+        )}
         <button className="card-toggle" title={collapsed ? 'Expand' : 'Collapse'}>
           {collapsed ? '▸' : '▾'}
         </button>

@@ -97,6 +97,10 @@ export interface SettingSection {
   fields: SettingField[];
 }
 
+export interface SessionSearchResult extends SessionInfo {
+  match?: 'name' | 'id' | 'content';
+}
+
 export interface SessionInfo {
   id: string;
   sessionFile: string;

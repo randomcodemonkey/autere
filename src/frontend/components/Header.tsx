@@ -16,6 +16,7 @@ interface HeaderProps {
   sessionName: string | null;
   activeView: ViewId;
   onViewChange: (view: ViewId) => void;
+  onStatusClick: () => void;
   workingExternal?: boolean;
   isActive?: boolean;
 }
@@ -27,6 +28,7 @@ export const Header: React.FC<HeaderProps> = ({
   sessionName,
   activeView,
   onViewChange,
+  onStatusClick,
   workingExternal,
   isActive,
 }) => {
@@ -41,7 +43,7 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <div className={`header${statusType === 'disconnected' ? ' header-disconnected' : ''}${workingExternal ? ' header-external' : ''}`}>
       <h1><img className="logo-icon" src={url('/logo.svg')} alt="autere" /> autere</h1>
-      <div className="header-controls">
+      <div className="header-menu">
         {/* Desktop: inline segmented menu (status item hidden via CSS) */}
         <nav className="view-menu" aria-label="Views">
           {viewIds.map((id) => (
@@ -85,20 +87,29 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Combined session + status badge: session name/id colored by status.
-            Switches to the status view (full-screen status card on mobile) and
-            scrolls the status card into view on desktop. */}
-        <span
-          className={`session-badge status-badge status-${statusType}${workingExternal ? ' status-external' : ''}`}
-          title={`${statusText} — click to manage session`}
-          onClick={() => onViewChange('status')}
-        >
-          {workingExternal
-            ? <span className="connection-dot dot-pulse-amber" />
-            : <span className={`connection-dot dot-${dotClass}`} />}
-          <span className="session-badge-text">{displayName}</span>
-        </span>
       </div>
+
+      {/* Combined session + status badge: session name/id colored by status.
+          Mobile: switches to the full-screen status card. Desktop: the status
+          cards are always visible — just scroll to the session card (and
+          restore the chat if the status view was somehow active). */}
+      <span
+        className={`session-badge status-badge status-${statusType}${workingExternal ? ' status-external' : ''}`}
+        title={`${statusText} — click to manage session`}
+        onClick={() => {
+          if (window.matchMedia('(max-width: 768px)').matches) {
+            onViewChange('status');
+          } else if (activeView === 'status') {
+            onViewChange('chat');
+          }
+          onStatusClick();
+        }}
+      >
+        {workingExternal
+          ? <span className="connection-dot dot-pulse-amber" />
+          : <span className={`connection-dot dot-${dotClass}`} />}
+        <span className="session-badge-text">{displayName}</span>
+      </span>
     </div>
   );
 };

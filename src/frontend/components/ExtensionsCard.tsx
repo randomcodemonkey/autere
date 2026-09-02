@@ -12,6 +12,11 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
   const { collapsed, toggle } = useCardState('extensions');
   const [modalIdx, setModalIdx] = useState<number | null>(null);
 
+  // Extensions with a known runtime status — surfaced as counts in the
+  // card title (matching the Tools card's badge style).
+  const connectedCount = extensions.filter((e) => e.status === 'connected').length;
+  const errorCount = extensions.filter((e) => e.status === 'error').length;
+
   const openModal = (idx: number) => {
     const ext = extensions[idx];
     const hasContent = (ext.hasConfig && Object.keys(ext.details || {}).length > 0)
@@ -41,7 +46,15 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
     <>
       <div className={`card${collapsed ? ' collapsed' : ''}`}>
         <div className="card-header" onClick={toggle}>
-          <div className="card-title">Extensions</div>
+          <div className="card-title">
+            Extensions
+            {collapsed && connectedCount > 0 && (
+              <span className="badge success" title={`${connectedCount} connected`}>{connectedCount}</span>
+            )}
+            {collapsed && errorCount > 0 && (
+              <span className="badge danger" title={`${errorCount} in error`}>{errorCount}</span>
+            )}
+          </div>
           <button className="card-toggle" title={collapsed ? 'Expand' : 'Collapse'}>
             {collapsed ? '▸' : '▾'}
           </button>
@@ -56,8 +69,8 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
               const dotClass = ext.status === 'connected' ? 'dot-green'
                 : ext.status === 'error' ? 'dot-red'
                 : 'dot-gray';
-              const statusClass = ext.status === 'connected' ? ' ext-status-connected'
-                : ext.status === 'error' ? ' ext-status-error'
+              const statusClass = ext.status === 'connected' ? 'success'
+                : ext.status === 'error' ? 'danger'
                 : '';
               return (
                 <div key={ext.name} className="ext-item">
@@ -67,7 +80,7 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
                   >
                     <span className={`connection-dot ${dotClass}`} />
                     <span className="ext-name">{ext.displayName || ext.name}</span>
-                    <span className={`ext-status${statusClass}`}>
+                    <span className={`badge ${statusClass}`}>
                       {ext.status}
                     </span>
                     {hasDetails && <span className="ext-chevron">❯</span>}

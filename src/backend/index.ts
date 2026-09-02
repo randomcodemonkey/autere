@@ -103,6 +103,16 @@ async function main() {
 
   log.server.info(`Dashboard running at http://localhost:${config.port}`);
   log.server.info(`pi processes will be spawned on user login (idle timeout: ${config.idleTimeoutMinutes}min)`);
+
+  // TEMP DEBUG: event-loop lag monitor — stalls starve SSE heartbeats and
+  // make the frontend flip to 'disconnected'.
+  setInterval(() => {
+    const start = Date.now();
+    setImmediate(() => {
+      const lag = Date.now() - start;
+      if (lag > 800) log.server.warn(`EVENT LOOP LAG: ${lag}ms`);
+    });
+  }, 1000);
 }
 
 main().catch((err) => {

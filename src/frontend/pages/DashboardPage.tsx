@@ -5,6 +5,7 @@ import { StatusCard } from '../components/StatusCard';
 import { SettingsCard } from '../components/SettingsCard';
 import { StreamCard } from '../components/StreamCard';
 import { Modal } from '../components/Modal';
+import { SessionModal } from '../components/SessionModal';
 import { url, basePath } from '../base-path';
 import type {
   SessionState,
@@ -103,6 +104,7 @@ export function DashboardPage({
   const [restartingBackend, setRestartingBackend] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [showSessionModal, setShowSessionModal] = useState(false);
 
   // SSE message handler
   // Guards fetch responses and status events against session changes: a
@@ -229,6 +231,10 @@ export function DashboardPage({
             && streamHistoryRef.current.length === 0) {
           setStreamHistory(data.data);
         }
+        // A session opened mid-turn must show its in-flight tools immediately
+        if (data.success && viewedSessionRef.current === sid) {
+          setActiveTools(data.activeTools ?? []);
+        }
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -253,6 +259,7 @@ export function DashboardPage({
           .then((data) => {
             // Stale-response guard: only apply if still viewing this session
             if (viewedSessionRef.current === sid && data.success && data.data?.length > 0) setStreamHistory(data.data);
+            if (data.success && viewedSessionRef.current === sid) setActiveTools(data.activeTools ?? []);
           })
           .catch(() => {});
       }
@@ -285,6 +292,10 @@ export function DashboardPage({
       if (data.success && data.sessionStats) {
         setStats(data.sessionStats);
       }
+      // In-flight tools snapshot (non-empty when joining a session mid-turn)
+      if (data.success) {
+        setActiveTools(data.activeTools ?? []);
+      }
     }).catch(() => {});
   }, [authenticated, sseConnected, urlSessionId, sessionState.sessionId, creatingSession]);
 
@@ -300,13 +311,8 @@ export function DashboardPage({
   // column — scroll it into view and flash it so the click gives visible
   // feedback. (On mobile onViewChange('status') shows the card full-screen.)
   const handleStatusClick = useCallback(() => {
-    document.querySelector('.status-card-session')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setShowSessionModal(true);
   }, []);
-
-  // Entering the status view (badge or menu) scrolls to and flashes the card
-  useEffect(() => {
-    if (activeView === 'status') handleStatusClick();
-  }, [activeView, handleStatusClick]);
 
   const handleLogout = useCallback(async () => {
     await logout();
@@ -407,6 +413,7 @@ export function DashboardPage({
         sessionName={sessionState.sessionName}
         activeView={activeView}
         onViewChange={handleSetView}
+        onStatusClick={handleStatusClick}
         workingExternal={sessionState.externalActivity}
         isActive={sessionState.isStreaming || sessionState.compacting}
       />
@@ -414,16 +421,7 @@ export function DashboardPage({
       <div className="container">
         <div className="cards-scroll">
           <StatusCard
-            sessionId={sessionState.sessionId}
-            sessionName={sessionState.sessionName}
-            compacting={sessionState.compacting}
             statusType={statusType}
-            availableSessions={availableSessions}
-            onNewSession={handleNewSession}
-            onAbort={handleAbort}
-            onCompact={handleCompact}
-            onSwitchSession={handleSwitchSession}
-            onSessionNameSet={() => {}}
             messageCount={sessionState.messageCount}
             requestCount={sessionState.requestCount}
             stats={stats}
@@ -451,6 +449,21 @@ export function DashboardPage({
           )}
         </div>
       </div>
+
+      <SessionModal
+        open={showSessionModal}
+        onClose={() => setShowSessionModal(false)}
+        statusType={statusType}
+        sessionId={sessionState.sessionId}
+        sessionName={sessionState.sessionName}
+        compacting={sessionState.compacting}
+        isStreaming={sessionState.isStreaming}
+        isActive={sessionState.isStreaming || sessionState.compacting}
+        onAbort={handleAbort}
+        onNewSession={handleNewSession}
+        onCompact={handleCompact}
+        onSwitchSession={handleSwitchSession}
+      />
 
       <Modal open={!!sessionError} onClose={() => setSessionError(null)} className="modal-status">
         <div className="modal-header">

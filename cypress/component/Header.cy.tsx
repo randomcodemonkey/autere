@@ -11,6 +11,7 @@ describe('Header', () => {
         sessionName={null}
         activeView="chat"
         onViewChange={cy.stub()}
+        onStatusClick={cy.stub()}
         {...props}
       />
     );
@@ -77,11 +78,13 @@ describe('Header', () => {
     cy.get('.view-menu-dropdown').should('not.exist');
   });
 
-  it('calls onViewChange("status") when the combined badge is clicked', () => {
+  it('badge click on desktop scrolls to status card without changing view', () => {
     const onViewChange = cy.stub().as('onViewChange');
-    mountHeader({ onViewChange });
+    const onStatusClick = cy.stub().as('onStatusClick');
+    mountHeader({ onViewChange, onStatusClick });
     cy.get('.session-badge.status-connected').click({ force: true });
-    cy.get('@onViewChange').should('have.been.calledWith', 'status');
+    cy.get('@onStatusClick').should('have.been.calledOnce');
+    cy.get('@onViewChange').should('not.have.been.called');
   });
 
   it('combined badge carries the status colour class', () => {
@@ -92,19 +95,19 @@ describe('Header', () => {
     cy.get('.session-badge.status-external .dot-pulse-amber').should('exist');
   });
 
-  it('calls onViewChange("status") when session badge is clicked', () => {
-    const onViewChange = cy.stub().as('onViewChange');
-    mountHeader({ onViewChange });
+  it('session badge is clickable and triggers the status action', () => {
+    const onStatusClick = cy.stub().as('onStatusClick');
+    mountHeader({ onStatusClick });
     cy.get('.session-badge').click();
-    cy.get('@onViewChange').should('have.been.calledWith', 'status');
+    cy.get('@onStatusClick').should('have.been.calledOnce');
   });
 
   it('session badge is clickable when isActive', () => {
-    const onViewChange = cy.stub().as('onViewChange');
-    mountHeader({ onViewChange, isActive: true });
+    const onStatusClick = cy.stub().as('onStatusClick');
+    mountHeader({ onStatusClick, isActive: true });
     cy.get('.session-badge').should('not.have.class', 'disabled');
     cy.get('.session-badge').click();
-    cy.get('@onViewChange').should('have.been.calledWith', 'status');
+    cy.get('@onStatusClick').should('have.been.calledOnce');
   });
 
   it('shows disconnected header styling', () => {

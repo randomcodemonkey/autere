@@ -5,7 +5,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { readFileSync, existsSync, renameSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, renameSync, mkdirSync, openSync, readSync, closeSync, statSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -16,6 +16,18 @@ import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filte
 import { extensionsState } from './state.js';
 import { log } from './logger.js';
 import type { SessionInfo } from './types.js';
+
+// Serialize the in-flight tool executions pi is currently running. Sent
+// with history responses so a client joining mid-turn (e.g. opening the
+// session in a new browser) sees the active tools immediately instead of
+// waiting for the next tool_start event.
+function activeToolsSnapshot(session: { state: { activeTools: Map<string, any> } }) {
+  const out: Array<{ id: string; name: string; cmd: string; args: any; startTime: number }> = [];
+  for (const [id, t] of session.state.activeTools) {
+    out.push({ id, name: t.name, cmd: t.cmd, args: t.args || {}, startTime: t.startTime });
+  }
+  return out;
+}
 
 import { findSession } from './sessions.js';
 import { dedupHistory } from './stream-history.js';
@@ -316,6 +328,41 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       return;
     }
 
+    if (url.pathname === '/api/sessions/search' && req.method === 'GET') {
+      const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+      const sessions = session.refreshSessions();
+      if (q.length < 2) {
+        sendJSON(res, { success: true, data: sessions });
+        return;
+      }
+      const scored: { s: SessionInfo; score: number; match: string }[] = [];
+      for (const sess of sessions) {
+        let score = 0;
+        let match = '';
+        if (sess.sessionName && sess.sessionName.toLowerCase().includes(q)) {
+          score = 30; match = 'name';
+        } else if (sess.id.toLowerCase().includes(q)) {
+          score = 20; match = 'id';
+        }
+        if (score < 30 && existsSync(sess.sessionFile)) {
+          try {
+            // Cap the read — huge session files shouldn't make typing laggy
+            const fd = openSync(sess.sessionFile, 'r');
+            const buf = Buffer.alloc(Math.min(1024 * 1024, statSync(sess.sessionFile).size));
+            readSync(fd, buf, 0, buf.length, 0);
+            closeSync(fd);
+            if (buf.toString('utf-8').toLowerCase().includes(q)) {
+              score = Math.max(score, 10); match = 'content';
+            }
+          } catch { /* unreadable file — skip content search */ }
+        }
+        if (score > 0) scored.push({ s: sess, score, match });
+      }
+      scored.sort((a, b) => b.score - a.score || b.s.lastActivity - a.s.lastActivity);
+      sendJSON(res, { success: true, data: scored.map(({ s, match }) => ({ ...s, match })) });
+      return;
+    }
+
     if (url.pathname === '/api/sessions/delete' && req.method === 'POST') {
       try {
         {
@@ -353,7 +400,12 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       const sess = findSession(sessionId, session.state.availableSessions);
       if (!sess) { sendJSON(res, { success: false, error: 'Session not found' }, 404); return; }
       const limit = parseInt(url.searchParams.get('limit') || '30');
-      sendJSON(res, { success: true, data: readSessionHistory(sess.sessionFile, Math.min(limit, 100)) });
+      const isActive = sess.id === sessionState.sessionId;
+      sendJSON(res, {
+        success: true,
+        data: readSessionHistory(sess.sessionFile, Math.min(limit, 100)),
+        activeTools: isActive ? activeToolsSnapshot(session) : [],
+      });
       return;
     }
 
@@ -446,7 +498,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
           // Return history in the response so the requesting client gets it
           // directly. Other clients keep their own session tracking unchanged.
           log.http.forSession(sessionState.sessionId).info(`switch-by-id done: alreadyActive=${alreadyActive}`);
-          sendJSON(res, { success: true, streamHistory: dedupHistory(loadedHistory).slice(-50), sessionState: { ...sessionState }, sessionStats: { ...sessionStats } });
+          // alreadyActive: pi was already in this session, so its in-flight
+          // tools belong to it. Switching to a different session abandons
+          // (cancels) the previous turn — no tools carry over.
+          sendJSON(res, { success: true, streamHistory: dedupHistory(loadedHistory).slice(-50), sessionState: { ...sessionState }, sessionStats: { ...sessionStats }, activeTools: alreadyActive ? activeToolsSnapshot(session) : [] });
         }
       } catch (err) {
         sendJSON(res, { success: false, error: `Failed to switch session: ${err}` }, 500);

@@ -47,6 +47,24 @@ describe('UsageCard', () => {
     cy.get('.progress-fill').should('have.css', 'width').and('not.equal', '0px');
   });
 
+  it('shows context bar on header when collapsed, hidden when expanded', () => {
+    cy.mount(<UsageCard messageCount={0} requestCount={0} stats={defaultStats} />);
+    cy.get('.usage-header-bar').should('not.exist');
+    cy.get('.card-header').click();
+    cy.get('.card').should('have.class', 'collapsed');
+    cy.get('.usage-header-bar').should('exist');
+    cy.get('.usage-header-bar-fill').should('have.attr', 'style').and('contain', '7.5%');
+    cy.get('.usage-header-bar').should('have.attr', 'title').and('contain', '8%');
+  });
+
+  it('shows no context bar on header when there is no context data', () => {
+    const stats: SessionStats = { ...defaultStats, contextUsage: null };
+    cy.mount(<UsageCard messageCount={0} requestCount={0} stats={stats} />);
+    cy.get('.card-header').click();
+    cy.get('.card').should('have.class', 'collapsed');
+    cy.get('.usage-header-bar').should('not.exist');
+  });
+
   it('toggles collapse state', () => {
     cy.mount(<UsageCard messageCount={0} requestCount={0} stats={defaultStats} />);
     cy.get('.card').should('not.have.class', 'collapsed');

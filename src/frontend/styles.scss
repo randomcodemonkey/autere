@@ -1,6 +1,48 @@
 // aune - SCSS styles
 // Converted from inline styles in index.html
 
+// -- Design tokens ---------------------------------------------------------------
+// Single source of truth for semantic colors. Components should reference
+// these instead of raw hex values so the UI stays consistent.
+:root {
+  --c-success: #4ade80;
+  --c-success-bg: #0a3322;
+  --c-success-border: #2a5a3a;
+  --c-danger: #f87171;
+  --c-danger-bg: #3b1216;
+  --c-warning: #fbbf24;
+  --c-warning-bg: #3d3000;
+  --c-info: #60a5fa;
+  --c-info-bg: #1e293b;
+  --c-amber: #d97706;
+  --c-muted: #888;
+  --c-muted-bg: #2a2a2a;
+}
+
+// -- Badges ----------------------------------------------------------------------
+// Small pill labels. Base class provides shape/typography; semantic
+// modifiers bring the colors. Usage: <span class="badge success">3</span>
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.5rem;
+  font-size: 0.65rem;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  background: var(--c-muted-bg);
+  color: var(--c-muted);
+
+  &.success { background: var(--c-success-bg); color: var(--c-success); }
+  &.danger  { background: var(--c-danger-bg);  color: var(--c-danger); }
+  &.warning { background: var(--c-warning-bg); color: var(--c-warning); }
+  &.info    { background: var(--c-info-bg);    color: var(--c-info); }
+
+  &.pulse { animation: pulse 1.5s infinite; }
+}
+
 // -- Reset ----------------------------------------------------------------------
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -70,7 +112,7 @@ body {
 }
 
 .login-error {
-  color: #f87171;
+  color: var(--c-danger);
   font-size: 0.75rem;
   margin-bottom: 0.75rem;
   display: none;
@@ -124,7 +166,7 @@ body {
   }
 
   .loading-error {
-    color: #f87171;
+    color: var(--c-danger);
     font-size: 0.95rem;
     margin-bottom: 0.5rem;
   }
@@ -145,8 +187,11 @@ body {
   background: #222;
   padding: 0.45rem 1.25rem;
   border-bottom: 1px solid #333;
-  display: flex;
-  justify-content: space-between;
+  // 1fr auto 1fr keeps the middle (menu) truly centered and the sides
+  // pinned left/right; the badge's flexible content can't shift the menu
+  // because both side tracks share the same width.
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   flex-shrink: 0;
 
@@ -163,6 +208,19 @@ body {
     align-items: center;
     margin: 0;
     line-height: 1;
+    justify-self: start;
+  }
+
+  .header-menu {
+    justify-self: center;
+  }
+
+  .session-badge {
+    justify-self: end;
+    // Stable width so status/session text changes don't resize the column
+    // and bounce the centered menu.
+    min-width: 8.5rem;
+    justify-content: center;
   }
 
   &.header-disconnected {
@@ -182,11 +240,11 @@ body {
   cursor: pointer;
 }
 
-.status-connected  { background: #0a3322; color: #4ade80; }
-.status-streaming  { background: #3d3000; color: #fbbf24; animation: pulse 1.5s infinite; }
-.status-idle       { background: #2a2a2a; color: #888; }
-.status-loading    { background: #1e293b; color: #60a5fa; animation: pulse 1.5s infinite; }
-.status-disconnected { background: #3b1216; color: #f87171; }
+.status-connected    { background: var(--c-success-bg); color: var(--c-success); }
+.status-streaming    { background: var(--c-warning-bg); color: var(--c-warning); animation: pulse 1.5s infinite; }
+.status-idle         { background: var(--c-muted-bg); color: var(--c-muted); }
+.status-loading      { background: var(--c-info-bg); color: var(--c-info); animation: pulse 1.5s infinite; }
+.status-disconnected { background: var(--c-danger-bg); color: var(--c-danger); }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
@@ -204,7 +262,7 @@ body {
 
 .status-external {
   background: rgba(217, 119, 6, 0.18);
-  color: #d97706;
+  color: var(--c-amber);
   white-space: nowrap;
   animation: pulse-external 2s ease-in-out infinite;
 }
@@ -213,7 +271,7 @@ body {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #d97706;
+  background: var(--c-amber);
   margin-right: 0.35rem;
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
@@ -288,14 +346,16 @@ body {
 // Single badge: shows the session name/id, colored by connection/streaming
 // state via the .status-* classes (which also drive .status-badge usage).
 .session-badge {
-  padding: 0.15rem 0.6rem;
+  height: 1.7rem;
+  padding: 0 0.6rem;
   border-radius: 1rem;
   font-size: 0.65rem;
   font-weight: 500;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   cursor: pointer;
-  margin-right: 0.4rem;
+  flex-shrink: 0;
   transition: filter 0.15s;
 
   &:hover {
@@ -310,20 +370,20 @@ body {
 
 // -- View menu (header) ---------------------------------------------------------
 .view-menu {
+  height: 1.7rem;
   display: inline-flex;
   align-items: center;
   gap: 0.15rem;
   background: #1a1a1a;
   border: 1px solid #333;
   border-radius: 1rem;
-  padding: 0.15rem;
-  margin-right: 0.4rem;
+  padding: 0 0.15rem;
 }
 
 .view-btn {
   background: none;
   border: none;
-  color: #888;
+  color: var(--c-muted);
   font-size: 0.65rem;
   font-weight: 500;
   padding: 0.15rem 0.6rem;
@@ -354,19 +414,19 @@ body {
 // Mobile: hamburger dropdown (segmented menu is too tight a fit)
 .view-menu-mobile {
   position: relative;
-  margin-right: 0.4rem;
 }
 
 .view-menu-toggle {
+  height: 1.7rem;
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
   background: #1a1a1a;
   border: 1px solid #333;
   border-radius: 0.85rem;
-  color: #888;
+  color: var(--c-muted);
   font-size: 0.7rem;
-  padding: 0.2rem 0.6rem;
+  padding: 0 0.6rem;
   cursor: pointer;
 }
 
@@ -397,7 +457,7 @@ body {
 .view-menu-item {
   background: none;
   border: none;
-  color: #888;
+  color: var(--c-muted);
   font-size: 0.75rem;
   text-align: left;
   padding: 0.45rem 0.6rem;
@@ -416,6 +476,11 @@ body {
 }
 
 @media (max-width: 768px) {
+  .header {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
   .view-menu {
     display: none;
   }
@@ -443,10 +508,10 @@ body {
   vertical-align: middle;
 }
 
-.dot-green  { background: #4ade80; }
-.dot-yellow { background: #fbbf24; }
+.dot-green  { background: var(--c-success); }
+.dot-yellow { background: var(--c-warning); }
 .dot-gray   { background: #666; }
-.dot-red    { background: #f87171; }
+.dot-red    { background: var(--c-danger); }
 
 .header-status {
   display: inline-flex;
@@ -458,7 +523,7 @@ body {
 
 .header-status-text {
   font-size: 0.7rem;
-  color: #888;
+  color: var(--c-muted);
 }
 
 .modal-header-status {
@@ -470,7 +535,7 @@ body {
 
 .modal-header-status-text {
   font-size: 0.7rem;
-  color: #888;
+  color: var(--c-muted);
 }
 
 // -- Container ------------------------------------------------------------------
@@ -688,6 +753,24 @@ body {
   transition: width 0.3s ease;
 }
 
+// Context usage bar shown on the Usage header when the section is collapsed
+.usage-header-bar {
+  flex: 1;
+  max-width: 7rem;
+  height: 0.35rem;
+  margin-left: auto;
+  margin-right: 0.75rem;
+  background: #333;
+  border-radius: 0.2rem;
+  overflow: hidden;
+}
+
+.usage-header-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #999, #ddd);
+  transition: width 0.3s ease;
+}
+
 // -- Model List -----------------------------------------------------------------
 .model-list {
   display: flex;
@@ -715,7 +798,7 @@ body {
   border: 1px solid transparent;
 
   &:hover {
-    background: #2a2a2a;
+    background: var(--c-muted-bg);
   }
 
   &.active {
@@ -732,7 +815,7 @@ body {
   }
 
   &.active .model-dot {
-    background: #4ade80;
+    background: var(--c-success);
   }
 
   .model-name {
@@ -755,27 +838,31 @@ body {
   }
 
   &.active .model-provider {
-    color: #4ade80;
+    color: var(--c-success);
+  }
+}
+
+// Agent card: groups Model/Extensions/Tools/Usage as flat subsections.
+// The Agent header collapses the whole group; each section keeps its own
+// collapse toggle and is separated by a hairline instead of a card border.
+.agent-card > .card {
+  background: transparent;
+  border: none;
+  border-top: 1px solid #333;
+  border-radius: 0;
+  padding: 0.5rem 0.625rem 0.625rem;
+
+  &:first-of-type {
+    border-top: none;
   }
 }
 
 // Pending steer/follow-up count badge on chat action buttons
 .pending-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.05rem;
-  height: 1.05rem;
-  padding: 0 0.3rem;
   margin-left: 0.4rem;
-  border-radius: 0.55rem;
-  background: #b45309;
-  color: #fff;
-  font-size: 0.65rem;
   font-weight: 700;
-  line-height: 1;
-  vertical-align: middle;
-  transform: translateY(-0.05em);
+  min-width: 1.05rem;
+  justify-content: center;
 }
 
 // -- Stream Card ----------------------------------------------------------------
@@ -920,15 +1007,15 @@ body {
   margin-left: auto;
 }
 
-.stream-role-user      { color: #fbbf24; }
+.stream-role-user      { color: var(--c-warning); }
 .stream-role-assistant { color: #60a5fa; }
 .stream-role-thinking  { color: #a78bfa; font-style: italic; }
 .stream-role-tool      { color: #a78bfa; }
 .stream-role-toolResult { color: #a78bfa; }
 .stream-role-edit     { color: #6d28d9; }
-.stream-role-edit.stream-role-error { color: #f87171; }
+.stream-role-edit.stream-role-error { color: var(--c-danger); }
 .stream-role-system    { color: #666; font-style: italic; }
-.stream-role-system.stream-role-error { color: #f87171; font-style: normal; font-weight: 500; }
+.stream-role-system.stream-role-error { color: var(--c-danger); font-style: normal; font-weight: 500; }
 
 .stream-tool-output {
   background: #1e1e1e;
@@ -971,12 +1058,12 @@ body {
 
 .diff-add {
     background: #0a2a1a;
-  .diff-line-content { color: #4ade80; }
+  .diff-line-content { color: var(--c-success); }
 }
 
 .diff-remove {
   background: #2a0a0a;
-  .diff-line-content { color: #f87171; }
+  .diff-line-content { color: var(--c-danger); }
 }
 
 .diff-header {
@@ -1014,7 +1101,7 @@ body {
 }
 
 .edit-diff.stream-error .edit-file-header {
-  color: #f87171;
+  color: var(--c-danger);
 }
 
 .stream-text {
@@ -1035,7 +1122,7 @@ body {
     em         { color: #ccc; }
 
     code {
-      background: #2a2a2a;
+      background: var(--c-muted-bg);
       padding: 0.1em 0.35em;
       border-radius: 0.2rem;
       font-family: 'SF Mono', 'Fira Code', monospace;
@@ -1089,7 +1176,7 @@ body {
     }
 
     th {
-      background: #2a2a2a;
+      background: var(--c-muted-bg);
       color: #e0e0e0;
       font-weight: 600;
     }
@@ -1116,7 +1203,7 @@ body {
   }
 
   &.stream-error {
-    color: #f87171;
+    color: var(--c-danger);
     background: rgba(239, 68, 68, 0.08);
     border-left: 2px solid #ef4444;
     padding-left: 0.5rem;
@@ -1130,10 +1217,10 @@ body {
 }
 
 .stream-text-truncated {
-  color: #888;
+  color: var(--c-muted);
   margin-top: 0.25rem;
   padding: 0.15rem 0.5rem;
-  background: #2a2a2a;
+  background: var(--c-muted-bg);
   border-radius: 0.25rem;
   display: inline-block;
   cursor: pointer;
@@ -1178,10 +1265,10 @@ body {
   display: block;
   width: 100%;
   padding: 0.4rem 0;
-  background: #1a3a2a;
-  border: 1px solid #2a5a3a;
+  background: var(--c-success-bg);
+  border: 1px solid var(--c-success-border);
   border-radius: 0.5rem;
-  color: #4ade80;
+  color: var(--c-success);
   font-size: 0.75rem;
   font-family: inherit;
   cursor: pointer;
@@ -1258,25 +1345,6 @@ body {
 }
 
 // -- Tools ----------------------------------------------------------------------
-.tool-active-count,
-.tool-recent-count {
-  font-size: 0.65rem;
-  padding: 0.1rem 0.4rem;
-  border-radius: 0.5rem;
-  margin-left: 0.4rem;
-  font-weight: 500;
-}
-
-.tool-active-count {
-  background: #1a3a2a;
-  color: #4ade80;
-}
-
-.tool-recent-count {
-  background: #2a2a2a;
-  color: #888;
-}
-
 .tool-list {
   display: flex;
   flex-wrap: wrap;
@@ -1289,7 +1357,7 @@ body {
 }
 
 .tool-chip {
-  background: #2a2a2a;
+  background: var(--c-muted-bg);
   padding: 0.25rem 0.75rem;
   border-radius: 1rem;
   font-size: 0.75rem;
@@ -1330,7 +1398,7 @@ body {
 .recent-tool-item {
   font-size: 0.75rem;
   padding: 0.2rem 0;
-  color: #888;
+  color: var(--c-muted);
 }
 
 .recent-tool-header {
@@ -1346,8 +1414,8 @@ body {
   flex-shrink: 0;
 }
 
-.recent-tool-ok  { background: #4ade80; }
-.recent-tool-err { background: #f87171; }
+.recent-tool-ok  { background: var(--c-success); }
+.recent-tool-err { background: var(--c-danger); }
 .recent-tool-name { color: #d4d4d4; }
 
 .recent-tool-cmd-wrap {
@@ -1363,7 +1431,7 @@ body {
 }
 
 .tool-cmd-active {
-  color: #888;
+  color: var(--c-muted);
 }
 
 .tool-cmd-truncated {
@@ -1412,7 +1480,7 @@ body {
 }
 
 .chat-help-cmd {
-  color: #4ade80;
+  color: var(--c-success);
   font-family: monospace;
   min-width: 5.5rem;
 }
@@ -1425,7 +1493,7 @@ body {
   margin-top: 0.5rem;
   padding: 0.2rem 0.8rem;
   font-size: 0.7rem;
-  background: #2a2a2a;
+  background: var(--c-muted-bg);
   color: #ccc;
   border: 1px solid #444;
   border-radius: 0.3rem;
@@ -1461,17 +1529,6 @@ body {
   font-weight: 500;
 }
 
-.ext-status {
-  font-size: 0.7rem;
-  padding: 0.1rem 0.4rem;
-  border-radius: 0.5rem;
-  background: #2a2a2a;
-  color: #888;
-}
-
-.ext-status-connected { background: #0a3322; color: #4ade80; }
-.ext-status-error     { background: #3b1216; color: #f87171; }
-
 .ext-chevron {
   font-size: 0.65rem;
   color: #555;
@@ -1487,13 +1544,13 @@ body {
 .ext-error-detail {
   margin-top: 0.8rem;
   padding: 0.5rem;
-  background: #3b1216;
+  background: var(--c-danger-bg);
   border-radius: 0.5rem;
   font-size: 0.8rem;
 }
 
 .ext-error-label {
-  color: #f87171;
+  color: var(--c-danger);
   font-weight: 500;
   margin-right: 0.3rem;
 }
@@ -1625,7 +1682,7 @@ body {
   padding: 0.75rem 1rem;
   overflow-y: auto;
   font-size: 0.75rem;
-  color: #888;
+  color: var(--c-muted);
 }
 
 .modal-status {
@@ -1686,14 +1743,6 @@ body {
   color: #ddd;
 }
 
-.modal-role {
-  font-size: 0.7rem;
-  color: #888;
-  background: #2a2a2a;
-  padding: 0.1rem 0.5rem;
-  border-radius: 0.75rem;
-}
-
 .modal-user-actions {
   display: flex;
   flex-direction: column;
@@ -1746,15 +1795,15 @@ body {
 
 .settings-loading,
 .settings-empty {
-  color: #888;
+  color: var(--c-muted);
   font-size: 0.9rem;
   text-align: center;
   padding: 2rem;
 }
 
 .settings-error {
-  background: #3b1216;
-  color: #f87171;
+  background: var(--c-danger-bg);
+  color: var(--c-danger);
   padding: 0.75rem;
   border-radius: 0.5rem;
   margin-bottom: 1rem;
@@ -1762,8 +1811,8 @@ body {
 }
 
 .settings-saved {
-  background: #163b1a;
-  color: #4ade80;
+  background: var(--c-success-bg);
+  color: var(--c-success);
   padding: 0.75rem;
   border-radius: 0.5rem;
   margin-bottom: 1rem;
@@ -1822,7 +1871,7 @@ body {
 }
 
 .settings-input {
-  background: #2a2a2a;
+  background: var(--c-muted-bg);
   border: 1px solid #444;
   border-radius: 0.4rem;
   padding: 0.5rem 0.75rem;
@@ -1875,7 +1924,7 @@ body {
 }
 
 .settings-toggle input:checked + .settings-toggle-slider {
-  background: #4ade80;
+  background: var(--c-success);
 
   &::before {
     transform: translateX(16px);
@@ -1984,7 +2033,7 @@ body {
   line-height: 1;
 
   &:hover:not(:disabled) {
-    color: #f87171;
+    color: var(--c-danger);
   }
 
   &:disabled {
@@ -2078,7 +2127,7 @@ body {
 .btn-default {
   background: #222;
   border-color: #444;
-  color: #888;
+  color: var(--c-muted);
 
   &:hover:not(:disabled) {
     background: #333;
@@ -2089,11 +2138,11 @@ body {
 .btn-abort {
   background: #2a2200;
   border-color: #4a3a00;
-  color: #fbbf24;
+  color: var(--c-warning);
 
   &:hover:not(:disabled) {
     background: #4a3a00;
-    border-color: #fbbf24;
+    border-color: var(--c-warning);
     color: #fde68a;
   }
 }
@@ -2113,11 +2162,11 @@ body {
 .btn-primary {
   background: #0a2a1a;
   border-color: #1a4a2a;
-  color: #4ade80;
+  color: var(--c-success);
 
   &:hover:not(:disabled) {
     background: #1a4a2a;
-    border-color: #4ade80;
+    border-color: var(--c-success);
     color: #86efac;
   }
 }
@@ -2135,13 +2184,13 @@ body {
 }
 
 .btn-danger {
-  background: #3b1216;
+  background: var(--c-danger-bg);
   border-color: #5c1a1a;
-  color: #f87171;
+  color: var(--c-danger);
 
   &:hover:not(:disabled) {
     background: #5c1a1a;
-    border-color: #f87171;
+    border-color: var(--c-danger);
     color: #fca5a5;
   }
 }
@@ -2165,6 +2214,28 @@ body {
   margin-bottom: 0.5rem;
 }
 
+.session-search-input {
+  width: 100%;
+  background: #181818;
+  border: 1px solid #444;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  color: #d4d4d4;
+  font-size: 0.8rem;
+  font-family: inherit;
+  outline: none;
+  margin-bottom: 0.6rem;
+
+  &:focus {
+    border-color: #60a5fa;
+  }
+}
+
+.session-match-tag {
+  margin-top: 0.25rem;
+  display: inline-flex;
+}
+
 .session-name-input {
   flex: 1;
   background: #1a1a1a;
@@ -2185,7 +2256,7 @@ body {
 }
 
 .session-name-save {
-  background: #2a2a2a;
+  background: var(--c-muted-bg);
   border: 1px solid #444;
   border-radius: 0.4rem;
   color: #8f8;
@@ -2211,7 +2282,7 @@ body {
 
 .session-current-name {
   font-size: 0.7rem;
-  color: #888;
+  color: var(--c-muted);
   margin-top: 0.2rem;
 }
 
@@ -2262,7 +2333,7 @@ body {
   transition: background 0.1s;
 
   &:hover {
-    background: #2a2a2a;
+    background: var(--c-muted-bg);
   }
 
   &.active {
@@ -2309,7 +2380,7 @@ body {
   width: 0.4rem;
   height: 0.4rem;
   border-radius: 50%;
-  background: #4ade80;
+  background: var(--c-success);
   flex-shrink: 0;
 }
 
@@ -2329,7 +2400,7 @@ body {
 
 .session-item-active-label {
   font-size: 0.6rem;
-  color: #4ade80;
+  color: var(--c-success);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-top: 0.15rem;
@@ -2337,14 +2408,14 @@ body {
 
 .session-delete-btn {
   flex-shrink: 0;
-  background: #3b1216;
+  background: var(--c-danger-bg);
   border: none;
   border-radius: 50%;
   cursor: pointer;
   font-size: 0.65rem;
   padding: 0.25rem 0.4rem;
   line-height: 1;
-  color: #f87171;
+  color: var(--c-danger);
   opacity: 1;
   transition: background 0.15s;
 }
