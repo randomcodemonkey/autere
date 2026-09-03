@@ -32,6 +32,13 @@ function activeToolsSnapshot(session: { state: { activeTools: Map<string, any> }
 import { findSession } from './sessions.js';
 import { dedupHistory } from './stream-history.js';
 import { getUserSetting, getAllUserSettings, saveUserSettings, getUserSettingsSchema } from './user-settings.js';
+import {
+  Scheduler,
+  listTasks, getTask, saveTask, deleteTask, validateTaskInput,
+  listRuns, readRunLog,
+  type ScheduledTask,
+} from './scheduler.js';
+import { randomUUID } from 'crypto';
 
 /** Read and parse a JSON request body */
 function readBody(req: IncomingMessage): Promise<any> {
@@ -63,7 +70,7 @@ function detectBasePathFromURL(requestPath: string): string {
 
 // ── HTTP server setup ──
 
-export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnType<typeof createServer> | null {
+export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?: Scheduler): ReturnType<typeof createServer> | null {
   let sessionRefreshInterval: ReturnType<typeof setInterval> | null = null;
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -657,6 +664,104 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       return;
     }
 
+    // ── Scheduled tasks ──
+
+    if (url.pathname === '/api/scheduler/tasks' && req.method === 'GET') {
+      sendJSON(res, { success: true, data: { tasks: listTasks(user), runs: listRuns(user, undefined, 50) } });
+      return;
+    }
+
+    if (url.pathname === '/api/scheduler/tasks' && req.method === 'POST') {
+      try {
+        const input = await readBody(req);
+        const err = validateTaskInput(input);
+        if (err) { sendJSON(res, { success: false, error: err }, 400); return; }
+        const now = Date.now();
+        const task: ScheduledTask = {
+          id: randomUUID(),
+          name: input.name.trim(),
+          schedule: input.schedule.trim(),
+          prompt: input.prompt,
+          seedScript: typeof input.seedScript === 'string' && input.seedScript.trim() ? input.seedScript : undefined,
+          resultScript: typeof input.resultScript === 'string' && input.resultScript.trim() ? input.resultScript : undefined,
+          enabled: input.enabled !== false,
+          createdAt: now,
+          updatedAt: now,
+        };
+        saveTask(user, task);
+        sendJSON(res, { success: true, data: task });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to create task: ${err}` }, 500);
+      }
+      return;
+    }
+
+    const taskMatch = url.pathname.match(/^\/api\/scheduler\/tasks\/([\w-]+)$/);
+    if (taskMatch && req.method === 'POST') {
+      try {
+        const taskId = taskMatch[1];
+        const existing = getTask(user, taskId);
+        if (!existing) { sendJSON(res, { success: false, error: 'Task not found' }, 404); return; }
+        const input = await readBody(req);
+        const err = validateTaskInput(input);
+        if (err) { sendJSON(res, { success: false, error: err }, 400); return; }
+        const updated: ScheduledTask = {
+          ...existing,
+          name: input.name.trim(),
+          schedule: input.schedule.trim(),
+          prompt: input.prompt,
+          seedScript: typeof input.seedScript === 'string' && input.seedScript.trim() ? input.seedScript : undefined,
+          resultScript: typeof input.resultScript === 'string' && input.resultScript.trim() ? input.resultScript : undefined,
+          enabled: input.enabled !== false,
+          updatedAt: Date.now(),
+        };
+        saveTask(user, updated);
+        sendJSON(res, { success: true, data: updated });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to update task: ${err}` }, 500);
+      }
+      return;
+    }
+
+    if (taskMatch && req.method === 'DELETE') {
+      try {
+        const deleted = deleteTask(user, taskMatch[1]);
+        if (!deleted) { sendJSON(res, { success: false, error: 'Task not found' }, 404); return; }
+        sendJSON(res, { success: true });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to delete task: ${err}` }, 500);
+      }
+      return;
+    }
+
+    const runNowMatch = url.pathname.match(/^\/api\/scheduler\/tasks\/([\w-]+)\/run$/);
+    if (runNowMatch && req.method === 'POST') {
+      if (!scheduler) { sendJSON(res, { success: false, error: 'Scheduler not available' }, 503); return; }
+      try {
+        const runId = await scheduler.runNow(user, runNowMatch[1]);
+        sendJSON(res, { success: true, data: { runId } });
+      } catch (err: any) {
+        const alreadyRunning = /already running/.test(err?.message || '');
+        sendJSON(res, { success: false, error: `Failed to run task: ${err}` }, alreadyRunning ? 409 : 404);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/scheduler/runs' && req.method === 'GET') {
+      const taskId = url.searchParams.get('taskId') || undefined;
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10) || 50, 200);
+      sendJSON(res, { success: true, data: listRuns(user, taskId, limit) });
+      return;
+    }
+
+    const runLogMatch = url.pathname.match(/^\/api\/scheduler\/runs\/([\w-]+)\/([\w-]+)$/);
+    if (runLogMatch && req.method === 'GET') {
+      const entry = readRunLog(user, runLogMatch[1], runLogMatch[2]);
+      if (!entry) { sendJSON(res, { success: false, error: 'Run log not found' }, 404); return; }
+      sendJSON(res, { success: true, data: entry });
+      return;
+    }
+
     if (url.pathname === '/api/send' && req.method === 'POST') {
       try {
         {
@@ -704,10 +809,13 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       session.registerClientId(clientId, res);
 
       // Send initial state to newly connected client.
-      // Do NOT send stream_history here — sessionState.sessionId reflects the
-      // pi process's current session which may not be the session this client
-      // is viewing. The frontend gets the correct history from the switch-by-id
-      // response or the /api/sessions/:id/history endpoint.
+      // The client's tracked session may differ from pi's current one — the
+      // frontend corrects the view via switch-by-id right after connecting.
+      // For the tracked session we REPLAY history from its file: on SSE
+      // reconnect (e.g. a device waking from sleep) this re-syncs the chat
+      // with messages sent while the client was away, without any client
+      // action. Tagged with sessionId so the frontend's cross-session guard
+      // applies.
       res.write(`data: ${JSON.stringify({ type: 'status', data: sessionState })}\n\n`);
       rpc.getSessionStats().then(stats => {
         if (stats.contextUsage) sessionStats.contextUsage = stats.contextUsage;
@@ -716,8 +824,22 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
       }).catch(() => {
         res.write(`data: ${JSON.stringify({ type: 'stats', data: sessionStats })}\n\n`);
       });
-      res.write(`data: ${JSON.stringify({ type: 'stream_history', data: [] })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: 'tool_end', data: { id: null, recentTools } })}\n\n`);
+      {
+        const viewed = findSession(sessionState.sessionId, session.state.availableSessions);
+        if (viewed?.sessionFile && existsSync(viewed.sessionFile)) {
+          try {
+            const replay = readSessionHistory(viewed.sessionFile, session.historyLimit);
+            res.write(`data: ${JSON.stringify({ type: 'stream_history', sessionId: viewed.id, data: replay })}\n\n`);
+          } catch (err) {
+            log.http.error('SSE connect history replay failed:', err);
+          }
+        }
+      }
+      // Initial tool-state sync: id=null is the (re)connect signal. It carries
+      // the backend's active-tools snapshot so a client that already rendered
+      // one (e.g. from a fast /history response) is re-synced instead of
+      // blindly cleared — a running tool must not disappear from the UI.
+      res.write(`data: ${JSON.stringify({ type: 'tool_end', data: { id: null, recentTools, activeTools: activeToolsSnapshot(session) } })}\n\n`);
       // Log extensions being sent
 
       res.write(`data: ${JSON.stringify({ type: 'extensions', data: extensionsState })}\n\n`);
@@ -779,15 +901,16 @@ export function createMonitorServer(PORT: number, pm: ProcessManager): ReturnTyp
     log.http.info(`Dashboard running at http://localhost:${PORT}`);
   });
 
-  process.on('SIGTERM', () => shutdown(server, pm, sessionRefreshInterval, heartbeatInterval));
-  process.on('SIGINT', () => shutdown(server, pm, sessionRefreshInterval, heartbeatInterval));
+  process.on('SIGTERM', () => shutdown(server, pm, sessionRefreshInterval, heartbeatInterval, scheduler));
+  process.on('SIGINT', () => shutdown(server, pm, sessionRefreshInterval, heartbeatInterval, scheduler));
 
   return server;
 }
 
-function shutdown(server: ReturnType<typeof createServer> | null, pm: ProcessManager, sessionRefreshInterval: ReturnType<typeof setInterval> | null, heartbeatInterval: ReturnType<typeof setInterval> | null) {
+function shutdown(server: ReturnType<typeof createServer> | null, pm: ProcessManager, sessionRefreshInterval: ReturnType<typeof setInterval> | null, heartbeatInterval: ReturnType<typeof setInterval> | null, scheduler?: Scheduler) {
   if (sessionRefreshInterval) clearInterval(sessionRefreshInterval);
   if (heartbeatInterval) clearInterval(heartbeatInterval);
+  if (scheduler) scheduler.stop();
   if (server) server.close();
   pm.terminateAll().catch(() => {});
 }

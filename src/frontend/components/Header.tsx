@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { url } from '../base-path';
 
-export type ViewId = 'status' | 'chat' | 'settings';
+export type ViewId = 'status' | 'chat' | 'settings' | 'tasks';
 
 const VIEW_LABELS: Record<ViewId, string> = {
   status: 'Status',
   chat: 'Chat',
   settings: 'Settings',
+  tasks: 'Tasks',
 };
 
 interface HeaderProps {
@@ -38,7 +39,7 @@ export const Header: React.FC<HeaderProps> = ({
     : (sessionId ? sessionId.slice(0, 6) + '…' : 'session');
   const dotClass = statusType === 'connected' ? 'green' : statusType === 'streaming' ? 'yellow' : statusType === 'disconnected' ? 'red' : 'gray';
 
-  const viewIds: ViewId[] = ['status', 'chat', 'settings'];
+  const viewIds: ViewId[] = ['status', 'chat', 'settings', 'tasks'];
 
   return (
     <div className={`header${statusType === 'disconnected' ? ' header-disconnected' : ''}${workingExternal ? ' header-external' : ''}`}>

@@ -8,6 +8,7 @@
 import { ProcessManager } from './process-manager.js';
 import { resolveAuth } from './auth.js';
 import { createMonitorServer } from './routes.js';
+import { Scheduler } from './scheduler.js';
 import { log } from './logger.js';
 
 // ── CLI argument parsing ──
@@ -98,8 +99,16 @@ async function main() {
     isolatedSessions: config.newSession,
   });
 
+  // Start the scheduler — spawns dedicated pi processes per scheduled run
+  const scheduler = new Scheduler({
+    provider: config.piProvider,
+    model: config.piModel,
+    args: config.piArgs,
+  });
+  scheduler.start();
+
   // Start the HTTP server
-  createMonitorServer(config.port, pm);
+  createMonitorServer(config.port, pm, scheduler);
 
   log.server.info(`Dashboard running at http://localhost:${config.port}`);
   log.server.info(`pi processes will be spawned on user login (idle timeout: ${config.idleTimeoutMinutes}min)`);

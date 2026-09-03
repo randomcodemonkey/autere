@@ -69,6 +69,7 @@ export const log = {
   piEnv: new Logger('pi-env'),
   processMgr: new Logger('process-mgr'),
   rpc: new Logger('rpc'),
+  scheduler: new Logger('scheduler'),
   sessions: new Logger('sessions'),
   settings: new Logger('settings'),
   utils: new Logger('utils'),

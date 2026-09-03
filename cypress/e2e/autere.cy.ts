@@ -399,6 +399,26 @@ describe('Dashboard Loading', () => {
   });
 
   describe('Switch Sessions', () => {
+    // The session list only keeps sessions that pi has persisted (it writes
+    // the session file on the first message) plus in-memory entries currently
+    // being viewed. Seed a second session WITH a message so the switch tests
+    // always have a persisted session to switch to.
+    before(function() {
+      this.timeout(120000);
+      cy.visit('/');
+      cy.get('.status-badge', { timeout: 60000 }).should('not.have.class', 'status-streaming');
+      cy.get('.session-badge').click();
+      cy.get('.modal-session').should('be.visible');
+      cy.get('.btn-primary').contains('New Session').click();
+      cy.get('.modal-session', { timeout: 10000 }).should('not.be.visible');
+      // Send a message so pi writes the new session's file to disk
+      cy.get('.chat-input').should('not.be.disabled').type('switch session seed');
+      cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click();
+      cy.get('.stream-role-user', { timeout: 10000 }).should('exist');
+      cy.get('.stream-role-assistant', { timeout: 60000 }).should('exist');
+      cy.get('.status-badge', { timeout: 60000 }).should('not.have.class', 'status-streaming');
+    });
+
     it('switches to a different session via the sessions modal', function() {
       this.timeout(30000);
 
@@ -502,6 +522,11 @@ describe('Dashboard Loading', () => {
           const newCount = parseInt($el.text()) || 0;
           expect(newCount).to.be.greaterThan(initialCount);
         });
+
+        // Wait for the turn to fully complete — the following test depends on
+        // the agent being idle, and the assistant message existing only means
+        // streaming STARTED.
+        cy.get('.status-badge', { timeout: 90000 }).should('not.have.class', 'status-streaming');
       });
     });
   });
@@ -696,6 +721,126 @@ describe('Dashboard Loading', () => {
       openSettings();
       cy.get('.settings-card').should('exist');
       cy.get('.stream-card').should('not.exist');
+    });
+  });
+
+  describe('Session Switching', () => {
+    it('closes the sessions modal after creating a new session', function() {
+      this.timeout(30000);
+      // Previous tests may have left the agent streaming — new session needs idle
+      cy.get('.status-badge', { timeout: 60000 }).should('not.have.class', 'status-streaming');
+      openSessionsModal();
+      cy.get('.btn-primary').contains('New Session').click();
+      // Modal must close once the new session is ready
+      cy.get('.modal-session', { timeout: 10000 }).should('not.be.visible');
+      // And we end up on a fresh session view
+      cy.get('.stream-card', { timeout: 10000 }).should('exist');
+    });
+
+    it('switches to a previous session from the sessions modal', function() {
+      this.timeout(30000);
+      // Switching is disabled while the agent is active
+      cy.get('.status-badge', { timeout: 60000 }).should('not.have.class', 'status-streaming');
+      openSessionsModal();
+      const items = cy.get('.session-item:not(.active)', { timeout: 5000 });
+      items.then(($items) => {
+        expect($items.length, 'at least one other session exists').to.be.greaterThan(0);
+        const targetId = $items.first().find('.session-item-id').text().trim();
+        cy.wrap($items.first()).click();
+        // URL must change to the target session and the modal must close
+        cy.url({ timeout: 10000 }).should('include', `/session/${targetId}`);
+        cy.get('.modal-session').should('not.be.visible');
+      });
+    });
+  });
+
+  describe('Scheduled Tasks', () => {
+    const TASK_NAME = `e2e-task-${Date.now()}`;
+
+    function openTasks() {
+      cy.get('.view-btn-tasks').click();
+      cy.get('.scheduled-card').should('be.visible');
+    }
+
+    it('navigates to tasks view from the menu', () => {
+      openTasks();
+      cy.get('#main-app').should('have.class', 'view-tasks');
+    });
+
+    it('shows the scheduled tasks card', () => {
+      openTasks();
+      cy.get('.scheduled-card .card-title').should('contain', 'Scheduled Tasks');
+      cy.get('.scheduled-new-btn').should('contain', 'New Task');
+    });
+
+    it('creates a scheduled task with seed and result scripts', () => {
+      openTasks();
+      cy.get('.scheduled-new-btn').click();
+      cy.get('.scheduled-input-name').type(TASK_NAME);
+      cy.get('.scheduled-input-schedule').clear();
+      cy.get('.scheduled-input-schedule').type('0 5 * * 1');
+      cy.get('.scheduled-card').should('contain', '0 5 * * 1');
+      cy.get('.scheduled-input-prompt').type('Reply with exactly: OK');
+      cy.get('.scheduled-input-seed').type('echo e2e-seed-data');
+      cy.get('.scheduled-input-result').type('cat > /dev/null && echo result-script-ok');
+      cy.get('.scheduled-save-btn').click();
+      cy.get('.scheduled-task', { timeout: 5000 }).should('contain', TASK_NAME);
+      cy.get('.scheduled-task').should('contain', 'echo e2e-seed-data');
+    });
+
+    it('runs the task now via the Run now button and records a log', function() {
+      this.timeout(180000);
+      openTasks();
+
+      // Run the just-created task — the agent runs in a dedicated pi process
+      cy.get('.scheduled-task').contains(TASK_NAME).parents('.scheduled-task')
+        .find('.scheduled-run-btn').click();
+
+      // The run appears in the (auto-expanded) runs list, eventually succeeding
+      cy.get('.scheduled-task').contains(TASK_NAME).parents('.scheduled-task')
+        .find('.sched-run-status.sched-run-success', { timeout: 150000 }).should('exist');
+    });
+
+    it('shows the run log with seed output, agent result and result script output', () => {
+      openTasks();
+      cy.get('.scheduled-task').contains(TASK_NAME).parents('.scheduled-task')
+        .find('.scheduled-toggle-runs-btn').click();
+      cy.get('.sched-run-log-btn').first().click();
+
+      cy.get('.modal-sched-log', { timeout: 5000 }).should('be.visible');
+      cy.get('.sched-log-meta').should('contain', 'success');
+      // Full log lines written by the backend
+      cy.get('.sched-log-lines').should('contain', 'Run started (trigger: manual)');
+      cy.get('.sched-log-lines').should('contain', 'Seed script produced');
+      cy.get('.sched-log-lines').should('contain', 'Agent finished');
+      cy.get('.sched-log-lines').should('contain', 'Result script produced');
+      cy.get('.sched-log-lines').should('contain', 'pi agent stopped');
+      // Seeded data reached the prompt; result script output captured
+      cy.get('.sched-log-pre').should('contain', 'e2e-seed-data');
+      cy.get('.sched-log-pre').should('contain', 'result-script-ok');
+      cy.get('.modal-sched-log .modal-close').click();
+      // Modal stays in the DOM when closed (hidden overlay) — assert invisibility
+      cy.get('.modal-sched-log', { timeout: 5000 }).should('not.be.visible');
+    });
+
+    it('edits an existing task', () => {
+      openTasks();
+      cy.get('.scheduled-task').contains(TASK_NAME).parents('.scheduled-task')
+        .find('.scheduled-edit-btn').click();
+      cy.get('.card-title').should('contain', 'Edit Scheduled Task');
+      cy.get('.scheduled-input-name').clear();
+      cy.get('.scheduled-input-name').type(`${TASK_NAME}-renamed`);
+      cy.get('.scheduled-save-btn').click();
+      cy.get('.scheduled-task', { timeout: 5000 }).should('contain', `${TASK_NAME}-renamed`);
+    });
+
+    it('deletes the task', () => {
+      openTasks();
+      cy.on('window:confirm', () => true);
+      cy.get('.scheduled-task').contains(`${TASK_NAME}-renamed`).parents('.scheduled-task')
+        .find('.scheduled-delete-btn').click();
+      // The renamed task disappears from the list
+      cy.contains('.scheduled-task', `${TASK_NAME}-renamed`, { timeout: 5000 }).should('not.exist');
     });
   });
 });

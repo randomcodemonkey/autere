@@ -30,7 +30,7 @@ interface UserSettings {
 export interface SettingField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'toggle' | 'select' | 'list';
+  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list';
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;
@@ -186,6 +186,19 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
   }
 }
 
+/**
+ * Chat history limit (messages kept in the buffer and shown in the chat).
+ * Stored as the user setting 'historyLimit'; clamped to 10-500, default 50.
+ * Snapshot per UserSession construction — settings saves restart the pi
+ * process, so a new session picks up the new value.
+ */
+export function getHistoryLimit(user: string): number {
+  const raw = getUserSetting(user, 'historyLimit', 50);
+  const n = typeof raw === 'number' ? raw : parseInt(raw, 10);
+  if (!Number.isFinite(n)) return 50;
+  return Math.min(500, Math.max(10, Math.floor(n)));
+}
+
 // ── Settings schema (based on enabled extensions) ──
 
 function getPiConfig(filename: string): Record<string, any> | null {
@@ -257,6 +270,19 @@ export function getUserSettingsSchema(user: string): SettingSection[] {
   }
 
   // Model settings (always available)
+  sections.push({
+    id: 'chat',
+    label: 'Chat',
+    fields: [
+      {
+        key: 'historyLimit',
+        label: 'Chat history length',
+        type: 'number',
+        description: 'Messages kept in the chat view and replayed on connect (10-500). Applies after a backend restart.',
+      },
+    ],
+  });
+
   sections.push({
     id: 'models',
     label: 'Models',

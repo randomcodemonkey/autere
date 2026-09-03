@@ -49,7 +49,6 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   const [searching, setSearching] = useState(false);
   const [nameInput, setNameInput] = useState(sessionName || '');
   const [nameSaving, setNameSaving] = useState(false);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const searchSeq = useRef(0);
 
   // Reset per open
@@ -57,7 +56,6 @@ export const SessionModal: React.FC<SessionModalProps> = ({
     if (open) {
       setQuery('');
       setNameInput(sessionName || '');
-      setConfirmDeleteId(null);
     }
   }, [open, sessionName]);
 
@@ -99,11 +97,9 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   }, [nameInput, sessionId]);
 
   const handleDeleteSession = useCallback(async (sid: string) => {
-    if (confirmDeleteId !== sid) {
-      setConfirmDeleteId(sid);
+    if (!window.confirm('Delete this session? It will be moved to deleted-sessions.')) {
       return;
     }
-    setConfirmDeleteId(null);
     try {
       await fetch(url('/api/sessions/delete'), {
         method: 'POST',
@@ -112,7 +108,7 @@ export const SessionModal: React.FC<SessionModalProps> = ({
       });
       setResults((prev) => prev.filter((s) => s.id !== sid));
     } catch {}
-  }, [confirmDeleteId]);
+  }, []);
 
   const compactLoading = false;
 
@@ -198,9 +194,9 @@ export const SessionModal: React.FC<SessionModalProps> = ({
                     <button
                       className="session-delete-btn"
                       onClick={(e) => { e.stopPropagation(); handleDeleteSession(session.id); }}
-                      title={confirmDeleteId === session.id ? 'Click again to confirm' : 'Delete session'}
+                      title="Delete session"
                     >
-                      {confirmDeleteId === session.id ? '❗' : '✕'}
+                      ✕
                     </button>
                   )}
                 </div>

@@ -14,6 +14,7 @@ import { getLastSession, setLastSession, hasRole } from './auth.js';
 import { ensurePiEnv } from './pi-env.js';
 import { readSessions } from './sessions.js';
 import type { SessionInfo } from './types.js';
+import { getHistoryLimit } from './user-settings.js';
 import { registerExternalActivityInterest, notifyExternalActivity, notifyExternalActivityEnd, type ExternalActivityInterest } from './external-activity.js';
 import {
   isRmCommand,
@@ -89,6 +90,8 @@ function createInitialState(): UserSessionState {
 export class UserSession {
   readonly token: string;
   readonly user: string;
+  /** Chat history buffer size (messages) — from the user's settings */
+  readonly historyLimit: number;
   readonly rpc: MonitorRpcClient;
   readonly state: UserSessionState;
   readonly sseClients: Map<ServerResponse, string | null> = new Map(); // client -> sessionId they're viewing
@@ -115,6 +118,9 @@ export class UserSession {
   constructor(token: string, user: string, rpcOptions: { provider?: string; model?: string; args?: string[]; resumeLastSession?: boolean; isolatedSessions?: boolean }, idleTimeoutMs: number = 30 * 60 * 1000, envUser?: string) {
     this.token = token;
     this.user = user;
+    // Chat history buffer size (messages). Settings saves restart the pi
+    // process, so snapshotting here always reflects the current setting.
+    this.historyLimit = getHistoryLimit(user);
     // Isolation mode (e.g. e2e tests): exclude legacy global sessions from listing
     this.isolatedSessions = rpcOptions.isolatedSessions === true;
     // Per-user pi environment: isolated agent dir (settings, sessions,
@@ -430,7 +436,7 @@ export class UserSession {
         if (messages && messages.length > 0) {
           const buf = this.historyFor(this.state.sessionState.sessionId);
           buf.push(...buildStreamHistoryFromMessages(messages));
-          if (buf.length > 50) buf.splice(0, buf.length - 50);
+          if (buf.length > this.historyLimit) buf.splice(0, buf.length - this.historyLimit);
         }
       } catch (err) {
         log.userSession.error('fetchInitialState: failed to load session history:', err);
@@ -545,7 +551,7 @@ export class UserSession {
       // Reload history for the new session so the buffer reflects its content
       try {
         if (s.sessionState.sessionFile && existsSync(s.sessionState.sessionFile)) {
-          const rawMessages = readMessageEntries(s.sessionState.sessionFile, 50);
+          const rawMessages = readMessageEntries(s.sessionState.sessionFile, this.historyLimit);
           if (rawMessages.length > 0) {
             this.setHistoryFor(s.sessionState.sessionId, buildStreamHistoryFromMessages(rawMessages).slice(-50));
           }
@@ -567,7 +573,7 @@ export class UserSession {
       }
       this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
       const buf = this.historyFor(s.sessionState.sessionId);
-      this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', sessionId: s.sessionState.sessionId, data: buf.slice(-50) });
+      this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', sessionId: s.sessionState.sessionId, data: buf.slice(-this.historyLimit) });
     }).catch((err) => { log.userSession.error('handleSessionStart: failed to get state:', err); });
   }
 
@@ -606,7 +612,7 @@ export class UserSession {
       } else {
         buf[idx].text = s.currentThinkingText;
       }
-      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-50) });
+      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-this.historyLimit) });
     } else if (evt.type === 'thinking_end') {
       s.isThinking = false;
       const text = evt.content || s.currentThinkingText;
@@ -620,7 +626,7 @@ export class UserSession {
       }
       s.activeStreamIdx = null;
       s.currentThinkingText = '';
-      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-50) });
+      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-this.historyLimit) });
     } else if (evt.type === 'text_delta') {
       const delta = evt.delta;
       const idx = s.activeStreamIdx;
@@ -635,7 +641,7 @@ export class UserSession {
       }
       s.currentStreamText += delta || '';
       buf[s.activeStreamIdx!].text = s.currentStreamText;
-      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-50) });
+      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-this.historyLimit) });
     }
 
     // Update usage if present
@@ -705,14 +711,14 @@ export class UserSession {
     }
 
     // Keep only last 50 messages
-    if (buf.length > 50) {
-      buf.splice(0, buf.length - 50);
+    if (buf.length > this.historyLimit) {
+      buf.splice(0, buf.length - this.historyLimit);
     }
 
     this.broadcastToSession(sessionId, {
       type: 'stream_history',
       sessionId,
-      data: buf.slice(-50),
+      data: buf.slice(-this.historyLimit),
     });
 
     // Detect errors — skip toolResult errors (handled by handleToolEnd instead)
@@ -723,7 +729,7 @@ export class UserSession {
     }
     if (errorText) {
       buf.push({ role: 'system', text: errorText, streaming: false, timestamp: Date.now(), isError: true });
-      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-50) });
+      this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-this.historyLimit) });
     }
 
     // Update stats
@@ -794,7 +800,7 @@ export class UserSession {
         const sessionId = s.sessionState.sessionId;
         buf.push(entry);
         if (buf.length > 50) buf.splice(0, buf.length - 50);
-        this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-50) });
+        this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-this.historyLimit) });
       }
     }
   }

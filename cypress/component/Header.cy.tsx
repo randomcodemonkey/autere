@@ -37,12 +37,13 @@ describe('Header', () => {
     cy.get('.session-badge-text').should('contain', 'session');
   });
 
-  it('renders the view menu with all three views', () => {
+  it('renders the view menu with all four views', () => {
     mountHeader();
     cy.get('.view-menu').should('exist');
     cy.get('.view-btn-status').should('contain', 'Status');
     cy.get('.view-btn-chat').should('contain', 'Chat');
     cy.get('.view-btn-settings').should('contain', 'Settings');
+    cy.get('.view-btn-tasks').should('contain', 'Tasks');
   });
 
   it('highlights the active view', () => {
@@ -71,7 +72,7 @@ describe('Header', () => {
     cy.get('.view-menu-dropdown').should('not.exist');
     cy.get('.view-menu-toggle').click({ force: true });
     cy.get('.view-menu-dropdown').should('exist');
-    cy.get('.view-menu-item').should('have.length', 3);
+    cy.get('.view-menu-item').should('have.length', 4);
     cy.get('.view-menu-item.active').should('contain', 'Chat');
     cy.get('.view-menu-item').contains('Status').click({ force: true });
     cy.get('@onViewChange').should('have.been.calledWith', 'status');

@@ -107,6 +107,10 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
           className="settings-input"
           value={value}
           placeholder={field.placeholder || ''}
+          // new-password: the standard token telling browsers (incl. iOS
+          // Passwords) this is NOT a login/signup field — suppresses the
+          // save-password prompt (plain "off" is ignored for passwords).
+          autoComplete={field.type === 'password' ? 'new-password' : undefined}
           onChange={(e) => handleChange(field.key, e.target.value)}
         />
       </div>

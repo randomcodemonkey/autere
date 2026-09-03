@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Header, ViewId } from '../components/Header';
 import { StatusCard } from '../components/StatusCard';
 import { SettingsCard } from '../components/SettingsCard';
+import { ScheduledTasksCard } from '../components/ScheduledTasksCard';
 import { StreamCard } from '../components/StreamCard';
 import { Modal } from '../components/Modal';
 import { SessionModal } from '../components/SessionModal';
@@ -69,7 +70,7 @@ export function DashboardPage({
   // View switching (chat / status / settings). On desktop the status card is
   // always visible on the left and the selection swaps the right pane; on
   // mobile each view is a full-screen card (CSS).
-  const activeView: ViewId = view === 'settings' ? 'settings' : view === 'status' ? 'status' : 'chat';
+  const activeView: ViewId = view === 'settings' ? 'settings' : view === 'status' ? 'status' : view === 'tasks' ? 'tasks' : 'chat';
   const handleSetView = useCallback((v: ViewId) => {
     if (!urlSessionId) return;
     navigate(v === 'chat' ? `/session/${urlSessionId}` : `/session/${urlSessionId}/${v}`);
@@ -154,7 +155,12 @@ export function DashboardPage({
         // comes from the SSE connect-time initializer. Applying it would
         // clear already-rendered chat content (the load-time blink).
         if (!msg.sessionId && (!msg.data || msg.data.length === 0)) break;
-        setStreamHistory(msg.data || []);
+        // Skip no-op updates: the connect-time replay may deliver exactly
+        // what is already rendered — re-applying identical content rebuilds
+        // the DOM for nothing.
+        const incoming = msg.data || [];
+        if (JSON.stringify(streamHistoryRef.current) === JSON.stringify(incoming)) break;
+        setStreamHistory(incoming);
         break;
       }
       case 'models':
@@ -170,11 +176,13 @@ export function DashboardPage({
         });
         break;
       case 'tool_end':
-        // id: null is the initial-state signal on (re)connect — no tools are
-        // active. Without this, stale tools from before a backend restart
-        // would stick around until a full page refresh.
+        // id: null is the initial-state sync on (re)connect: the payload
+        // carries the backend's authoritative active-tools snapshot (may be
+        // empty, e.g. right after a backend restart). Applying it — instead
+        // of blindly clearing — keeps a running tool visible when the SSE
+        // connect burst lands after a fast /history response.
         if (msg.data.id == null) {
-          setActiveTools([]);
+          setActiveTools(Array.isArray(msg.data.activeTools) ? msg.data.activeTools : []);
         } else {
           setActiveTools((prev) => prev.filter((t) => t.id !== msg.data.id));
         }
@@ -199,13 +207,29 @@ export function DashboardPage({
   // Set synchronously during render so no messages are missed.
   pageHandlerRef.current = handleDashboardSSEMessage;
 
-  // After restart reconnection, fetch session history if empty
+  // After reconnect (e.g. a device waking from sleep), refresh session list
+  // and re-fetch the viewed session's history from the file — messages sent
+  // while the client was away must appear even though no live events were
+  // delivered in the meantime. Only applied when the content differs, so an
+  // unchanged chat does not re-render (no blink).
   const wasConnectedRef = useRef(sseConnected);
   useEffect(() => {
     if (sseConnected && !wasConnectedRef.current) {
       // Clear restarting states on reconnection
       if (restarting) setRestarting(false);
       if (restartingBackend) setRestartingBackend(false);
+      const sid = viewedSessionRef.current;
+      if (sid) {
+        fetch(url(`/api/sessions/${sid}/history?limit=50`))
+          .then((res) => res.json())
+          .then((data) => {
+            if (!data.success || !data.data) return;
+            if (JSON.stringify(streamHistoryRef.current) === JSON.stringify(data.data)) return;
+            setStreamHistory(data.data);
+            historyRenderedForRef.current = sid;
+          })
+          .catch(() => {});
+      }
       const timer = setTimeout(() => {
         fetch(url('/api/sessions'))
           .then((res) => res.json())
@@ -392,6 +416,7 @@ export function DashboardPage({
           const newId = data.navigateUrl.split('/').pop();
           // Navigate directly from the response — no SSE broadcast needed
           setCreatingSession(false);
+          setShowSessionModal(false);
           // Apply the fresh session state returned by the backend. The SSE
           // status broadcast for the new session is dropped while we're still
           // on the old URL (stale-snapshot guard), and the URL-change effect
@@ -414,11 +439,15 @@ export function DashboardPage({
       });
   }, []);
 
-  const handleSwitchSession = useCallback(async (sessionId: string) => {
+  const handleSwitchSession = useCallback((sessionId: string) => {
     setSessionError(null);
+    // Navigate to the target session — the URL 'view' param defaults to chat,
+    // so no explicit view change is needed. (Calling handleSetView('chat')
+    // here would navigate BACK to the previous urlSessionId and swallow the
+    // switch.) Close the modal — it must not linger over the new session.
+    setShowSessionModal(false);
     navigate(`/session/${sessionId}`);
-    handleSetView('chat');
-  }, [navigate, handleSetView]);
+  }, [navigate]);
 
   const activeModelId = sessionState.model?.id || null;
   const { type: statusType, text: statusText } = computeStatus(baseStatusType, baseStatusText, sessionState);
@@ -478,6 +507,9 @@ export function DashboardPage({
           )}
           {activeView === 'settings' && (
             <SettingsCard sseConnected={sseConnected} />
+          )}
+          {activeView === 'tasks' && (
+            <ScheduledTasksCard sseConnected={sseConnected} />
           )}
         </div>
       </div>

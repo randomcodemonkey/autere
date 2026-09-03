@@ -126,10 +126,45 @@ export type SSEEventType =
   | 'error'
   | 'external_activity'
   | 'heartbeat';
-
 export interface SSEMessage {
   type: SSEEventType;
   data: any;
   /** Session the event belongs to, when known (e.g. stream_history) */
   sessionId?: string | null;
+}
+
+// ── Scheduled tasks ──
+
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  /** 5-field cron expression (minute hour dom month dow) */
+  schedule: string;
+  prompt: string;
+  seedScript?: string;
+  resultScript?: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type TaskRunStatus = 'running' | 'success' | 'error';
+
+export interface TaskRunRecord {
+  runId: string;
+  taskId: string;
+  taskName: string;
+  trigger: 'schedule' | 'manual';
+  startedAt: number;
+  finishedAt?: number;
+  status: TaskRunStatus;
+  error?: string;
+}
+
+export interface TaskRunLog extends TaskRunRecord {
+  prompt: string;
+  seedOutput?: string;
+  agentResult?: string;
+  resultScriptOutput?: string;
+  log: string[];
 }

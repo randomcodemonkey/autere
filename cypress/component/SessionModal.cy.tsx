@@ -105,13 +105,29 @@ describe('SessionModal', () => {
     cy.get('.session-empty').should('contain', 'No matching sessions');
   });
 
-  it('requires a second click to delete a session', () => {
+  it('deletes a session after confirm()', () => {
     cy.intercept('POST', '**/api/sessions/delete', { success: true }).as('delete');
+    let accept = false;
+    cy.window({ log: false }).then((win) => {
+      (win as any).confirm = () => accept;
+    });
     mountModal();
     cy.wait('@sessions');
+    // Dismissing the confirm dialog must NOT send the delete request
     cy.get('.session-item').not('.active').find('.session-delete-btn').click();
-    cy.get('@delete.all').should('have.length', 0); // first click only arms confirmation
+    cy.get('@delete.all').should('have.length', 0);
+    // Accepting the confirm dialog issues the delete
+    cy.wrap(null).then(() => { accept = true; });
     cy.get('.session-item').not('.active').find('.session-delete-btn').click();
     cy.wait('@delete');
+    // The deleted session disappears from the list
+    cy.get('.session-item').not('.active').should('not.exist');
+  });
+
+  it('delete button shows no armed/❗ state (confirm() is used instead)', () => {
+    mountModal();
+    cy.wait('@sessions');
+    cy.get('.session-item').not('.active').find('.session-delete-btn')
+      .should('contain', '✕').and('not.contain', '❗');
   });
 });
