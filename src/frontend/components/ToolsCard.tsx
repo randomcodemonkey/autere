@@ -69,7 +69,7 @@ export const ToolsCard: React.FC<ToolsCardProps> = ({ activeTools, recentTools }
             const isExpanded = expandedCmds.has(tool.id) && truncated;
             return (
               <div key={tool.id} className="tool-chip">
-                <div className="spinner" />
+                <span className="tool-active-dot" />
                 {tool.name}
                 {tool.cmd && (
                   <div

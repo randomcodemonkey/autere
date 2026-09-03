@@ -14,7 +14,7 @@ import { getLastSession, setLastSession, hasRole } from './auth.js';
 import { ensurePiEnv } from './pi-env.js';
 import { readSessions } from './sessions.js';
 import type { SessionInfo } from './types.js';
-import { registerExternalActivityInterest, notifyExternalActivity, type ExternalActivityInterest } from './external-activity.js';
+import { registerExternalActivityInterest, notifyExternalActivity, notifyExternalActivityEnd, type ExternalActivityInterest } from './external-activity.js';
 import {
   isRmCommand,
   extractRmPaths,
@@ -134,6 +134,7 @@ export class UserSession {
     this.externalInterest = {
       getSessionFile: () => this.state.sessionState.sessionFile,
       onExternalActivity: () => this.handleInstantExternalActivity(),
+      onExternalActivityEnd: () => this.handleExternalActivityEnd(),
     };
 
     this.externalWatcher = new ExternalActivityWatcher({
@@ -265,11 +266,44 @@ export class UserSession {
     }
   }
 
+  /** Another process's pi finished its turn on OUR current session — drop
+   *  the 'Active elsewhere' flag immediately instead of waiting out the
+   *  watcher's 60s expiry. */
+  private handleExternalActivityEnd(): void {
+    const s = this.state;
+    const sessionId = s.sessionState.sessionId;
+    if (!sessionId) return;
+    if (s.sessionState.externalActivity) {
+      log.userSession.forSession(sessionId).info('External activity ended (turn finished notification)');
+      s.sessionState.externalActivity = false;
+      this.broadcastToSession(sessionId, { type: 'status', data: { ...s.sessionState } });
+    }
+    this.clearExternalActivity(sessionId);
+  }
+
+  /**
+   * Whether a client's tracked session id refers to the same session as the
+   * broadcast target. Exact match — or an alias: pi sometimes reports an
+   * internal id that differs from the file-derived id (id drift), so two
+   * ids resolving to the same session file are the same session. Without
+   * this, an 'active elsewhere' viewer whose tracked id drifted never
+   * matches the broadcast target and silently stops receiving messages.
+   */
+  private clientViewsSession(clientSessionId: string | null, sessionId: string | null): boolean {
+    if (clientSessionId === sessionId) return true;
+    if (!clientSessionId || !sessionId) return false;
+    const fileOf = (id: string) =>
+      this.state.availableSessions.find(si => si.id === id)?.sessionFile;
+    const cf = fileOf(clientSessionId);
+    const tf = fileOf(sessionId);
+    return !!cf && !!tf && cf === tf;
+  }
+
   /** Broadcast an SSE event only to clients viewing a specific session */
   broadcastToSession(sessionId: string | null, data: any) {
     const msg = `data: ${JSON.stringify(data)}\n\n`;
     for (const [client, clientSessionId] of this.sseClients) {
-      if (clientSessionId === sessionId) {
+      if (this.clientViewsSession(clientSessionId, sessionId)) {
         try { client.write(msg); } catch {}
       }
     }
@@ -442,6 +476,9 @@ export class UserSession {
         case 'agent_settled':
           s.sessionState.isStreaming = false;
           this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
+          // Our pi's turn ended — viewers in OTHER processes watching this
+          // session can drop their 'Active elsewhere' state immediately.
+          notifyExternalActivityEnd(s.sessionState.sessionFile, this.externalInterest);
           break;
         case 'queue_update':
           // pi reports its actual steering/follow-up queues — the
@@ -473,6 +510,7 @@ export class UserSession {
           s.sessionState.compacting = false;
           s.sessionState.isStreaming = false;
           this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
+          notifyExternalActivityEnd(s.sessionState.sessionFile, this.externalInterest);
           break;
         case 'turn_start':
           s.sessionState.isStreaming = true;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { SessionModal } from '../../src/frontend/components/SessionModal';
+import { SessionModal, formatSessionTime } from '../../src/frontend/components/SessionModal';
 import type { SessionSearchResult } from '../../src/frontend/types';
 
 const SESSIONS: SessionSearchResult[] = [
@@ -28,6 +28,21 @@ function mountModal(props: Partial<Parameters<typeof SessionModal>[0]> = {}) {
 }
 
 describe('SessionModal', () => {
+  describe('formatSessionTime age boundaries', () => {
+    const NOW = new Date('2026-09-03T12:00:00Z').getTime();
+    beforeEach(() => cy.clock(NOW));
+    it('formats minutes and hours', () => {
+      expect(formatSessionTime(NOW - 30_000)).to.equal('just now');
+      expect(formatSessionTime(NOW - 5 * 60_000)).to.equal('5m ago');
+      expect(formatSessionTime(NOW - 23 * 3_600_000)).to.equal('23h ago');
+    });
+    it('formats days without the 0d bug', () => {
+      expect(formatSessionTime(NOW - 25 * 3_600_000)).to.equal('1d ago');
+      expect(formatSessionTime(NOW - 47 * 3_600_000)).to.equal('1d ago');
+      expect(formatSessionTime(NOW - 3 * 24 * 3_600_000)).to.equal('3d ago');
+    });
+  });
+
   beforeEach(() => {
     cy.intercept('GET', '**/api/sessions/search*', { success: true, data: [] }).as('search');
     cy.intercept('GET', '**/api/sessions', { success: true, data: SESSIONS }).as('sessions');

@@ -39,6 +39,17 @@ interface UptimeInfo {
 
 const EMPTY_UPTIME: UptimeInfo = { autereStartedAt: null, piStartedAt: null };
 
+// Build id injected by Vite (see vite.config.ts define). Shown in the
+// System card so a client can verify which UI version it is running —
+// stale-PWA debugging has no other JS-visible clue.
+declare const __BUILD_ID__: string;
+function formatBuildId(): string {
+  // Component tests mount the source without Vite's define — fall back
+  if (typeof __BUILD_ID__ === 'undefined') return 'dev';
+  // 'YYYY-MM-DDTHH:MM' from the ISO timestamp
+  return __BUILD_ID__.slice(0, 16).replace('T', ' ');
+}
+
 function formatUptime(startedAt: number | null, now: number): string {
   if (!startedAt) return '—';
   let s = Math.max(0, Math.floor((now - startedAt) / 1000));
@@ -134,6 +145,10 @@ export const StatusCard: React.FC<StatusCardProps> = ({
         <div className="modal-uptime-row">
           <span className="modal-uptime-label">autere uptime</span>
           <span className="modal-uptime-value">{formatUptime(uptime.autereStartedAt, now)}</span>
+        </div>
+        <div className="modal-uptime-row">
+          <span className="modal-uptime-label">UI build</span>
+          <span className="modal-uptime-value">{formatBuildId()}</span>
         </div>
         <div className="status-card-system-actions">
           <button className="btn btn-default" onClick={() => window.location.reload()}>⟲ Reload UI</button>

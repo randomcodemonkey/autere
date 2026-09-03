@@ -90,20 +90,12 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Combined session + status badge: session name/id colored by status.
-          Mobile: switches to the full-screen status card. Desktop: the status
-          cards are always visible — just scroll to the session card (and
-          restore the chat if the status view was somehow active). */}
+          Clicking opens the sessions modal (all viewports) — the modal is
+          the single session-management entry point. */}
       <span
         className={`session-badge status-badge status-${statusType}${workingExternal ? ' status-external' : ''}`}
         title={`${statusText} — click to manage session`}
-        onClick={() => {
-          if (window.matchMedia('(max-width: 768px)').matches) {
-            onViewChange('status');
-          } else if (activeView === 'status') {
-            onViewChange('chat');
-          }
-          onStatusClick();
-        }}
+        onClick={onStatusClick}
       >
         {workingExternal
           ? <span className="connection-dot dot-pulse-amber" />

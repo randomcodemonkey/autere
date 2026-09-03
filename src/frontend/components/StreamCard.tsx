@@ -12,6 +12,8 @@ interface StreamCardProps {
   onCommandError?: (message: string) => void;
   steerPending?: number;
   followUpPending?: number;
+  model?: { provider: string; id: string; name: string } | null;
+  externalActivity?: boolean;
 }
 
 /** Truncation limits per role (characters), for non-edit messages */
@@ -25,7 +27,7 @@ const TRUNC_LEN: Record<string, number> = {
 /** Collapse edit diffs longer than this many diff rows */
 const EDIT_COLLAPSE_ROWS = 12;
 
-export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError, steerPending, followUpPending }) => {
+export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError, steerPending, followUpPending, model, externalActivity }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const [filters, setFilters] = useState({
     thinking: localStorage.getItem('autere-filter-thinking') !== 'off',
@@ -45,14 +47,6 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     }
     const ts = msg.timestamp || 0;
     return `msg-${msg.role}-${hash}-${ts}`;
-  }, []);
-
-  const toggleFilter = useCallback((filter: 'thinking' | 'toolResult' | 'edit') => {
-    setFilters((prev) => {
-      const next = { ...prev, [filter]: !prev[filter] };
-      localStorage.setItem('autere-filter-' + filter, next[filter] ? 'on' : 'off');
-      return next;
-    });
   }, []);
 
   // Filter messages: skip empty non-streaming entries, and apply user filters
@@ -123,6 +117,18 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     }
   }, []);
 
+  const toggleFilter = useCallback((filter: 'thinking' | 'toolResult' | 'edit') => {
+    setFilters((prev) => {
+      const next = { ...prev, [filter]: !prev[filter] };
+      localStorage.setItem('autere-filter-' + filter, next[filter] ? 'on' : 'off');
+      return next;
+    });
+    // Filtering changes which messages are rendered (and their offsets);
+    // without this the chat can end up mid-scroll. Always go back to the
+    // latest message after touching the toggles.
+    requestAnimationFrame(() => scrollToBottom());
+  }, [scrollToBottom]);
+
   return (
     <div className={`card stream-card${isStreaming ? ' working' : ''}`}>
       <div className="card-title">
@@ -147,6 +153,15 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
             edits
           </button>
         </div>
+      </div>
+      <div className="chat-model-row">
+        <span className="chat-model-label">model</span>
+        <span className="chat-model-name">{model?.name || model?.id || '—'}</span>
+        {(externalActivity || isStreaming || compacting) && (
+          <span className={`chat-model-external${externalActivity ? '' : ' chat-model-active'}`}>
+            {externalActivity ? 'Active elsewhere' : 'Active'}
+          </span>
+        )}
       </div>
       <div className="stream-box-wrapper">
         <div className="stream-box" ref={boxRef} onScroll={handleScroll}>
@@ -184,7 +199,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
           </button>
         )}
       </div>
-      <ChatInput onNewSession={onNewSession} onCompact={onCompact} onError={onCommandError} disabled={compacting} isStreaming={isStreaming} isActive={isStreaming || compacting} steerPending={steerPending} followUpPending={followUpPending} />
+      <ChatInput onNewSession={onNewSession} onCompact={onCompact} onError={onCommandError} disabled={compacting || externalActivity} isStreaming={isStreaming} isActive={isStreaming || compacting} steerPending={steerPending} followUpPending={followUpPending} />
     </div>
   );
 };

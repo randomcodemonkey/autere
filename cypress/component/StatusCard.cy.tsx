@@ -48,8 +48,9 @@ describe('StatusCard', () => {
     mountCard();
     cy.get('.modal-username').should('contain', 'admin');
     cy.get('.badge').should('contain', 'admin');
-    cy.get('.modal-uptime-row').first().should('contain', '10s');
-    cy.get('.modal-uptime-row').last().should('contain', '1m 5s');
+    cy.contains('.modal-uptime-row', 'pi uptime').should('contain', '10s');
+    cy.contains('.modal-uptime-row', 'autere uptime').should('contain', '1m 5s');
+    cy.contains('.modal-uptime-row', 'UI build').should('contain', 'dev');
   });
 
   it('shows both restart buttons for admins and logout', () => {
@@ -102,8 +103,8 @@ describe('StatusCard', () => {
         onLogout={cy.stub()}
       />
     );
-    cy.get('.modal-uptime-row').first().should('contain', '—');
-    cy.get('.modal-uptime-row').last().should('contain', '—');
+    cy.contains('.modal-uptime-row', 'pi uptime').should('contain', '—');
+    cy.contains('.modal-uptime-row', 'autere uptime').should('contain', '—');
   });
 });
 

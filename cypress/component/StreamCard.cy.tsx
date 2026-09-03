@@ -99,4 +99,44 @@ describe('StreamCard', () => {
     cy.mount(<StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} />);
     cy.get('.stream-text-truncated').should('contain', 'more characters');
   });
+
+  it('shows the active model on the second header row', () => {
+    cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={{ provider: 'openrouter', id: 'mimo-v2.3', name: 'mimo-v2.3:all' }} />);
+    cy.get('.chat-model-row').should('contain', 'mimo-v2.3:all');
+    cy.get('.chat-model-external').should('not.exist');
+  });
+
+  it('scrolls to bottom when a filter toggle is clicked', () => {
+    const longText = 'X'.repeat(3000);
+    const messages: StreamMessage[] = [
+      { role: 'assistant', text: longText, streaming: false },
+      { role: 'user', text: 'latest message', streaming: false },
+    ];
+    cy.mount(<StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} />);
+    cy.get('.stream-box').then(($box) => {
+      // Start scrolled away from the bottom
+      $box[0].scrollTop = 0;
+    });
+    cy.get('.stream-toggle').contains('tools').click();
+    cy.get('.stream-box').then(($box) => {
+      const b = $box[0];
+      expect(b.scrollHeight - b.scrollTop - b.clientHeight).to.be.lessThan(5);
+    });
+  });
+
+  it('shows Active on the model row when streaming', () => {
+    cy.mount(<StreamCard messages={[]} isStreaming onNewSession={() => {}} model={null} />);
+    cy.get('.chat-model-external').should('be.visible').and('contain', 'Active');
+  });
+
+  it('shows Active elsewhere and disables chat when externalActivity', () => {
+    cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={null} externalActivity />);
+    cy.get('.chat-model-external').should('be.visible').and('contain', 'Active elsewhere');
+    cy.get('.chat-send-btn').first().should('be.disabled');
+  });
+
+  it('shows a dash on the model row when no model is set', () => {
+    cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={null} />);
+    cy.get('.chat-model-name').should('have.text', '—');
+  });
 });

@@ -241,9 +241,9 @@ body {
 }
 
 .status-connected    { background: var(--c-success-bg); color: var(--c-success); }
-.status-streaming    { background: var(--c-warning-bg); color: var(--c-warning); animation: pulse 1.5s infinite; }
+.status-streaming    { background: var(--c-warning-bg); color: var(--c-warning); }
 .status-idle         { background: var(--c-muted-bg); color: var(--c-muted); }
-.status-loading      { background: var(--c-info-bg); color: var(--c-info); animation: pulse 1.5s infinite; }
+.status-loading      { background: var(--c-info-bg); color: var(--c-info); }
 .status-disconnected { background: var(--c-danger-bg); color: var(--c-danger); }
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
@@ -264,7 +264,6 @@ body {
   background: rgba(217, 119, 6, 0.18);
   color: var(--c-amber);
   white-space: nowrap;
-  animation: pulse-external 2s ease-in-out infinite;
 }
 
 .dot-pulse-amber {
@@ -274,11 +273,6 @@ body {
   background: var(--c-amber);
   margin-right: 0.35rem;
   animation: pulse-dot 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse-external {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
 }
 
 @keyframes pulse-dot {
@@ -301,7 +295,6 @@ body {
 .chat-external-activity {
   border-color: rgba(245, 158, 11, 0.5);
   box-shadow: 0 0 12px rgba(245, 158, 11, 0.15);
-  animation: pulse-border 2s ease-in-out infinite;
 }
 
 // Settings rendered as a card inside the chat area
@@ -335,11 +328,6 @@ body {
 
 .status-card-system-actions .btn {
   width: 100%;
-}
-
-@keyframes pulse-border {
-  0%, 100% { border-color: rgba(245, 158, 11, 0.5); box-shadow: 0 0 12px rgba(245, 158, 11, 0.15); }
-  50% { border-color: rgba(245, 158, 11, 0.25); box-shadow: 0 0 6px rgba(245, 158, 11, 0.08); }
 }
 
 // -- Session Badge (combined with status colours) --------------------------------
@@ -609,8 +597,12 @@ body {
   color: #555;
   font-size: 1rem;
   cursor: pointer;
-  padding: 0.1rem 0.3rem;
-  line-height: 1;
+  // No line-height override: the UA default (normal) adds symmetric
+  // half-leading so the glyph centers in the button box. line-height: 1
+  // hugged the em box and made the glyph sit below the header's middle.
+  // Vertical padding is 0 because the normal line box already provides
+  // the header row's height (~19px, same as the old lh-1 + padding combo).
+  padding: 0 0.3rem;
   transition: color 0.15s;
 
   &:hover {
@@ -763,6 +755,10 @@ body {
   background: #333;
   border-radius: 0.2rem;
   overflow: hidden;
+  // Optical correction: uppercase header text renders ~1px below the flex
+  // box's geometric center (descender space in the line box), making a
+  // geometrically centered bar read as top-shifted.
+  transform: translateY(1px);
 }
 
 .usage-header-bar-fill {
@@ -876,9 +872,42 @@ body {
   transition: border-color 0.3s;
   position: relative;
 
+  .chat-model-row {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: -0.35rem 0 0.6rem;
+    font-size: 0.65rem;
+    line-height: 1;
+  }
+
+  .chat-model-label {
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .chat-model-name {
+    color: #999;
+    font-weight: 600;
+  }
+
+  .chat-model-external {
+    margin-left: auto;
+    color: var(--c-amber);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+
+    // Local 'Active' uses the same yellowish as the streaming status badge
+    &.chat-model-active {
+      color: var(--c-warning);
+    }
+  }
+
   &.working {
-    border-color: #b45309;
-    animation: chat-pulse 3s ease-in-out infinite;
+    border-color: var(--c-warning);
   }
 
   > .card-title {
@@ -888,11 +917,6 @@ body {
     justify-content: space-between;
     margin-bottom: 0.75rem;
   }
-}
-
-@keyframes chat-pulse {
-  0%, 100% { border-color: #444; }
-  50%      { border-color: #b45309; }
 }
 
 .stream-filters {
@@ -1366,13 +1390,15 @@ body {
   gap: 0.5rem;
 }
 
-.spinner {
-  width: 0.75rem;
-  height: 0.75rem;
-  border: 2px solid #444;
-  border-top-color: #999;
+// Running indicator next to an active tool: pulsing amber dot (matches
+// the app's other running/pending indicators)
+.tool-active-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex-shrink: 0;
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  background: var(--c-amber);
+  animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -2214,6 +2240,12 @@ body {
   margin-bottom: 0.5rem;
 }
 
+.modal-session .btn-group {
+  margin: 1.25rem 0 0;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid #333;
+}
+
 .session-search-input {
   width: 100%;
   background: #181818;
@@ -2224,6 +2256,7 @@ body {
   font-size: 0.8rem;
   font-family: inherit;
   outline: none;
+  margin-top: 1.25rem;
   margin-bottom: 0.6rem;
 
   &:focus {

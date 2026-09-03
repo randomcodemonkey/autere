@@ -16,7 +16,7 @@ describe('ToolsCard', () => {
     cy.mount(<ToolsCard activeTools={activeTools} recentTools={[]} />);
     cy.get('.tool-chip').should('have.length', 2);
     cy.get('.tool-chip').eq(0).should('contain', 'bash');
-    cy.get('.tool-chip').eq(0).find('.spinner').should('exist');
+    cy.get('.tool-chip').eq(0).find('.tool-active-dot').should('exist');
     cy.get('.tool-chip').eq(1).should('contain', 'read');
   });
 

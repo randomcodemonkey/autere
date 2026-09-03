@@ -57,6 +57,20 @@ describe('UsageCard', () => {
     cy.get('.usage-header-bar').should('have.attr', 'title').and('contain', '8%');
   });
 
+  it('header bar is vertically centered in the header', () => {
+    cy.mount(<UsageCard messageCount={0} requestCount={0} stats={defaultStats} />);
+    cy.get('.card-header').click();
+    cy.get('.card-header').then(($h) => {
+      const hTop = $h[0].getBoundingClientRect().top;
+      const hMid = hTop + $h[0].getBoundingClientRect().height / 2;
+      const bar = $h.find('.usage-header-bar')[0].getBoundingClientRect();
+      const tgl = $h.find('.card-toggle')[0].getBoundingClientRect();
+      cy.log('bar mid offset', (bar.top + bar.height / 2) - hMid);
+      cy.log('toggle mid offset', (tgl.top + tgl.height / 2) - hMid);
+      expect(Math.abs((bar.top + bar.height / 2) - hMid)).to.be.lessThan(2);
+    });
+  });
+
   it('shows no context bar on header when there is no context data', () => {
     const stats: SessionStats = { ...defaultStats, contextUsage: null };
     cy.mount(<UsageCard messageCount={0} requestCount={0} stats={stats} />);

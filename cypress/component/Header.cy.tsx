@@ -78,7 +78,7 @@ describe('Header', () => {
     cy.get('.view-menu-dropdown').should('not.exist');
   });
 
-  it('badge click on desktop scrolls to status card without changing view', () => {
+  it('badge click opens the sessions modal without changing view', () => {
     const onViewChange = cy.stub().as('onViewChange');
     const onStatusClick = cy.stub().as('onStatusClick');
     mountHeader({ onViewChange, onStatusClick });

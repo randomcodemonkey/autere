@@ -5,6 +5,10 @@ import App from './App';
 import { basePath, url } from './base-path';
 import './styles.scss';
 
+declare const __BUILD_ID__: string;
+// eslint-disable-next-line no-console
+console.log(`[autere] UI build ${__BUILD_ID__}`);
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter basename={basePath()}>
@@ -29,11 +33,24 @@ if ('serviceWorker' in navigator) {
       });
       setInterval(check, 60_000);
 
-      // NOTE: no auto-reload on controllerchange. An automatic reload was
-      // attempted but proved to fire spuriously (mid-session), killing open
-      // state like the sessions modal. New deployments reach standalone
-      // home-screen apps on their next app open (the SW is network-first),
-      // and the System card's 'Reload UI' button forces it immediately.
+      // When a NEW worker takes control (i.e. an update was installed),
+      // reload once so the page runs the fresh code. On first install the
+      // worker claims the page and ALSO fires controllerchange — that must
+      // NOT reload (it would reload every page load a few seconds in), so
+      // track whether a controller existed before the change. Without this
+      // reload, a resumed mobile PWA webview keeps running old assets
+      // indefinitely (no navigation happens on resume).
+      let hadController = !!navigator.serviceWorker.controller;
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController) {
+          hadController = true; // first install/claim — not an update
+          return;
+        }
+        if (reloaded) return;
+        reloaded = true;
+        window.location.reload();
+      });
     }).catch(() => {
       // SW unsupported/blocked (e.g. insecure context) — app works as before
     });

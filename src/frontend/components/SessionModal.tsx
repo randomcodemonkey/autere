@@ -20,7 +20,7 @@ interface SessionModalProps {
 
 type SearchedSession = SessionSearchResult;
 
-function formatSessionTime(ts: number): string {
+export function formatSessionTime(ts: number): string {
   if (!ts) return '';
   const d = new Date(ts);
   const now = new Date();
@@ -29,7 +29,7 @@ function formatSessionTime(ts: number): string {
   if (diffMin < 60) return `${diffMin}m ago`;
   const diffHr = Math.floor(diffMin / 60);
   if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.floor(diffHr / 60 / 24);
+  const diffDay = Math.floor(diffHr / 24);
   return `${diffDay}d ago`;
 }
 

@@ -6,13 +6,27 @@
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const PROJECT_ROOT = join(__dirname, '..', '..', '..');
+
+let testEnvsDir: string | null = null;
+
+/** Remove the isolated per-run env dir. Runs create sessions there; they
+ *  must not leak into /tmp (or anywhere else) after the run. */
+function cleanupEnvsDir(): void {
+  if (!testEnvsDir) return;
+  try {
+    rmSync(testEnvsDir, { recursive: true, force: true });
+    console.log(`[e2e] Removed test env dir ${testEnvsDir}`);
+  } catch (err) {
+    console.log(`[e2e] Failed to remove test env dir: ${err}`);
+  }
+}
 
 // Use a random available port
 function getAvailablePort(): number {
@@ -69,7 +83,8 @@ export function startBackend(): Promise<void> {
     // Isolated pi envs dir: tests must not read/write real user sessions
     // (the default ~/.autere/pi-envs/admin is shared with the real
     // dashboard instance for the admin user).
-    const testEnvsDir = mkdtempSync(join(tmpdir(), 'autere-e2e-envs-'));
+    testEnvsDir = mkdtempSync(join(tmpdir(), 'autere-e2e-envs-'));
+
     const args = [
       'src/backend/index.ts',
       '--port', String(TEST_PORT),
@@ -139,6 +154,7 @@ export function stopBackend(): Promise<void> {
   return new Promise((resolve) => {
     if (!backendProcess) {
       console.log('[e2e] No backend process to stop');
+      cleanupEnvsDir();
       resolve();
       return;
     }
@@ -157,6 +173,7 @@ export function stopBackend(): Promise<void> {
 
     backendProcess.on('exit', () => {
       backendProcess = null;
+      cleanupEnvsDir();
       console.log('[e2e] Backend stopped');
     });
 

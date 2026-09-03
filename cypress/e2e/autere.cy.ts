@@ -264,7 +264,7 @@ describe('Dashboard Loading', () => {
     });
 
     it('shows uptime rows', () => {
-      cy.get('.status-card-system .modal-uptime-row').should('have.length', 2);
+      cy.get('.status-card-system .modal-uptime-row').should('have.length', 3); // pi uptime, autere uptime, UI build
     });
 
     it('shows logout button', () => {

@@ -112,6 +112,9 @@ export function DashboardPage({
   // navigation must NOT affect the newly viewed session's state.
   const viewedSessionRef = useRef<string | null>(null);
   viewedSessionRef.current = urlSessionId || null;
+  // Canonical session id (pi's id may drift from the URL's file-derived id)
+  const canonicalSessionIdRef = useRef<string | null>(null);
+  canonicalSessionIdRef.current = sessionState.sessionId;
 
   const handleDashboardSSEMessage = useCallback((msg: SSEMessage) => {
     switch (msg.type) {
@@ -147,6 +150,10 @@ export function DashboardPage({
         // (defense against cross-session bleed during switch races).
         const viewed = viewedSessionRef.current;
         if (msg.sessionId && viewed && msg.sessionId !== viewed) break;
+        // Ignore EMPTY snapshots that carry no session id — that shape only
+        // comes from the SSE connect-time initializer. Applying it would
+        // clear already-rendered chat content (the load-time blink).
+        if (!msg.sessionId && (!msg.data || msg.data.length === 0)) break;
         setStreamHistory(msg.data || []);
         break;
       }
@@ -173,6 +180,15 @@ export function DashboardPage({
         }
         if (msg.data.recentTools) setRecentTools(msg.data.recentTools);
         break;
+      case 'external_activity': {
+        // Cross-session 'active elsewhere' signal. Accept both the URL id and
+        // the canonical sessionState id — pi id-drift can make them differ.
+        const esid = msg.data?.sessionId;
+        if (esid && (esid === viewedSessionRef.current || esid === canonicalSessionIdRef.current)) {
+          setSessionState((prev) => ({ ...prev, externalActivity: !!msg.data.active }));
+        }
+        break;
+      }
       case 'extensions':
         setExtensions(msg.data || []);
         break;
@@ -218,6 +234,12 @@ export function DashboardPage({
   // arrived first (e.g. a switch-by-id response) are never overwritten.
   const streamHistoryRef = useRef<StreamMessage[]>([]);
   streamHistoryRef.current = streamHistory;
+  // Session whose chat content has already been rendered by the /history
+  // fetch. The switch-by-id response must not replace it — both are built
+  // from the same session file, and a second application (which re-adds
+  // the '— Loaded N messages —' banner and rebuilds the DOM) causes the
+  // shown -> cleared -> shown flash on every (re)load.
+  const historyRenderedForRef = useRef<string | null>(null);
   useEffect(() => {
     if (!authenticated || !urlSessionId) return;
     const sid = urlSessionId;
@@ -230,6 +252,7 @@ export function DashboardPage({
             && viewedSessionRef.current === sid
             && streamHistoryRef.current.length === 0) {
           setStreamHistory(data.data);
+          historyRenderedForRef.current = sid;
         }
         // A session opened mid-turn must show its in-flight tools immediately
         if (data.success && viewedSessionRef.current === sid) {
@@ -259,7 +282,10 @@ export function DashboardPage({
           .then((data) => {
             // Stale-response guard: only apply if still viewing this session
             if (viewedSessionRef.current === sid && data.success && data.data?.length > 0) setStreamHistory(data.data);
-            if (data.success && viewedSessionRef.current === sid) setActiveTools(data.activeTools ?? []);
+            if (data.success && viewedSessionRef.current === sid) {
+              setActiveTools(data.activeTools ?? []);
+              if (data.data?.length > 0) historyRenderedForRef.current = sid;
+            }
           })
           .catch(() => {});
       }
@@ -279,7 +305,13 @@ export function DashboardPage({
       // Stale-response guard: only apply if still viewing this session
       if (viewedSessionRef.current !== sid) return;
       if (data.success && data.streamHistory) {
-        setStreamHistory(data.streamHistory);
+        // Skip when the /history fetch already rendered this session's chat:
+        // the payloads are built from the same file; re-applying only adds
+        // the loaded-messages banner and rebuilds the DOM (visible flash).
+        if (historyRenderedForRef.current !== sid) {
+          setStreamHistory(data.streamHistory);
+          historyRenderedForRef.current = sid;
+        }
       }
       if (data.success && data.sessionState) {
         setSessionState(data.sessionState);
@@ -442,7 +474,7 @@ export function DashboardPage({
         </div>
         <div className={`chat-wrapper${sessionState.externalActivity ? ' chat-external-activity' : ''}`}>
           {activeView === 'chat' && (
-            <StreamCard messages={streamHistory} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} />
+            <StreamCard messages={streamHistory} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} />
           )}
           {activeView === 'settings' && (
             <SettingsCard sseConnected={sseConnected} />
