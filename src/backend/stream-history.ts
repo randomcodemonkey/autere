@@ -13,26 +13,9 @@ import { existsSync, readFileSync } from 'fs';
 
 // ── rm command detection ──
 
-export function isRmCommand(command?: string): boolean {
-  if (!command) return false;
-  const trimmed = command.trim();
-  return /^\S*\brm\b/.test(trimmed);
-}
-
-export function extractRmPaths(command: string): string[] {
-  const paths: string[] = [];
-  const parts = command.trim().split(/\s+/);
-  let seenRm = false;
-  for (const part of parts) {
-    if (!seenRm) {
-      if (/rm$/.test(part)) seenRm = true;
-      continue;
-    }
-    if (part.startsWith('-')) continue;
-    paths.push(part);
-  }
-  return paths;
-}
+export { isRmCommand, extractRmPaths, accumulateUsage, extractImages } from '../shared/format.js';
+import { isRmCommand, extractRmPaths, extractImages , formatToolArgs } from '../shared/format.js';
+import type { StreamImage } from '../shared/format.js';
 
 // ── Tool result formatting ──
 
@@ -40,6 +23,13 @@ export function extractRmPaths(command: string): string[] {
  * Shared formatting for tool results into stream history entries.
  * Used by both live tool_end events and history loading from session files.
  */
+export type { StreamImage } from '../shared/format.js';
+
+export interface ToolCallInfo {
+  name: string;
+  cmd: string;
+}
+
 export function formatToolResult(
   toolName: string,
   toolArgs: any,
@@ -48,7 +38,8 @@ export function formatToolResult(
   timestamp?: number,
   resultDetails?: any,
   rmSnapshots?: Record<string, string>,
-): { role: string; text: string; streaming: boolean; timestamp?: number; isError?: boolean } | null {
+  toolCall?: ToolCallInfo,
+): { role: string; text: string; streaming: boolean; timestamp?: number; isError?: boolean; images?: StreamImage[]; toolCall?: ToolCallInfo } | null {
   let text = '';
   let role: string;
 
@@ -98,11 +89,20 @@ export function formatToolResult(
     return null;
   }
 
+  const images = toolName === 'edit' ? [] : extractImages(resultContent);
   const prefix = isError ? `[${toolName} error]` : '';
   const displayText = prefix ? (text ? prefix + ' ' + text : prefix) : text;
-  if (!displayText) return null;
+  if (!displayText && images.length === 0) return null;
 
-  return { role, text: displayText, streaming: false, timestamp, ...(isError ? { isError: true } : {}) };
+  return {
+    role,
+    text: displayText,
+    streaming: false,
+    timestamp,
+    ...(isError ? { isError: true } : {}),
+    ...(images.length > 0 ? { images } : {}),
+    ...(toolCall ? { toolCall } : {}),
+  };
 }
 
 // ── Session file reading ──
@@ -173,6 +173,19 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
     }
   }
 
+  // Tool calls whose result never arrives (aborted, filtered empty) render
+  // as standalone toolCall entries — collect the ids that HAVE results.
+  const matchedCallIds = new Set<string>();
+  for (const { msg } of entries) {
+    if (msg.role === 'toolResult' && msg.toolCallId) matchedCallIds.add(msg.toolCallId);
+  }
+  const toolCallInfo = (id: string | undefined) => {
+    if (!id) return undefined;
+    const call = toolCallArgs.get(id);
+    if (!call) return undefined;
+    return { name: call.name, cmd: formatToolArgs(call.name, call.args) };
+  };
+
   return entries
     .flatMap(({ msg, entryTimestamp }: any) => {
       const role = msg.role || '';
@@ -181,9 +194,11 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
         : (entryTimestamp ? new Date(entryTimestamp).getTime() : undefined);
 
       if (role === 'toolResult') {
-        const call = msg.toolCallId ? toolCallArgs.get(msg.toolCallId) : undefined;
-        const toolArgs = call?.args || {};
-        const formatted = formatToolResult(msg.toolName, toolArgs, msg.content, msg.isError, timestamp, msg.details);
+        const toolArgs = (msg.toolCallId ? toolCallArgs.get(msg.toolCallId)?.args : undefined) || {};
+        const formatted = formatToolResult(
+          msg.toolName, toolArgs, msg.content, msg.isError, timestamp, msg.details,
+          undefined, toolCallInfo(msg.toolCallId),
+        );
         return formatted ? [formatted] : [];
       }
 
@@ -193,6 +208,21 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
       // message_end) — mirror that here.
       if (role === 'assistant' && Array.isArray(msg.content)) {
         const out: any[] = [];
+        // Standalone toolCall entries for calls whose result is missing
+        // (aborted mid-turn, empty result, etc.)
+        for (const block of msg.content) {
+          if (block.type === 'toolCall' && block.id && !matchedCallIds.has(block.id)) {
+            const info = toolCallInfo(block.id);
+            if (!info) continue;
+            out.push({
+              role: 'toolCall',
+              text: info.cmd,
+              streaming: false,
+              timestamp,
+              toolCall: info,
+            });
+          }
+        }
         const thinking = msg.content
           .filter((c: any) => c.type === 'thinking')
           .map((c: any) => c.thinking || '')
@@ -205,33 +235,28 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
           .filter((c: any) => c.type === 'text')
           .map((c: any) => c.text)
           .join('');
-        if (text) {
-          out.push({ role, text, streaming: false, timestamp });
+        const images = extractImages(msg.content);
+        if (text || images.length > 0) {
+          out.push({
+            role,
+            text,
+            streaming: false,
+            timestamp,
+            ...(images.length > 0 ? { images } : {}),
+          });
         }
         return out;
       }
 
       // model_change and other non-renderable roles have no text content
       const text = msg.content?.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('') || '';
-      return text ? [{ role, text, streaming: false, timestamp }] : [];
+      const images = extractImages(msg.content);
+      return text || images.length > 0
+        ? [{ role, text, streaming: false, timestamp, ...(images.length > 0 ? { images } : {}) }]
+        : [];
     });
 }
 
 // ── Deduplication ──
 
 export { dedupHistory } from '../shared/format.js';
-
-// ── Usage accumulation ──
-
-/** Accumulate a pi usage object into a sessionStats-shaped accumulator. */
-export function accumulateUsage(
-  stats: { tokens: Record<string, number>; cost: number },
-  usage: any,
-): void {
-  if (!usage) return;
-  if (usage.input) stats.tokens.input = (stats.tokens.input || 0) + usage.input;
-  if (usage.output) stats.tokens.output = (stats.tokens.output || 0) + usage.output;
-  if (usage.cacheRead) stats.tokens.cacheRead = (stats.tokens.cacheRead || 0) + usage.cacheRead;
-  if (usage.cacheWrite) stats.tokens.cacheWrite = (stats.tokens.cacheWrite || 0) + usage.cacheWrite;
-  if (usage.cost) stats.cost = (stats.cost || 0) + (usage.cost.total || 0);
-}

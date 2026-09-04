@@ -5,11 +5,13 @@
  * Handlers are registered by name and matched against discovered extensions.
  */
 
-import { existsSync } from 'fs';
+import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { ExtensionHandler, ExtensionInfo, ExtensionSection } from './types.js';
 import { PI_DIR } from './constants.js';
+import { PI_ENVS_DIR } from './pi-env.js';
+import { sanitizeUserName } from '../shared/format.js';
 import { getUserSetting } from './user-settings.js';
 import { log } from './logger.js';
 
@@ -153,7 +155,8 @@ const nineRouterHandler: ExtensionHandler = {
     if (baseUrl) {
       const apiKey = info.details.apiKey || getUserSetting('admin', 'nineRouterApiKey', '');
       const result = await checkNineRouterStatus(baseUrl, apiKey);
-      info.status = result.ok ? 'connected' : 'error';
+      info.status = result.ok ? 'ok' : 'error';
+      info.statusText = result.ok ? 'Connected' : 'Error';
       if (!result.ok) {
         info.details.connectionError = result.error;
       } else {
@@ -172,10 +175,165 @@ const nineRouterHandler: ExtensionHandler = {
         }
       }
     } else {
-      info.status = 'not configured';
+      info.status = 'neutral';
+      info.statusText = 'Not configured';
     }
 
     return info;
+  },
+};
+
+// ── pi-memory handler ──
+
+// pi-memory storage: $HOME/.pi/agent/memory by default; per-user pi envs get
+// PI_MEMORY_DIR=<env>/memory at spawn, so the admin env's memory lives there.
+// (Handler enrichment follows the 9router handler's admin-scoped pattern.)
+const MEMORY_DIR_CANDIDATES = [
+  join(PI_ENVS_DIR, sanitizeUserName('admin'), 'memory'), // per-user env (via PI_MEMORY_DIR)
+  join(PI_DIR, 'memory'), // master pi agent dir
+];
+
+function memoryDir(): string | null {
+  for (const dir of MEMORY_DIR_CANDIDATES) {
+    if (existsSync(dir)) return dir;
+  }
+  return null;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+const memoryHandler: ExtensionHandler = {
+  name: 'pi-memory',
+  displayName: 'Memory',
+
+  async enrich(info: ExtensionInfo): Promise<ExtensionInfo> {
+    // pi-memory is config-less: its state is the memory directory
+    // (MEMORY.md + daily/ logs + recovery/ records). Surface that as
+    // generic sections for the details modal.
+    const dir = memoryDir();
+    if (!dir) {
+      info.status = 'neutral';
+      info.statusText = 'Not configured';
+      return info;
+    }
+    info.status = 'ok';
+    info.statusText = 'Available';
+
+    const memoryMd = join(dir, 'MEMORY.md');
+    const dailyDir = join(dir, 'daily');
+    const recoveryDir = join(dir, 'recovery');
+
+    const statFile = (path: string): { size?: number; modified?: Date } => {
+      try {
+        const st = statSync(path);
+        return { size: st.size, modified: st.mtime };
+      } catch {
+        return {};
+      }
+    };
+
+    const overview: Record<string, any> = {};
+    try {
+      const st = statSync(memoryMd);
+      overview['Memory file'] = `${formatBytes(st.size)}, modified ${st.mtime.toLocaleString()}`;
+    } catch {
+      overview['Memory file'] = 'not created yet';
+    }
+    try {
+      overview['Daily logs'] = readdirSync(dailyDir).filter((f) => f.endsWith('.md')).length;
+    } catch {
+      overview['Daily logs'] = 0;
+    }
+    try {
+      overview['Recovery records'] = readdirSync(recoveryDir).length;
+    } catch {
+      overview['Recovery records'] = 0;
+    }
+
+    const sections: ExtensionSection[] = [{ header: 'Overview', items: [overview] }];
+
+    // Recent daily logs (newest first, max 10)
+    try {
+      const logs = readdirSync(dailyDir)
+        .filter((f) => f.endsWith('.md'))
+        .sort()
+        .reverse()
+        .slice(0, 10);
+      if (logs.length > 0) {
+        sections.push({
+          header: 'Recent Daily Logs',
+          items: logs.map((f) => {
+            const { size, modified } = statFile(join(dailyDir, f));
+            return {
+              'Date': f.replace(/\.md$/, ''),
+              'Size': size != null ? formatBytes(size) : '-',
+              'Modified': modified ? modified.toLocaleString() : '-',
+            };
+          }),
+        });
+      }
+    } catch {
+      // no daily dir yet
+    }
+
+    info.sections = sections;
+    return info;
+  },
+};
+
+// ── pi-images handler ──
+
+const piImagesHandler: ExtensionHandler = {
+  name: 'pi-images',
+  displayName: 'Images',
+  configPaths: [NINE_ROUTER_CONFIG_PATH],
+
+  async enrich(info: ExtensionInfo): Promise<ExtensionInfo> {
+    const { getRouterConfig, fetchImageModels } = await import('./image-models.js');
+    const config = getRouterConfig();
+    info.configPath = NINE_ROUTER_CONFIG_PATH;
+    info.hasConfig = existsSync(NINE_ROUTER_CONFIG_PATH);
+
+    const selectedModel = getUserSetting('admin', 'imageModel', '');
+    if (selectedModel) info.details.selectedModel = selectedModel;
+
+    if (!config.baseUrl) {
+      info.status = 'neutral';
+      info.statusText = 'Not configured';
+      return info;
+    }
+
+    try {
+      const models = await fetchImageModels(config);
+      info.details.imageModelCount = models.length;
+      if (models.length === 0) {
+        info.status = 'error';
+        info.statusText = 'Error';
+        info.details.connectionError = 'No image-capable models (capabilities.imageOutput) found on 9router';
+        return info;
+      }
+      info.status = 'ok';
+      info.statusText = 'Available';
+      info.sections = [
+        {
+          header: 'Available Image Models',
+          items: models.map((m) => ({
+            'Model': m.id,
+            'Selected': selectedModel === m.id ? 'yes' : '',
+          })),
+        },
+      ];
+      return info;
+    } catch (err: any) {
+      info.status = 'error';
+      info.statusText = 'Error';
+      info.details.connectionError = err?.name === 'AbortError' ? 'Connection timeout' : (err?.message || String(err));
+      return info;
+    }
   },
 };
 
@@ -189,6 +347,8 @@ function register(handler: ExtensionHandler) {
 
 // Register built-in handlers
 register(nineRouterHandler);
+register(memoryHandler);
+register(piImagesHandler);
 
 /**
  * Get a handler for the given extension name, if one exists.

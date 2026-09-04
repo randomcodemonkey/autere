@@ -387,13 +387,9 @@ describe('Dashboard Loading', () => {
       // Should eventually navigate to a new session (loading page may be too fast to catch)
       cy.url({ timeout: 5000 }).should('match', /\/session\/[^/]+$/);
 
-      // Session badge must show the NEW session id immediately (no name yet,
-      // so it displays the first 6 chars of the id + ellipsis) — not the
-      // previous session's name/id.
-      cy.url().then((u) => {
-        const newId = u.split('/').pop() as string;
-        cy.get('.session-badge-text').should('have.text', newId.slice(0, 6) + '…');
-      });
+      // Session badge must show the NEW session's auto-name ("[ui] - <locale date+time>")
+      // immediately — not the previous session's name/id.
+      cy.get('.session-badge-text').should('contain', '[ui] -');
     });
 
   });

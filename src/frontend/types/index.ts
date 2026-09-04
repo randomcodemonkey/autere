@@ -35,12 +35,22 @@ export interface SessionStats {
   contextUsage: ContextUsage | null;
 }
 
+export interface StreamImage {
+  mimeType: string;
+  data: string; // base64
+}
+
 export interface StreamMessage {
   role: string;
   text: string;
   streaming?: boolean;
   timestamp?: number;
   isError?: boolean;
+  images?: StreamImage[];
+  /** Present on toolResult/toolCall entries — the connected tool call */
+  toolCall?: { name: string; cmd: string };
+  /** Live only: id used to replace a streaming toolCall with its result */
+  toolCallId?: string;
 }
 
 export interface ActiveTool {
@@ -69,6 +79,7 @@ export interface ExtensionInfo {
   configPath: string;
   hasConfig: boolean;
   status: string;
+  statusText?: string;
   details: Record<string, any>;
   sections?: ExtensionSection[];
 }
@@ -83,7 +94,7 @@ export interface AvailableModel {
 export interface SettingField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'toggle' | 'select' | 'list';
+  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages';
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;
@@ -141,6 +152,8 @@ export interface ScheduledTask {
   /** 5-field cron expression (minute hour dom month dow) */
   schedule: string;
   prompt: string;
+  /** Optional model override for this task's runs */
+  model?: string;
   seedScript?: string;
   resultScript?: string;
   enabled: boolean;
@@ -166,5 +179,6 @@ export interface TaskRunLog extends TaskRunRecord {
   seedOutput?: string;
   agentResult?: string;
   resultScriptOutput?: string;
-  log: string[];
+  /** Progress lines — t is UTC epoch ms, formatted in the user's locale/tz on render */
+  log: Array<{ t: number; line: string }>;
 }

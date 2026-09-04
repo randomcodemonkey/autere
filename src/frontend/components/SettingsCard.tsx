@@ -14,6 +14,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [availablePackages, setAvailablePackages] = useState<string[]>([]);
   const prevSseConnectedRef = useRef(sseConnected);
 
   // Reset saved state when SSE reconnects after backend restart
@@ -28,7 +29,9 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
     Promise.all([
       fetch(url('/api/settings/schema')).then(r => r.json()),
       fetch(url('/api/settings')).then(r => r.json()),
-    ]).then(([schemaRes, settingsRes]) => {
+      fetch(url('/api/extensions/packages')).then(r => r.json()).catch(() => null),
+    ]).then(([schemaRes, settingsRes, pkgsRes]) => {
+      if (pkgsRes?.success) setAvailablePackages(pkgsRes.data.available || []);
       if (schemaRes.success) setSchema(schemaRes.data);
       if (settingsRes.success) setSettings(settingsRes.data);
       setLoading(false);
@@ -79,6 +82,62 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
             </label>
           </div>
           {field.description && <div className="settings-description">{field.description}</div>}
+        </div>
+      );
+    }
+
+    if (field.type === 'select') {
+      return (
+        <div key={field.key} className="settings-field">
+          <div className="settings-field-header">
+            <label className="settings-label">{field.label}</label>
+          </div>
+          {field.description && <div className="settings-description">{field.description}</div>}
+          <select
+            className="settings-input"
+            value={value as string}
+            onChange={(e) => handleChange(field.key, e.target.value)}
+          >
+            <option value="">Auto (first available)</option>
+            {(field.options || []).map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
+    if (field.type === 'packages') {
+      const enabled: string[] = Array.isArray(value) ? value : [];
+      const custom = enabled.filter((pkg) => !availablePackages.includes(pkg));
+      const togglePkg = (pkg: string, on: boolean) => {
+        handleChange(field.key, on ? [...enabled, pkg] : enabled.filter((p) => p !== pkg));
+      };
+      return (
+        <div key={field.key} className="settings-field">
+          <label className="settings-label">{field.label}</label>
+          {field.description && <div className="settings-description">{field.description}</div>}
+          <div className="settings-packages">
+            {availablePackages.length === 0 && custom.length === 0 && (
+              <div className="settings-description">No extensions installed in the master pi environment</div>
+            )}
+            {availablePackages.map((pkg) => (
+              <label key={pkg} className="settings-package-item">
+                <input
+                  type="checkbox"
+                  checked={enabled.includes(pkg)}
+                  onChange={(e) => togglePkg(pkg, e.target.checked)}
+                />
+                <span className="settings-package-name">{pkg}</span>
+              </label>
+            ))}
+            {custom.map((pkg) => (
+              <label key={pkg} className="settings-package-item">
+                <input type="checkbox" checked onChange={() => togglePkg(pkg, false)} />
+                <span className="settings-package-name">{pkg}</span>
+              </label>
+            ))}
+          </div>
         </div>
       );
     }

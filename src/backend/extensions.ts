@@ -9,7 +9,7 @@
  * any registered extension handler for custom status enrichment.
  */
 
-import { readFileSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import type { ExtensionInfo, ExtensionHandler } from './types.js';
 import { PI_DIR, NPM_EXTENSIONS_DIR, EXTENSIONS_DIR } from './constants.js';
@@ -92,7 +92,10 @@ function discoverLocalExtensions(): DiscoveredExtension[] {
   try {
     const entries = readdirSync(EXTENSIONS_DIR, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isDirectory()) {
+      // Follow symlinks — extensions may be installed as links to a source dir
+      const isDir = entry.isDirectory() ||
+        (entry.isSymbolicLink() && (() => { try { return statSync(join(EXTENSIONS_DIR, entry.name)).isDirectory(); } catch { return false; } })());
+      if (isDir) {
         const extDir = join(EXTENSIONS_DIR, entry.name);
         // Check for common extension entry points
         const entryPoints = ['index.ts', 'index.js', `${entry.name}.ts`, `${entry.name}.js`];
@@ -210,7 +213,11 @@ export async function readExtensions(): Promise<void> {
       displayName: ext.displayName,
       configPath,
       hasConfig: configPath !== null,
-      status: configPath ? 'loaded' : 'not found',
+      // 'no config' = the extension has no config file (perfectly normal —
+      // e.g. pi-memory keeps its data in a directory, not a config). Not an
+      // error state; handlers may still override status/statusText.
+      status: 'ok',
+      statusText: configPath ? 'Loaded' : 'Not configured',
       details: config,
     };
 
@@ -222,6 +229,7 @@ export async function readExtensions(): Promise<void> {
       } catch (err) {
         log.extensions.error(`Extension handler error for ${ext.id}:`, err);
         info.status = 'error';
+        info.statusText = 'Error';
       }
     }
 

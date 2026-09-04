@@ -20,17 +20,13 @@ import { existsSync, mkdirSync, readdirSync, copyFileSync, symlinkSync, lstatSyn
 import { join } from 'path';
 import { PI_DIR, AUTERE_DIR } from './constants.js';
 import { log } from './logger.js';
+import { sanitizeUserName } from '../shared/format.js';
 
 /** Directories to share via symlink (heavy, read-mostly) */
 const SHARED_DIRS = ['npm', 'extensions', 'skills', 'themes', 'bin', 'tmp'];
 
 /** Files copied into each user environment on first use */
 const SEED_FILES = ['settings.json', 'auth.json', 'models-store.json'];
-
-/** Sanitize a user name for filesystem use */
-function safeUserName(user: string): string {
-  return user.replace(/[^a-zA-Z0-9._-]/g, '_');
-}
 
 /** Directory of per-user pi environments.
  *  AUTERE_PI_ENVS_DIR overrides the location — used by the e2e suite to
@@ -42,7 +38,7 @@ export const PI_ENVS_DIR = process.env.AUTERE_PI_ENVS_DIR
 
 /** Get the pi agent dir for a user (may not exist yet) */
 export function getPiEnvDir(user: string): string {
-  return join(PI_ENVS_DIR, safeUserName(user));
+  return join(PI_ENVS_DIR, sanitizeUserName(user));
 }
 
 /** True if path exists (including broken symlinks) */

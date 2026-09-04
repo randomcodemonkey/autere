@@ -14,7 +14,7 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
 
   // Extensions with a known runtime status — surfaced as counts in the
   // card title (matching the Tools card's badge style).
-  const connectedCount = extensions.filter((e) => e.status === 'connected').length;
+  const availableCount = extensions.filter((e) => e.status === 'available').length;
   const errorCount = extensions.filter((e) => e.status === 'error').length;
 
   const openModal = (idx: number) => {
@@ -48,8 +48,8 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
         <div className="card-header" onClick={toggle}>
           <div className="card-title">
             Extensions
-            {collapsed && connectedCount > 0 && (
-              <span className="badge success" title={`${connectedCount} connected`}>{connectedCount}</span>
+            {collapsed && availableCount > 0 && (
+              <span className="badge success" title={`${availableCount} available`}>${availableCount}</span>
             )}
             {collapsed && errorCount > 0 && (
               <span className="badge danger" title={`${errorCount} in error`}>{errorCount}</span>
@@ -66,12 +66,15 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
             extensions.map((ext, i) => {
               const hasDetails = (ext.hasConfig && Object.keys(ext.details || {}).length > 0)
                 || (ext.sections && ext.sections.length > 0);
-              const dotClass = ext.status === 'connected' ? 'dot-green'
+              // Backend decides status (ok/error/neutral) and text — we
+              // only map the machine state to presentation classes.
+              const dotClass = ext.status === 'ok' ? 'dot-green'
                 : ext.status === 'error' ? 'dot-red'
                 : 'dot-gray';
-              const statusClass = ext.status === 'connected' ? 'success'
+              const statusClass = ext.status === 'ok' ? 'success'
                 : ext.status === 'error' ? 'danger'
                 : '';
+              const statusText = ext.statusText || ext.status;
               return (
                 <div key={ext.name} className="ext-item">
                   <div
@@ -81,7 +84,7 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
                     <span className={`connection-dot ${dotClass}`} />
                     <span className="ext-name">{ext.displayName || ext.name}</span>
                     <span className={`badge ${statusClass}`}>
-                      {ext.status}
+                      {statusText}
                     </span>
                     {hasDetails && <span className="ext-chevron">❯</span>}
                   </div>

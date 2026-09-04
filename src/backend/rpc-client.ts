@@ -7,6 +7,7 @@
 
 import { spawn, ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import { join } from 'node:path';
 import type {
   RpcCommand,
   RpcResponse,
@@ -140,6 +141,11 @@ export class MonitorRpcClient {
       env: {
         ...process.env,
         ...(this.options.agentDir ? { PI_CODING_AGENT_DIR: this.options.agentDir } : {}),
+        // pi-memory resolves its storage as $HOME/.pi/agent/memory (or
+        // PI_MEMORY_DIR) and ignores PI_CODING_AGENT_DIR — without this every
+        // user env would share the master agent's memory. Keep it per-user,
+        // inside the env dir.
+        ...(this.options.agentDir ? { PI_MEMORY_DIR: join(this.options.agentDir, 'memory') } : {}),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true, // create a new process group so we can kill all children

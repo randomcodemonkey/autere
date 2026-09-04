@@ -4,6 +4,12 @@ import { url } from '../base-path';
 import { validateCron, describeCron } from '../../shared/cron';
 import type { ScheduledTask, TaskRunRecord, TaskRunLog } from '../types';
 
+interface TaskModelOption {
+  provider: string;
+  id: string;
+  name?: string;
+}
+
 interface ScheduledTasksCardProps {
   sseConnected: boolean;
 }
@@ -16,6 +22,7 @@ interface TaskFormState {
   seedScript: string;
   resultScript: string;
   enabled: boolean;
+  model: string; // '' = user's pi default
 }
 
 const EMPTY_FORM: TaskFormState = {
@@ -26,6 +33,7 @@ const EMPTY_FORM: TaskFormState = {
   seedScript: '',
   resultScript: '',
   enabled: true,
+  model: '',
 };
 
 function formatTime(ts?: number): string {
@@ -50,6 +58,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [viewLog, setViewLog] = useState<TaskRunLog | null>(null);
   const [runningTaskIds, setRunningTaskIds] = useState<Set<string>>(new Set());
+  const [models, setModels] = useState<TaskModelOption[]>([]);
 
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -82,6 +91,16 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
     };
   }, [refresh]);
 
+  // Model options for the per-task model selector
+  useEffect(() => {
+    fetch(url('/api/models'))
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.data)) setModels(data.data);
+      })
+      .catch(() => {});
+  }, [sseConnected]);
+
   const handleNew = useCallback(() => {
     setError(null);
     setForm({ ...EMPTY_FORM });
@@ -97,6 +116,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
       seedScript: task.seedScript || '',
       resultScript: task.resultScript || '',
       enabled: task.enabled,
+      model: task.model || '',
     });
   }, []);
 
@@ -129,6 +149,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
           name: form.name,
           schedule: form.schedule,
           prompt: form.prompt,
+          model: form.model || undefined,
           seedScript: form.seedScript,
           resultScript: form.resultScript,
           enabled: form.enabled,
@@ -241,6 +262,24 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
             />
           </div>
           <div className="settings-field">
+            <label className="settings-label">Model</label>
+            <select
+              className="settings-input scheduled-input-model"
+              value={form.model}
+              onChange={(e) => setForm({ ...form, model: e.target.value })}
+            >
+              <option value="">Default (user's pi setting)</option>
+              {models.map((m) => (
+                <option key={`${m.provider}/${m.id}`} value={`${m.provider}/${m.id}`}>
+                  {m.name || m.id} ({m.provider})
+                </option>
+              ))}
+            </select>
+            <div className="settings-description">
+              Model used for this task's runs. When unset, your pi default model applies.
+            </div>
+          </div>
+          <div className="settings-field">
             <label className="settings-label">Seed script (optional)</label>
             <textarea
               className="settings-input scheduled-input-seed"
@@ -337,6 +376,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
                     <button className="btn btn-danger scheduled-delete-btn" onClick={() => handleDelete(task)}>Delete</button>
                   </div>
                 </div>
+                {task.model && <div className="scheduled-task-detail">Model: {task.model}</div>}
                 {task.seedScript && <div className="scheduled-task-detail">Seed script: {task.seedScript.slice(0, 80)}</div>}
                 {task.resultScript && <div className="scheduled-task-detail">Result script: {task.resultScript.slice(0, 80)}</div>}
                 {expanded && (
@@ -395,7 +435,9 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
               )}
               <div className="sched-log-section">
                 <div className="sched-log-label">Log</div>
-                <pre className="sched-log-pre sched-log-lines">{viewLog.log.join('\n')}</pre>
+                <pre className="sched-log-pre sched-log-lines">
+                  {viewLog.log.map((entry, i) => `${formatTime(entry.t)}  ${entry.line}`).join('\n')}
+                </pre>
               </div>
             </div>
           </>

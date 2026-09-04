@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { StreamEntry, SessionUsageResult } from './types.js';
 import { getUserSetting } from './user-settings.js';
 import { log } from './logger.js';
+import { filterModelsByPatterns } from '../shared/format.js';
 import { buildStreamHistoryFromMessages, readAllMessageEntries } from './stream-history.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -18,12 +19,7 @@ export function getEnabledModelPatterns(): string[] {
 
 /** Filter models to only those matching the enabled/scoped models list */
 export function filterScopedModels(models: any[]): any[] {
-  const enabled = getEnabledModelPatterns();
-  if (enabled.length === 0) return models; // no scope configured, show all
-  return models.filter(m => {
-    const ref = `${m.provider}/${m.id}`;
-    return enabled.some(pattern => ref === pattern || ref.endsWith('/' + pattern));
-  });
+  return filterModelsByPatterns(models, getEnabledModelPatterns());
 }
 
 // ── JSON response ──
@@ -95,6 +91,10 @@ export function readSessionUsage(sessionFile: string): SessionUsageResult {
   } catch (err) { log.utils.error('Failed to read session usage:', err); }
   return stats;
 }
+
+// Session auto-naming helpers live in shared/format.ts (pure, browser-safe —
+// component tests import them from there); re-exported for backend callers.
+export { sessionDateLabel, sessionLocaleStamp, autoSessionName } from '../shared/format.js';
 
 export function readSessionHistory(sessionFile: string, limit: number = 30): StreamEntry[] {
   try {

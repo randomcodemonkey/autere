@@ -16,21 +16,27 @@ interface SessionModalProps {
   onNewSession: () => void;
   onCompact: () => void;
   onSwitchSession: (sessionId: string) => void;
+  /** True while a switch request is in flight — blocks further actions */
+  switching?: boolean;
 }
 
 type SearchedSession = SessionSearchResult;
 
-export function formatSessionTime(ts: number): string {
+export function formatSessionTime(ts: number, locale?: string): string {
   if (!ts) return '';
-  const d = new Date(ts);
-  const now = new Date();
-  const diffMin = Math.floor((now.getTime() - d.getTime()) / 60000);
-  if (diffMin < 1) return 'just now';
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.floor(diffHr / 24);
-  return `${diffDay}d ago`;
+  // Locale-aware relative age, e.g. "now" / "5m ago" (en) / "5 min sitten" (fi-FI).
+  // Uses Intl narrow style which keeps the compact "5m ago" look for en.
+  try {
+    const diffMin = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
+    const rtf = new Intl.RelativeTimeFormat(locale || undefined, { numeric: 'auto', style: 'narrow' });
+    if (diffMin < 1) return rtf.format(0, 'second');
+    if (diffMin < 60) return rtf.format(-diffMin, 'minute');
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return rtf.format(-diffHr, 'hour');
+    return rtf.format(-Math.floor(diffHr / 24), 'day');
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -43,12 +49,14 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   open, onClose, statusType, sessionId, sessionName,
   compacting, isStreaming, isActive,
   onAbort, onNewSession, onCompact, onSwitchSession,
+  switching = false,
 }) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchedSession[]>([]);
   const [searching, setSearching] = useState(false);
   const [nameInput, setNameInput] = useState(sessionName || '');
   const [nameSaving, setNameSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const searchSeq = useRef(0);
 
   // Reset per open
@@ -56,6 +64,7 @@ export const SessionModal: React.FC<SessionModalProps> = ({
     if (open) {
       setQuery('');
       setNameInput(sessionName || '');
+      setLoaded(false);
     }
   }, [open, sessionName]);
 
@@ -74,6 +83,7 @@ export const SessionModal: React.FC<SessionModalProps> = ({
         .then((data) => {
           if (seq === searchSeq.current && data.success) {
             setResults(data.data || []);
+            setLoaded(true);
           }
         })
         .catch(() => {})
@@ -154,7 +164,7 @@ export const SessionModal: React.FC<SessionModalProps> = ({
           <button className="btn btn-compact" onClick={onCompact} disabled={compactLoading || compacting || statusType !== 'connected'}>
             {compacting ? '⏳ Compacting…' : compactLoading ? '⏳ Starting…' : '🗜 Compact Context'}
           </button>
-          <button className="btn btn-primary" onClick={onNewSession} disabled={statusType === 'disconnected' || isActive}>
+          <button className="btn btn-primary" onClick={onNewSession} disabled={switching || statusType === 'disconnected' || isActive}>
             ✨ New Session
           </button>
         </div>
@@ -168,8 +178,11 @@ export const SessionModal: React.FC<SessionModalProps> = ({
           autoFocus
         />
 
+        {switching && (
+          <div className="session-switching">Switching session…</div>
+        )}
         {results.length === 0 ? (
-          <div className="session-empty">{searching ? 'Searching…' : (query.trim().length >= 2 ? 'No matching sessions' : 'No sessions found')}</div>
+          <div className="session-empty">{(searching || !loaded) ? (loaded || searching ? 'Searching…' : 'Loading sessions…') : (query.trim().length >= 2 ? 'No matching sessions' : 'No sessions found')}</div>
         ) : (
           <div className="session-list">
             {results.map((session) => {

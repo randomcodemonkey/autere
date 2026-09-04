@@ -12,7 +12,7 @@ import { fileURLToPath } from 'url';
 import { ProcessManager } from './process-manager.js';
 import { getUser, getUserRole, hasRole, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getAuthPassword, getTokenFromRequest, setLastSession, isRegisteredUser } from './auth.js';
 import { readExtensions } from './extensions.js';
-import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filterScopedModels } from './utils.js';
+import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filterScopedModels, autoSessionName } from './utils.js';
 import { extensionsState } from './state.js';
 import { log } from './logger.js';
 import type { SessionInfo } from './types.js';
@@ -30,8 +30,7 @@ function activeToolsSnapshot(session: { state: { activeTools: Map<string, any> }
 }
 
 import { findSession } from './sessions.js';
-import { dedupHistory } from './stream-history.js';
-import { getUserSetting, getAllUserSettings, saveUserSettings, getUserSettingsSchema } from './user-settings.js';
+import { getUserSetting, getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages } from './user-settings.js';
 import {
   Scheduler,
   listTasks, getTask, saveTask, deleteTask, validateTaskInput,
@@ -203,6 +202,34 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     const { sessionState, sessionStats, activeTools, recentTools,
             availableModels } = session.state;
     const rpc = session.rpc;
+
+    // ── Bootstrap payload builder ──
+    // Shared by GET /api/bootstrap and the switch-by-id response: everything
+    // the UI needs to (re)render for a session in one shape.
+    const buildBootstrapData = (targetSessionId?: string | null) => {
+      const target =
+        (targetSessionId && findSession(targetSessionId, session.state.availableSessions)) ||
+        findSession(sessionState.sessionId, session.state.availableSessions) ||
+        null;
+      const historySessionId = target?.id ?? sessionState.sessionId;
+      let streamHistory: ReturnType<typeof readSessionHistory> = [];
+      if (target?.sessionFile && existsSync(target.sessionFile)) {
+        try { streamHistory = readSessionHistory(target.sessionFile, session.historyLimit); } catch (err) {
+          log.http.error('bootstrap: failed to read session history:', err);
+        }
+      }
+      return {
+        sessionState: { ...sessionState },
+        sessionStats: { ...sessionStats },
+        activeTools: activeToolsSnapshot(session),
+        recentTools: [...recentTools],
+        streamHistory,
+        historySessionId,
+        availableSessions: session.refreshSessions(),
+        availableModels,
+        extensions: extensionsState,
+      };
+    };
 
     // ── API endpoints ──
 
@@ -401,6 +428,16 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       return;
     }
 
+    // ── Bootstrap: one request that returns everything the UI needs at
+    // (re)load time — session state, stats, tools, chat history for the
+    // requested (or current) session, sessions list, models, extensions.
+    // The SSE stream carries LIVE events only; no connect-time replays.
+    if (url.pathname === '/api/bootstrap' && req.method === 'GET') {
+      const requested = url.searchParams.get('sessionId');
+      sendJSON(res, { success: true, data: buildBootstrapData(requested) });
+      return;
+    }
+
     const historyMatch = url.pathname.match(/^\/api\/sessions\/([\w-]+)\/history$/);
     if (historyMatch && req.method === 'GET') {
       const sessionId = historyMatch[1];
@@ -445,6 +482,19 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
             return;
           }
 
+          // pi refuses to load a session whose stored working directory no
+          // longer exists (MissingSessionCwdError). Reject BEFORE mutating any
+          // state — otherwise the backend would report the new session while
+          // pi silently stayed on the old one, leaving the UI stuck until a
+          // resync. The response must go out before pi is touched.
+          if (sess.cwd && !existsSync(sess.cwd)) {
+            sendJSON(res, {
+              success: false,
+              error: `Cannot switch: session's working directory no longer exists (${sess.cwd})`,
+            }, 400);
+            return;
+          }
+
           // Read clientId from cookie to update this client's session tracking
           const cookies = parseCookies(req.headers.cookie || '');
           const clientId = cookies['autere-client-id'];
@@ -459,15 +509,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
             sessionState.sessionId === sessionId ||
             (Boolean(sessionState.sessionFile) && sessionState.sessionFile === sess.sessionFile);
 
-          const history = readSessionHistory(sess.sessionFile, 30);
-          const loadedHistory = [];
-          if (history.length > 0) {
-            loadedHistory.push({ role: 'system', text: `— Loaded ${history.length} messages from session —`, streaming: false, timestamp: Date.now() });
-            loadedHistory.push(...history);
-            session.state.historyLoadedSessionId = sess.id;
-          } else {
-            loadedHistory.push({ role: 'system', text: '— Switching session —', streaming: false, timestamp: Date.now() });
-          }
+          const history = readSessionHistory(sess.sessionFile, session.historyLimit);
+          session.setHistoryFor(sess.id, history);
 
           // Update shared state so live streaming goes to the right place
           session.state.currentStreamText = '';
@@ -478,7 +521,6 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           sessionState.compacting = false;
           sessionState.steerPending = 0;
           sessionState.followUpPending = 0;
-          session.setHistoryFor(sess.id, loadedHistory);
           // Pi is moving to this session — it's no longer "external" activity
           session.clearExternalActivity(sess.id);
 
@@ -489,7 +531,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           sessionStats.cost = 0;
           sessionStats.contextUsage = null;
 
-          // Tell pi to switch session
+          // Tell pi to switch session (synchronous — the response reflects
+          // pi's real state; a failure here must not leave state mutated)
           if (!alreadyActive) {
             await rpc.switchSession(sess.sessionFile);
             setLastSession(token, sess.sessionFile);
@@ -502,13 +545,15 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
             if (rpcStats.cost) sessionStats.cost = rpcStats.cost;
           } catch (err) { log.http.error('Post-switch stats failed:', err); }
 
-          // Return history in the response so the requesting client gets it
-          // directly. Other clients keep their own session tracking unchanged.
           log.http.forSession(sessionState.sessionId).info(`switch-by-id done: alreadyActive=${alreadyActive}`);
-          // alreadyActive: pi was already in this session, so its in-flight
-          // tools belong to it. Switching to a different session abandons
-          // (cancels) the previous turn — no tools carry over.
-          sendJSON(res, { success: true, streamHistory: dedupHistory(loadedHistory).slice(-50), sessionState: { ...sessionState }, sessionStats: { ...sessionStats }, activeTools: alreadyActive ? activeToolsSnapshot(session) : [] });
+          // Same payload shape as GET /api/bootstrap — the requesting client
+          // applies it with the exact same code path. alreadyActive: pi was
+          // already in this session, so its in-flight tools belong to it.
+          // Switching to a different session abandons (cancels) the previous
+          // turn — no tools carry over.
+          const bootstrapData = buildBootstrapData(sess.id);
+          if (!alreadyActive) bootstrapData.activeTools = [];
+          sendJSON(res, { success: true, data: bootstrapData });
         }
       } catch (err) {
         sendJSON(res, { success: false, error: `Failed to switch session: ${err}` }, 500);
@@ -540,6 +585,40 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         const state = await rpc.getState();
         if (!state.sessionId || !state.sessionFile) {
           throw new Error('pi created session but did not return a sessionId or sessionFile');
+        }
+
+        // Auto-name UI-created sessions. The NAME IS GENERATED IN THE FRONTEND
+        // (browser locale + IANA timezone via Intl) and sent in the request
+        // body — the backend never formats times for display. Locale/timeZone
+        // are persisted per user so spawn-time auto-naming (user-session.ts)
+        // and task-run naming (scheduler.ts) can target the user's zone.
+        if (!state.sessionName) {
+          let sessionName: string | undefined;
+          try {
+            const body = await readBody(req);
+            if (body && typeof body.sessionName === 'string' && body.sessionName.trim()) {
+              sessionName = body.sessionName.trim();
+            }
+            const locale = body && typeof body.locale === 'string' ? body.locale.trim() : '';
+            const timeZone = body && typeof body.timeZone === 'string' ? body.timeZone.trim() : '';
+            if (locale) setUserSetting(user, 'locale', locale);
+            if (timeZone) setUserSetting(user, 'timeZone', timeZone);
+          } catch {
+            // Empty or invalid body (e.g. tests posting without JSON) — fallback naming applies
+          }
+          if (!sessionName) {
+            // Fallback: use the user's persisted locale/timeZone (Intl does the tz conversion)
+            sessionName = autoSessionName('[ui]', {
+              locale: getUserSetting(user, 'locale', '') || undefined,
+              timeZone: getUserSetting(user, 'timeZone', '') || undefined,
+            });
+          }
+          try {
+            await rpc.setSessionName(sessionName);
+            state.sessionName = sessionName;
+          } catch (err) {
+            log.http.error('Failed to auto-name new session:', err);
+          }
         }
 
         // All clients must follow pi to the new session — the pi process
@@ -631,8 +710,19 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
 
     // ── User settings ──
 
+    if (url.pathname === '/api/extensions/packages' && req.method === 'GET') {
+      sendJSON(res, {
+        success: true,
+        data: {
+          available: getAvailablePackages(),
+          enabled: getEnabledPackages(user),
+        },
+      });
+      return;
+    }
+
     if (url.pathname === '/api/settings/schema' && req.method === 'GET') {
-      const schema = getUserSettingsSchema(user);
+      const schema = await getUserSettingsSchema(user);
       sendJSON(res, { success: true, data: schema });
       return;
     }
@@ -682,6 +772,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           name: input.name.trim(),
           schedule: input.schedule.trim(),
           prompt: input.prompt,
+          model: typeof input.model === 'string' && input.model.trim() ? input.model.trim() : undefined,
           seedScript: typeof input.seedScript === 'string' && input.seedScript.trim() ? input.seedScript : undefined,
           resultScript: typeof input.resultScript === 'string' && input.resultScript.trim() ? input.resultScript : undefined,
           enabled: input.enabled !== false,
@@ -710,6 +801,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           name: input.name.trim(),
           schedule: input.schedule.trim(),
           prompt: input.prompt,
+          model: typeof input.model === 'string' && input.model.trim() ? input.model.trim() : undefined,
           seedScript: typeof input.seedScript === 'string' && input.seedScript.trim() ? input.seedScript : undefined,
           resultScript: typeof input.resultScript === 'string' && input.resultScript.trim() ? input.resultScript : undefined,
           enabled: input.enabled !== false,
@@ -808,43 +900,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       session.sseClients.set(res, sessionState.sessionId);
       session.registerClientId(clientId, res);
 
-      // Send initial state to newly connected client.
-      // The client's tracked session may differ from pi's current one — the
-      // frontend corrects the view via switch-by-id right after connecting.
-      // For the tracked session we REPLAY history from its file: on SSE
-      // reconnect (e.g. a device waking from sleep) this re-syncs the chat
-      // with messages sent while the client was away, without any client
-      // action. Tagged with sessionId so the frontend's cross-session guard
-      // applies.
-      res.write(`data: ${JSON.stringify({ type: 'status', data: sessionState })}\n\n`);
-      rpc.getSessionStats().then(stats => {
-        if (stats.contextUsage) sessionStats.contextUsage = stats.contextUsage;
-        if (stats.cost) sessionStats.cost = stats.cost;
-        res.write(`data: ${JSON.stringify({ type: 'stats', data: sessionStats })}\n\n`);
-      }).catch(() => {
-        res.write(`data: ${JSON.stringify({ type: 'stats', data: sessionStats })}\n\n`);
-      });
-      {
-        const viewed = findSession(sessionState.sessionId, session.state.availableSessions);
-        if (viewed?.sessionFile && existsSync(viewed.sessionFile)) {
-          try {
-            const replay = readSessionHistory(viewed.sessionFile, session.historyLimit);
-            res.write(`data: ${JSON.stringify({ type: 'stream_history', sessionId: viewed.id, data: replay })}\n\n`);
-          } catch (err) {
-            log.http.error('SSE connect history replay failed:', err);
-          }
-        }
-      }
-      // Initial tool-state sync: id=null is the (re)connect signal. It carries
-      // the backend's active-tools snapshot so a client that already rendered
-      // one (e.g. from a fast /history response) is re-synced instead of
-      // blindly cleared — a running tool must not disappear from the UI.
-      res.write(`data: ${JSON.stringify({ type: 'tool_end', data: { id: null, recentTools, activeTools: activeToolsSnapshot(session) } })}\n\n`);
-      // Log extensions being sent
-
-      res.write(`data: ${JSON.stringify({ type: 'extensions', data: extensionsState })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: 'models', data: availableModels })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: 'sessions', data: session.refreshSessions() })}\n\n`);
+      // SSE carries LIVE events only — no connect-time replays. The client
+      // fetches everything it needs once via GET /api/bootstrap at (re)load
+      // time (and on SSE reconnect). Heartbeats keep the stream alive.
       return;
     }
 

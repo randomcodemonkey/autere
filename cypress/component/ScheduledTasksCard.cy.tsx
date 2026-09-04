@@ -46,7 +46,10 @@ const RUN_LOG = {
   seedOutput: 'seed-data',
   agentResult: 'The report content',
   resultScriptOutput: 'saved',
-  log: ['[t1] Run started (trigger: schedule)', '[t2] Run completed successfully'],
+  log: [
+    { t: 1757076000000, line: 'Run started (trigger: schedule)' },
+    { t: 1757076060000, line: 'Run completed successfully' },
+  ],
 };
 
 let responseData: any;
@@ -66,6 +69,12 @@ function stubFetch() {
       }
       if (u.includes('/runs/')) {
         return { success: true, data: RUN_LOG };
+      }
+      if (u.includes('/api/models')) {
+        return { success: true, data: [
+          { provider: '9router', id: 'mimo-v2.5-all', name: 'Mimo' },
+          { provider: '9router', id: 'glm-5.3-flash', name: 'GLM Flash' },
+        ] };
       }
       return { success: true };
     });
@@ -105,6 +114,41 @@ describe('ScheduledTasksCard', () => {
       cy.mount(<ScheduledTasksCard sseConnected={true} />);
       cy.get('.scheduled-task-detail').should('contain', 'echo seed-data');
       cy.get('.scheduled-task-detail').should('contain', 'tee /tmp/out.txt');
+    });
+
+    it('form shows model selector with default and saved task persists the chosen model', () => {
+      let posted: any = null;
+      cy.window({ log: false }).then((win) => {
+        installFetchStub(win, (u, init) => {
+          if (u.includes('/api/scheduler/tasks') && !u.includes('/run') && !u.includes('/runs/')) {
+            if (init?.method === 'POST') {
+              try { posted = JSON.parse(init.body); } catch {}
+              return { success: true, data: { ...TASK, ...posted } };
+            }
+            return { success: true, data: { tasks: [], runs: [] } };
+          }
+          if (u.includes('/api/models')) {
+            return { success: true, data: [
+              { provider: '9router', id: 'mimo-v2.5-all', name: 'Mimo' },
+            ] };
+          }
+          return { success: true };
+        });
+      });
+      responseData = { tasks: [], runs: [] };
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.get('.scheduled-new-btn').click();
+      cy.get('.scheduled-input-model').should('exist')
+        .find('option').first().should('contain', "Default (user's pi setting)");
+      cy.get('.scheduled-input-model').find('option').should('contain', 'Mimo');
+      cy.get('.scheduled-input-model').select('9router/mimo-v2.5-all');
+      cy.get('.scheduled-input-name').type('Model task');
+      cy.get('.scheduled-input-prompt').type('hello');
+      cy.get('.scheduled-save-btn').click();
+      cy.wrap(null).should(() => {
+        expect(posted).to.not.be.null;
+        expect(posted.model).to.equal('9router/mimo-v2.5-all');
+      });
     });
 
     it('shows a loading state initially', () => {

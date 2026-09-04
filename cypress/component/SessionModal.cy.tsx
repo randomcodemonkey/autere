@@ -31,15 +31,18 @@ describe('SessionModal', () => {
   describe('formatSessionTime age boundaries', () => {
     const NOW = new Date('2026-09-03T12:00:00Z').getTime();
     beforeEach(() => cy.clock(NOW));
-    it('formats minutes and hours', () => {
-      expect(formatSessionTime(NOW - 30_000)).to.equal('just now');
-      expect(formatSessionTime(NOW - 5 * 60_000)).to.equal('5m ago');
-      expect(formatSessionTime(NOW - 23 * 3_600_000)).to.equal('23h ago');
+    it('formats minutes and hours (locale: en)', () => {
+      expect(formatSessionTime(NOW - 30_000, 'en')).to.equal('now');
+      expect(formatSessionTime(NOW - 5 * 60_000, 'en')).to.equal('5m ago');
+      expect(formatSessionTime(NOW - 23 * 3_600_000, 'en')).to.equal('23h ago');
     });
-    it('formats days without the 0d bug', () => {
-      expect(formatSessionTime(NOW - 25 * 3_600_000)).to.equal('1d ago');
-      expect(formatSessionTime(NOW - 47 * 3_600_000)).to.equal('1d ago');
-      expect(formatSessionTime(NOW - 3 * 24 * 3_600_000)).to.equal('3d ago');
+    it('formats days without the 0d bug (locale: en)', () => {
+      expect(formatSessionTime(NOW - 25 * 3_600_000, 'en')).to.equal('yesterday');
+      expect(formatSessionTime(NOW - 47 * 3_600_000, 'en')).to.equal('yesterday');
+      expect(formatSessionTime(NOW - 3 * 24 * 3_600_000, 'en')).to.equal('3d ago');
+    });
+    it('uses the given locale', () => {
+      expect(formatSessionTime(NOW - 5 * 60_000, 'fi')).to.equal('5 min sitten');
     });
   });
 

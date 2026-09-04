@@ -15,7 +15,8 @@ describe('ExtensionsCard', () => {
         displayName: 'WhatsApp',
         configPath: '/path/to/config',
         hasConfig: true,
-        status: 'connected',
+        status: 'ok',
+    statusText: 'Available',
         details: {},
       },
       {
@@ -42,7 +43,9 @@ describe('ExtensionsCard', () => {
         configPath: '/path/to/config',
         hasConfig: true,
         status: 'error',
-        details: { status: 'disconnected' },
+        status: 'error',
+    statusText: 'Error',
+    details: {},
       },
     ];
     cy.mount(<ExtensionsCard extensions={extensions} />);
@@ -50,14 +53,15 @@ describe('ExtensionsCard', () => {
     cy.get('.badge.danger').should('exist');
   });
 
-  it('shows connected status styling', () => {
+  it('shows available status styling', () => {
     const extensions: ExtensionInfo[] = [
       {
         name: 'whatsapp-pi',
         displayName: 'WhatsApp',
         configPath: '/path/to/config',
         hasConfig: true,
-        status: 'connected',
+        status: 'ok',
+    statusText: 'Available',
         details: {},
       },
     ];

@@ -19,6 +19,7 @@ import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { USER_SETTINGS_DIR, PI_DIR } from './constants.js';
 import { getPiEnvDir, ensurePiEnv } from './pi-env.js';
+import { isPiImagesInstalled } from './image-models.js';
 import { log } from './logger.js';
 
 interface UserSettings {
@@ -30,7 +31,7 @@ interface UserSettings {
 export interface SettingField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list';
+  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages';
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;
@@ -133,6 +134,15 @@ export function saveUserSettings(user: string, settings: UserSettings): void {
 }
 
 /**
+ * Merge a single key into the user's settings file without overwriting
+ * the rest (unlike saveUserSettings, which replaces the whole file).
+ */
+export function setUserSetting(user: string, key: string, value: any): void {
+  const current = readUserSettingsFile(user);
+  writeUserSettingsFile(user, { ...current, [key]: value });
+}
+
+/**
  * Write user settings through to the per-user pi environment so the
  * user's pi process picks them up. The env dir is seeded from the global
  * ~/.pi/agent on first use; this overrides the seeded defaults per user.
@@ -181,6 +191,19 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
       renameSync(tmp, configPath);
       invalidateCache(configPath);
     }
+    // Write pi-images image model selection into the env's 9router-config.json
+    if ('imageModel' in settings) {
+      const configPath = join(envDir, '9router-config.json');
+      let config: UserSettings = {};
+      if (existsSync(configPath)) {
+        try { config = JSON.parse(readFileSync(configPath, 'utf-8')); } catch {}
+      }
+      config.imageModel = settings.imageModel || '';
+      const tmp = join(envDir, `.9router-config-tmp-${randomUUID()}`);
+      writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf-8');
+      renameSync(tmp, configPath);
+      invalidateCache(configPath);
+    }
   } catch (err) {
     log.settings.error(`Failed to apply settings to pi env for user "${user}":`, err);
   }
@@ -199,6 +222,26 @@ export function getHistoryLimit(user: string): number {
   return Math.min(500, Math.max(10, Math.floor(n)));
 }
 
+/**
+ * Extensions ("packages") installed in the master pi environment — from
+ * ~/.pi/agent/settings.json. Installing a new extension with pi adds it here;
+ * these are offered in the Settings view as available to enable.
+ */
+export function getAvailablePackages(): string[] {
+  return readJsonCached(join(PI_DIR, 'settings.json'))?.packages || [];
+}
+
+/**
+ * Extensions enabled for a user — the per-user pi env's settings.json
+ * 'packages' (e.g. ~/.autere/pi-envs/admin/settings.json). Falls back to the
+ * master list when the env file has no packages key.
+ */
+export function getEnabledPackages(user: string): string[] {
+  const envSettings = readJsonCached(join(getPiEnvDir(user), 'settings.json'));
+  if (envSettings && Array.isArray(envSettings.packages)) return envSettings.packages;
+  return getAvailablePackages();
+}
+
 // ── Settings schema (based on enabled extensions) ──
 
 function getPiConfig(filename: string): Record<string, any> | null {
@@ -215,9 +258,12 @@ function getUserSettingsDefaults(user: string): UserSettings {
   defaults.nineRouterPassword = process.env.INITIAL_PASSWORD || '';
   defaults.nineRouterEnableReasoning = nineRouterConfig?.enableReasoning ?? false;
 
+  // pi-images: selected image model (stored in 9router-config.json)
+  defaults.imageModel = nineRouterConfig?.imageModel || '';
+
   // Pi settings defaults
   defaults.enabledModels = readJsonCached(join(PI_DIR, 'settings.json'))?.enabledModels || [];
-  defaults.packages = readJsonCached(join(PI_DIR, 'settings.json'))?.packages || [];
+  defaults.packages = getEnabledPackages(user);
 
   return defaults;
 }
@@ -225,8 +271,9 @@ function getUserSettingsDefaults(user: string): UserSettings {
 /**
  * Get the settings schema for a user, based on their enabled extensions.
  * The backend decides what settings are relevant; the frontend just renders them.
+ * Async because the image-model select options are discovered from 9router.
  */
-export function getUserSettingsSchema(user: string): SettingSection[] {
+export async function getUserSettingsSchema(user: string): Promise<SettingSection[]> {
   const sections: SettingSection[] = [];
 
   // Always include 9router settings if the extension is enabled
@@ -268,6 +315,47 @@ export function getUserSettingsSchema(user: string): SettingSection[] {
       ],
     });
   }
+
+  // Image generation settings — when the pi-images extension is installed
+  if (isPiImagesInstalled()) {
+    const { getRouterConfig, fetchImageModels } = await import('./image-models.js');
+    let imageModelOptions: { value: string; label: string }[] = [];
+    try {
+      const models = await fetchImageModels(getRouterConfig());
+      imageModelOptions = models.map((m) => ({ value: m.id, label: m.id }));
+    } catch (err) {
+      log.settings.error('Failed to fetch image models for settings schema:', err);
+    }
+    sections.push({
+      id: 'images',
+      label: 'Images',
+      fields: [
+        {
+          key: 'imageModel',
+          label: 'Image Model',
+          type: 'select',
+          options: imageModelOptions,
+          description: imageModelOptions.length > 0
+            ? 'Model used to generate images (e.g. "draw me a panda"). Empty = auto-select the first available.'
+            : 'No image-capable models found on 9router. Add an upstream with image output support, then reload settings.',
+        },
+      ],
+    });
+  }
+
+  // Extensions (always available)
+  sections.push({
+    id: 'extensions',
+    label: 'Extensions',
+    fields: [
+      {
+        key: 'packages',
+        label: 'Enabled Extensions',
+        type: 'packages',
+        description: 'Tick to enable an installed extension for your pi environment. Saving restarts the agent.',
+      },
+    ],
+  });
 
   // Model settings (always available)
   sections.push({

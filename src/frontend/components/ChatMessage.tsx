@@ -5,7 +5,7 @@
  * ChatMessage component used by StreamCard.
  */
 
-import React, { useState, memo } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import type { StreamMessage } from '../types';
@@ -92,11 +92,8 @@ export function stripExtraNewlines(text: string): string {
 
 export function formatTimestamp(ts?: number): string {
   if (!ts) return '';
-  const d = new Date(ts);
-  const h = d.getHours().toString().padStart(2, '0');
-  const m = d.getMinutes().toString().padStart(2, '0');
-  const s = d.getSeconds().toString().padStart(2, '0');
-  return `${h}:${m}:${s}`;
+  // Locale-aware clock time, e.g. "3:12:45 PM" (en-US) or "15.12.45" (fi-FI)
+  return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 interface ChatMessageProps {
@@ -112,11 +109,25 @@ interface ChatMessageProps {
 
 export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isAssistant, isToolResult, isLong, truncLen, lineCount }) => {
   const [expanded, setExpanded] = useState(false);
+  const [lightbox, setLightbox] = useState(false);
+  // Tool command line: click toggles between one ellipsized line and full wrap
+  const [cmdExpanded, setCmdExpanded] = useState(false);
 
-  // Don't render empty non-streaming messages
-  if (!msg.streaming && !displayText.trim()) return null;
+  // Close the image lightbox on Escape
+  useEffect(() => {
+    if (!lightbox) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightbox(false); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [lightbox]);
 
-  const showText = expanded || !isLong ? displayText : displayText.slice(0, truncLen);
+  // Don't render empty non-streaming messages (image-only messages still render)
+  const hasBody = role === 'toolCall' && !!msg.toolCall ? false : !displayText.trim();
+  if (!msg.streaming && hasBody && !(msg.images && msg.images.length > 0)) return null;
+
+  const isCallOnly = role === 'toolCall' && !!msg.toolCall;
+  const bodyText = isCallOnly ? '' : displayText;
+  const showText = expanded || !isLong ? bodyText : bodyText.slice(0, truncLen);
   const roleClass = role === 'user' ? 'stream-role-user' : role === 'assistant' ? 'stream-role-assistant' : `stream-role-${role}`;
   const isNonText = displayText.startsWith('[');
   const isError = msg.isError;
@@ -126,6 +137,31 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   const renderedText = isAssistant ? renderMd(renderText) : role === 'edit' ? '' : escHtml(renderText);
   const ts = formatTimestamp(msg.timestamp);
 
+  // Download an image. Mobile Safari ignores the download attribute on
+  // data: URLs, so use the Web Share API (native save/share sheet on iOS)
+  // when available, falling back to a Blob URL + download anchor.
+  const saveImage = async (mimeType: string, data: string) => {
+    const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: mimeType });
+    const ext = mimeType.split('/')[1] || 'png';
+    const file = new File([blob], `image-${Date.now()}.${ext}`, { type: mimeType });
+    if (typeof navigator.share === 'function' && navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; } catch (err) {
+        // User cancelled the share sheet — not an error
+        if ((err as DOMException)?.name === 'AbortError') return;
+        console.error('Web Share failed:', err);
+      }
+    }
+    const url2 = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url2;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url2), 10_000);
+  };
+
   return (
     <div className="stream-msg">
       <div className={`stream-role ${roleClass}${msg.isError ? ' stream-role-error' : ''}`}>
@@ -134,8 +170,57 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
         {msg.streaming && <span className="stream-cursor" />}
       </div>
       <div className={textClass}>
+        {/* Connected tool call: rendered as a header line inside the tool
+            result block — call and result are one unit */}
+        {msg.toolCall && (
+          <div className="tool-call-header">
+            <span className="tool-call-name">⚙ {msg.toolCall.name}</span>
+            {msg.toolCall.cmd && (
+              <span
+                className={`tool-call-cmd${cmdExpanded ? ' expanded' : ''}`}
+                title={cmdExpanded ? undefined : 'Click to show full command'}
+                onClick={(e) => { e.stopPropagation(); setCmdExpanded((v) => !v); }}
+              >
+                {msg.toolCall.cmd}
+              </span>
+            )}
+            {msg.streaming && <span className="stream-cursor" />}
+          </div>
+        )}
         {role === 'edit' ? renderEditDiff(showText, !expanded && isLong, 12, isError) : <span dangerouslySetInnerHTML={{ __html: renderedText }} />}
+        {msg.images && msg.images.length > 0 && (
+          <div className="stream-images">
+            {msg.images.map((img, i) => (
+              <React.Fragment key={i}>
+                <img
+                  className="stream-image"
+                  src={`data:${img.mimeType};base64,${img.data}`}
+                  alt="generated image"
+                  title="Click to view full size"
+                  onClick={() => setLightbox(true)}
+                />
+                <button
+                  className="stream-image-save"
+                  onClick={(e) => { e.stopPropagation(); void saveImage(img.mimeType, img.data); }}
+                >
+                  Save image
+                </button>
+              </React.Fragment>
+            ))}
+          </div>
+        )}
       </div>
+      {lightbox && msg.images && msg.images.length > 0 && (
+        <div className="image-lightbox" onClick={() => setLightbox(false)}>
+          {msg.images.map((img, i) => (
+            <img
+              key={i}
+              src={`data:${img.mimeType};base64,${img.data}`}
+              alt="generated image (full size)"
+            />
+          ))}
+        </div>
+      )}
       {isLong && (
         <div
           className="stream-text-truncated"

@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
-import type { StreamMessage } from '../types';
+import { url } from '../base-path';
+import type { StreamMessage, AvailableModel } from '../types';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 
@@ -14,6 +15,9 @@ interface StreamCardProps {
   followUpPending?: number;
   model?: { provider: string; id: string; name: string } | null;
   externalActivity?: boolean;
+  models?: AvailableModel[];
+  activeModelId?: string | null;
+  onModelsFetched?: (models: AvailableModel[]) => void;
 }
 
 /** Truncation limits per role (characters), for non-edit messages */
@@ -27,7 +31,7 @@ const TRUNC_LEN: Record<string, number> = {
 /** Collapse edit diffs longer than this many diff rows */
 const EDIT_COLLAPSE_ROWS = 12;
 
-export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError, steerPending, followUpPending, model, externalActivity }) => {
+export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError, steerPending, followUpPending, model, externalActivity, models, activeModelId, onModelsFetched }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const [filters, setFilters] = useState({
     thinking: localStorage.getItem('autere-filter-thinking') !== 'off',
@@ -51,10 +55,10 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
 
   // Filter messages: skip empty non-streaming entries, and apply user filters
   const filteredMessages = messages.filter((msg) => {
-    // Skip empty finalized messages
-    if (!msg.streaming && !msg.text?.trim()) return false;
+    // Skip empty finalized messages (image-only messages still render)
+    if (!msg.streaming && !msg.text?.trim() && !(msg.images && msg.images.length > 0)) return false;
     if (msg.role === 'thinking' && !filters.thinking) return false;
-    if (msg.role === 'toolResult' && !filters.toolResult) return false;
+    if ((msg.role === 'toolResult' || msg.role === 'toolCall') && !filters.toolResult) return false;
     if (msg.role === 'edit' && !filters.edit) return false;
     return true;
   });
@@ -62,8 +66,61 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   // Autoscroll: track if user is at bottom
   const isAtBottomRef = useRef(true);
   const programmaticScrollRef = useRef(false);
+  // Model dropdown on the chat model row
+  const [modelOpen, setModelOpen] = useState(false);
+  const modelWrapperRef = useRef<HTMLSpanElement>(null);
+  const modelsFetchedRef = useRef(false);
+  const modelsList = models || [];
+  const openModelDropdown = useCallback(() => {
+    setModelOpen((v) => !v);
+    // Fetch models on first open if the list is empty (SSE timing fallback)
+    if (!modelsFetchedRef.current && modelsList.length === 0) {
+      modelsFetchedRef.current = true;
+      fetch(url('/api/models'))
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && data.data?.length > 0) onModelsFetched?.(data.data);
+        })
+        .catch(() => {});
+    }
+  }, [modelsList.length, onModelsFetched]);
+  const selectModel = useCallback(async (provider: string, modelId: string) => {
+    setModelOpen(false);
+    try {
+      const res = await fetch(url('/api/set-model'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, modelId }),
+      });
+      const data = await res.json();
+      if (!data.success) onCommandError?.('Failed to change model');
+    } catch {
+      onCommandError?.('Failed to change model');
+    }
+  }, [onCommandError]);
+
+  // Close the model dropdown on Escape or click outside
+  useEffect(() => {
+    if (!modelOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setModelOpen(false); };
+    const onClick = (e: MouseEvent) => {
+      if (modelWrapperRef.current && !modelWrapperRef.current.contains(e.target as Node)) {
+        setModelOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    // 'mousedown' so selecting an item inside isn't beaten by outside-click
+    window.addEventListener('mousedown', onClick);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onClick);
+    };
+  }, [modelOpen]);
+
+  // Button appears whenever the user is scrolled up: "Scroll to bottom" by
+  // default, switching to "New messages" when content arrives while away.
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const hasNewContentRef = useRef(false);
+  const [hasNewContent, setHasNewContent] = useState(false);
 
   // Scroll to bottom on initial load
   useEffect(() => {
@@ -74,6 +131,23 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     }
   }, []);
 
+  // Images expand asynchronously AFTER the message-update autoscroll has run
+  // (an <img> has no height until it loads), which would leave the chat
+  // scrolled to only part of the image. Listen for load events (capture
+  // phase — load doesn't bubble) and re-stick to the bottom if we were there.
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const onLoad = () => {
+      if (isAtBottomRef.current) {
+        programmaticScrollRef.current = true;
+        box.scrollTop = box.scrollHeight;
+      }
+    };
+    box.addEventListener('load', onLoad, true);
+    return () => box.removeEventListener('load', onLoad, true);
+  }, []);
+
   // Auto-scroll when messages change, but only if user is at bottom
   useLayoutEffect(() => {
     const box = boxRef.current;
@@ -81,8 +155,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
       programmaticScrollRef.current = true;
       box.scrollTop = box.scrollHeight;
     } else if (!isAtBottomRef.current) {
-      hasNewContentRef.current = true;
-      setShowScrollButton(true);
+      setHasNewContent(true);
     }
   }, [messages, isStreaming]);
 
@@ -98,12 +171,10 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     const threshold = 40;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < threshold;
     isAtBottomRef.current = atBottom;
-    if (atBottom) {
-      hasNewContentRef.current = false;
-      setShowScrollButton(false);
-    } else if (hasNewContentRef.current) {
-      setShowScrollButton(true);
-    }
+    // Show as soon as the user is scrolled up; label upgrades to
+    // "New messages" when content arrives while they're away.
+    setShowScrollButton(!atBottom);
+    if (atBottom) setHasNewContent(false);
   }, []);
 
   // Scroll to bottom and resume autoscroll
@@ -111,7 +182,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     const box = boxRef.current;
     if (box) {
       isAtBottomRef.current = true;
-      hasNewContentRef.current = false;
+      setHasNewContent(false);
       setShowScrollButton(false);
       box.scrollTop = box.scrollHeight;
     }
@@ -156,7 +227,31 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
       </div>
       <div className="chat-model-row">
         <span className="chat-model-label">model</span>
-        <span className="chat-model-name">{model?.name || model?.id || '—'}</span>
+        <span className="chat-model-wrapper" ref={modelWrapperRef}>
+          <button className="chat-model-name" onClick={openModelDropdown} title="Change model">
+            {model?.name || model?.id || '—'}
+            <span className="chat-model-caret">▾</span>
+          </button>
+          {modelOpen && (
+            <div className="chat-model-dropdown">
+              {modelsList.length === 0 ? (
+                <div className="chat-model-empty">No scoped models configured</div>
+              ) : (
+                modelsList.map((m: AvailableModel) => (
+                  <div
+                    key={`${m.provider}/${m.id}`}
+                    className={`chat-model-item${m.id === (activeModelId ?? model?.id) ? ' active' : ''}`}
+                    onClick={() => selectModel(m.provider, m.id)}
+                  >
+                    <span className="model-dot" />
+                    <span className="model-name">{m.name || m.id}</span>
+                    <span className="model-provider">{m.provider}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </span>
         {(externalActivity || isStreaming || compacting) && (
           <span className={`chat-model-external${externalActivity ? '' : ' chat-model-active'}`}>
             {externalActivity ? 'Active elsewhere' : 'Active'}
@@ -168,7 +263,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
           {filteredMessages.map((msg, fi) => {
             const role = msg.role || '';
             const displayText = msg.text || '';
-            const isToolResult = role === 'toolResult' || role === 'edit';
+            const isToolResult = role === 'toolResult' || role === 'toolCall' || role === 'edit';
             // For edit messages, count only diff lines (skip header line and empty line after it)
             const editParts = role === 'edit' ? displayText.split('\n') : [];
             const editLines = editParts.length > 1 ? editParts.slice(editParts[1] === '' ? 2 : 1) : [];
@@ -194,8 +289,8 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
           })}
         </div>
         {showScrollButton && (
-          <button className="scroll-to-bottom" onClick={scrollToBottom}>
-            ↓ New messages
+          <button className={`scroll-to-bottom${hasNewContent ? ' has-new' : ''}`} onClick={scrollToBottom}>
+            ↓ {hasNewContent ? 'New messages' : 'Scroll to bottom'}
           </button>
         )}
       </div>

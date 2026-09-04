@@ -8,6 +8,7 @@ import { StreamCard } from '../components/StreamCard';
 import { Modal } from '../components/Modal';
 import { SessionModal } from '../components/SessionModal';
 import { url, basePath } from '../base-path';
+import { uiSessionName } from '../session-name';
 import type {
   SessionState,
   SessionStats,
@@ -105,6 +106,8 @@ export function DashboardPage({
   const [restartingBackend, setRestartingBackend] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  // True while a session switch request is in flight — shown as a banner
+  const [switchingSession, setSwitchingSession] = useState(false);
   const [showSessionModal, setShowSessionModal] = useState(false);
 
   // SSE message handler
@@ -176,16 +179,7 @@ export function DashboardPage({
         });
         break;
       case 'tool_end':
-        // id: null is the initial-state sync on (re)connect: the payload
-        // carries the backend's authoritative active-tools snapshot (may be
-        // empty, e.g. right after a backend restart). Applying it — instead
-        // of blindly clearing — keeps a running tool visible when the SSE
-        // connect burst lands after a fast /history response.
-        if (msg.data.id == null) {
-          setActiveTools(Array.isArray(msg.data.activeTools) ? msg.data.activeTools : []);
-        } else {
-          setActiveTools((prev) => prev.filter((t) => t.id !== msg.data.id));
-        }
+        setActiveTools((prev) => prev.filter((t) => t.id !== msg.data.id));
         if (msg.data.recentTools) setRecentTools(msg.data.recentTools);
         break;
       case 'external_activity': {
@@ -207,85 +201,67 @@ export function DashboardPage({
   // Set synchronously during render so no messages are missed.
   pageHandlerRef.current = handleDashboardSSEMessage;
 
-  // After reconnect (e.g. a device waking from sleep), refresh session list
-  // and re-fetch the viewed session's history from the file — messages sent
-  // while the client was away must appear even though no live events were
-  // delivered in the meantime. Only applied when the content differs, so an
-  // unchanged chat does not re-render (no blink).
-  const wasConnectedRef = useRef(sseConnected);
-  useEffect(() => {
-    if (sseConnected && !wasConnectedRef.current) {
-      // Clear restarting states on reconnection
-      if (restarting) setRestarting(false);
-      if (restartingBackend) setRestartingBackend(false);
-      const sid = viewedSessionRef.current;
-      if (sid) {
-        fetch(url(`/api/sessions/${sid}/history?limit=50`))
-          .then((res) => res.json())
-          .then((data) => {
-            if (!data.success || !data.data) return;
-            if (JSON.stringify(streamHistoryRef.current) === JSON.stringify(data.data)) return;
-            setStreamHistory(data.data);
-            historyRenderedForRef.current = sid;
-          })
-          .catch(() => {});
-      }
-      const timer = setTimeout(() => {
-        fetch(url('/api/sessions'))
-          .then((res) => res.json())
-          .then((data) => { if (data.success && data.data) setAvailableSessions(data.data); })
-          .catch(() => {});
-      }, 1000);
-      return () => clearTimeout(timer);
+  // Apply a bootstrap payload (from GET /api/bootstrap or the switch-by-id
+  // response — same shape) to the UI state.
+  const applyBootstrap = useCallback((d: any) => {
+    setSessionState((prev: any) => ({ ...prev, ...d.sessionState, sessionId: d.sessionState?.sessionId ?? prev.sessionId }));
+    if (d.sessionStats) setStats(d.sessionStats);
+    setActiveTools(d.activeTools ?? []);
+    setRecentTools(d.recentTools ?? []);
+    // Apply history only if it belongs to the session being viewed
+    const viewed = viewedSessionRef.current;
+    if (!viewed || !d.historySessionId || d.historySessionId === viewed) {
+      setStreamHistory(d.streamHistory ?? []);
     }
-    wasConnectedRef.current = sseConnected;
-  }, [sseConnected]);
+    setAvailableSessions(d.availableSessions ?? []);
+    setModels(d.availableModels ?? []);
+    setExtensions(d.extensions ?? []);
+  }, []);
 
+  // ── Bootstrap: ONE request loads everything at (re)load time ──
+  // Runs on mount and on every SSE (re)connect (a reconnect is a reload:
+  // the stream may have missed events while it was down). Navigation
+  // between sessions is handled separately by switch-by-id. The SSE stream
+  // carries LIVE events only — no history replays or state snapshots.
+  const prevConnectedRef = useRef<boolean | null>(null);
   useEffect(() => {
-    if (sseConnected && stats.tokens.input === 0 && sessionState.sessionId) {
-      fetch(url('/api/stats'))
-        .then((res) => res.json())
-        .then((data) => { if (data.success && data.data) setStats(data.data); })
-        .catch(() => {});
-    }
-  }, [sseConnected, sessionState.sessionId, stats.tokens.input]);
+    if (!authenticated) return;
+    const isFirstLoad = prevConnectedRef.current === null;
+    const isReconnect = prevConnectedRef.current === false && sseConnected === true;
+    prevConnectedRef.current = sseConnected;
+    if (!isFirstLoad && !isReconnect) return;
 
-  // Load chat history for the URL session IMMEDIATELY on mount/navigation —
-  // don't wait for the SSE stream (which itself waits for the pi process to
-  // spawn). This removes the 'Waiting for messages…' delay after login:
-  // the history fetch runs in parallel with the SSE setup instead of after
-  // it. Only applies when the chat is still empty, so live SSE updates that
-  // arrived first (e.g. a switch-by-id response) are never overwritten.
-  const streamHistoryRef = useRef<StreamMessage[]>([]);
-  streamHistoryRef.current = streamHistory;
-  // Session whose chat content has already been rendered by the /history
-  // fetch. The switch-by-id response must not replace it — both are built
-  // from the same session file, and a second application (which re-adds
-  // the '— Loaded N messages —' banner and rebuilds the DOM) causes the
-  // shown -> cleared -> shown flash on every (re)load.
-  const historyRenderedForRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!authenticated || !urlSessionId) return;
-    const sid = urlSessionId;
     let cancelled = false;
-    fetch(url(`/api/sessions/${sid}/history?limit=50`))
+    const sid = viewedSessionRef.current;
+    fetch(url(`/api/bootstrap${sid ? `?sessionId=${encodeURIComponent(sid)}` : ''}`))
       .then((res) => res.json())
       .then((data) => {
-        if (cancelled) return;
-        if (data.success && data.data?.length > 0
-            && viewedSessionRef.current === sid
-            && streamHistoryRef.current.length === 0) {
-          setStreamHistory(data.data);
-          historyRenderedForRef.current = sid;
-        }
-        // A session opened mid-turn must show its in-flight tools immediately
-        if (data.success && viewedSessionRef.current === sid) {
-          setActiveTools(data.activeTools ?? []);
-        }
+        if (cancelled || !data.success || !data.data) return;
+        applyBootstrap(data.data);
+        // A successful bootstrap means the backend is up — clear restart flags
+        if (restarting) setRestarting(false);
+        if (restartingBackend) setRestartingBackend(false);
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [authenticated, urlSessionId]);
+    // restarting/restartingBackend intentionally excluded — flags only ever
+    // transition true→false here, and the closure value is still valid.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, sseConnected]);
+
+  // After reconnect (e.g. a device waking from sleep), bootstrap refreshes
+  // everything above — no per-resource refetching needed here.
+
+  // Chat history for a directly-opened URL is loaded by the bootstrap fetch
+  // above. Navigation between sessions goes through switch-by-id (below).
+  const streamHistoryRef = useRef<StreamMessage[]>([]);
+  streamHistoryRef.current = streamHistory;
+
+  // Session whose chat content has already been rendered (by bootstrap or a
+  // switch-by-id response — both build from the same session file; a second
+  // application re-adds the loaded-messages banner and rebuilds the DOM,
+  // causing a visible flash on every (re)load).
+  const historyRenderedForRef = useRef<string | null>(null);
 
   // When URL changes (browser back/forward, direct navigation, or programmatic
   // navigate), send a switch request. React Router handles the URL — we just
@@ -298,22 +274,7 @@ export function DashboardPage({
     prevUrlSessionRef.current = sid;
 
     if (sid === sessionState.sessionId) {
-      // If stream history is empty (e.g. after initial SSE sent empty data),
-      // fetch it from the API for the current session.
-      if (streamHistory.length === 0 && sid) {
-        fetch(url(`/api/sessions/${sid}/history?limit=50`))
-          .then((res) => res.json())
-          .then((data) => {
-            // Stale-response guard: only apply if still viewing this session
-            if (viewedSessionRef.current === sid && data.success && data.data?.length > 0) setStreamHistory(data.data);
-            if (data.success && viewedSessionRef.current === sid) {
-              setActiveTools(data.activeTools ?? []);
-              if (data.data?.length > 0) historyRenderedForRef.current = sid;
-            }
-          })
-          .catch(() => {});
-      }
-       return;
+      return;
     }
     // Only switch when the URL itself changed (user navigation). A render
     // where only sessionState changed (e.g. the optimistic update from
@@ -321,6 +282,7 @@ export function DashboardPage({
     // switch the backend — it would switch BACK to the stale URL's session
     // right after creating a new one, sending subsequent messages there.
     if (!urlChanged) return;
+    setSwitchingSession(true);
     fetch(url('/api/sessions/switch-by-id'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -328,31 +290,28 @@ export function DashboardPage({
     }).then(res => res.json()).then(data => {
       // Stale-response guard: only apply if still viewing this session
       if (viewedSessionRef.current !== sid) return;
-      if (data.success && data.streamHistory) {
-        // Skip when the /history fetch already rendered this session's chat:
-        // the payloads are built from the same file; re-applying only adds
-        // the loaded-messages banner and rebuilds the DOM (visible flash).
-        if (historyRenderedForRef.current !== sid) {
-          setStreamHistory(data.streamHistory);
-          historyRenderedForRef.current = sid;
-        }
-      }
-      if (data.success && data.sessionState) {
-        setSessionState(data.sessionState);
+      // The switch response carries the same bootstrap payload shape as
+      // GET /api/bootstrap — apply it with the exact same code path.
+      if (data.success && data.data) {
+        applyBootstrap(data.data);
+        historyRenderedForRef.current = sid;
+        setSwitchingSession(false);
+        setShowSessionModal(false);
         // The backend may resolve an id alias (e.g. a stale filename id)
         // to the canonical session id — sync the URL to it.
-        if (data.sessionState.sessionId && data.sessionState.sessionId !== sid) {
-          navigate(`/session/${data.sessionState.sessionId}`, { replace: true });
+        const resolved = data.data.sessionState?.sessionId;
+        if (resolved && resolved !== sid) {
+          navigate(`/session/${resolved}`, { replace: true });
         }
+      } else if (!data.success) {
+        // Surface switch failures (e.g. session cwd vanished) instead of
+        // silently leaving the UI on the old session.
+        setSessionError(data.error || 'Failed to switch session');
+        setSwitchingSession(false);
       }
-      if (data.success && data.sessionStats) {
-        setStats(data.sessionStats);
-      }
-      // In-flight tools snapshot (non-empty when joining a session mid-turn)
-      if (data.success) {
-        setActiveTools(data.activeTools ?? []);
-      }
-    }).catch(() => {});
+    }).catch(() => {
+      setSwitchingSession(false);
+    });
   }, [authenticated, sseConnected, urlSessionId, sessionState.sessionId, creatingSession]);
 
   // Clear per-session UI state (used when entering a fresh session)
@@ -409,7 +368,16 @@ export function DashboardPage({
   const handleNewSession = useCallback(() => {
     setCreatingSession(true);
     setSessionError(null);
-    fetch(url('/api/new-session'), { method: 'POST' })
+    fetch(url('/api/new-session'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        // Name generated HERE — browser locale + timezone are authoritative
+        sessionName: uiSessionName(),
+        locale: navigator.language,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      }),
+    })
       .then(res => res.json())
       .then(data => {
         if (data.success && data.navigateUrl) {
@@ -444,8 +412,8 @@ export function DashboardPage({
     // Navigate to the target session — the URL 'view' param defaults to chat,
     // so no explicit view change is needed. (Calling handleSetView('chat')
     // here would navigate BACK to the previous urlSessionId and swallow the
-    // switch.) Close the modal — it must not linger over the new session.
-    setShowSessionModal(false);
+    // switch.) The modal stays open with a "Switching session…" indicator
+    // until the switch completes — it's closed on success below.
     navigate(`/session/${sessionId}`);
   }, [navigate]);
 
@@ -486,8 +454,6 @@ export function DashboardPage({
             messageCount={sessionState.messageCount}
             requestCount={sessionState.requestCount}
             stats={stats}
-            activeTools={activeTools}
-            recentTools={recentTools}
             extensions={extensions}
             models={models}
             activeModelId={activeModelId}
@@ -503,7 +469,7 @@ export function DashboardPage({
         </div>
         <div className={`chat-wrapper${sessionState.externalActivity ? ' chat-external-activity' : ''}`}>
           {activeView === 'chat' && (
-            <StreamCard messages={streamHistory} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} />
+            <StreamCard messages={streamHistory} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} />
           )}
           {activeView === 'settings' && (
             <SettingsCard sseConnected={sseConnected} />
@@ -529,6 +495,26 @@ export function DashboardPage({
         onSwitchSession={handleSwitchSession}
       />
 
+      {switchingSession && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '3rem',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: '#2563eb',
+            color: '#fff',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            padding: '0.35rem 1rem',
+            borderRadius: '1rem',
+            zIndex: 9000,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+          }}
+        >
+          Switching session…
+        </div>
+      )}
       <Modal open={!!sessionError} onClose={() => setSessionError(null)} className="modal-status">
         <div className="modal-header">
           <h3>Error</h3>

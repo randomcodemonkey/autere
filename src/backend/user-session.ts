@@ -8,13 +8,13 @@
 import { existsSync, readFileSync } from 'fs';
 import type { ServerResponse } from 'http';
 import { MonitorRpcClient } from './rpc-client.js';
-import { filterScopedModels } from './utils.js';
+import { filterScopedModels, autoSessionName } from './utils.js';
 import { log, userLog } from './logger.js';
 import { getLastSession, setLastSession, hasRole } from './auth.js';
 import { ensurePiEnv } from './pi-env.js';
 import { readSessions } from './sessions.js';
 import type { SessionInfo } from './types.js';
-import { getHistoryLimit } from './user-settings.js';
+import { getHistoryLimit, getUserSetting } from './user-settings.js';
 import { registerExternalActivityInterest, notifyExternalActivity, notifyExternalActivityEnd, type ExternalActivityInterest } from './external-activity.js';
 import {
   isRmCommand,
@@ -111,6 +111,9 @@ export class UserSession {
   // Isolation mode: exclude legacy global sessions from this user's listing
   private isolatedSessions: boolean;
 
+  /** Whether this process was launched with --session pointing at an existing session */
+  private resumedExistingSession: boolean;
+
   // Cross-process instant external-activity notification (see external-activity.ts)
   private externalInterest: ExternalActivityInterest;
   private unregisterExternalInterest: (() => void) | null = null;
@@ -128,10 +131,14 @@ export class UserSession {
     const piEnvDir = ensurePiEnv(envUser || user);
     // Resume this token's last session if known (unless disabled, e.g. e2e tests)
     const args = [...(rpcOptions.args || [])];
+    // Track whether this process resumes an existing session — if not, pi
+    // starts a brand-new session and we auto-name it (see start()).
+    this.resumedExistingSession = false;
     if (rpcOptions.resumeLastSession !== false) {
       const lastSession = getLastSession(token);
       if (lastSession && !args.includes('--session') && !args.includes('--continue') && !args.includes('-c')) {
         args.push('--session', lastSession);
+        this.resumedExistingSession = true;
       }
     }
     this.rpc = new MonitorRpcClient({ ...rpcOptions, args, agentDir: piEnvDir });
@@ -361,6 +368,25 @@ export class UserSession {
     // Register for instant cross-session external-activity notifications
     this.unregisterExternalInterest = registerExternalActivityInterest(this.externalInterest);
 
+    // Auto-name brand-new sessions spawned by the dashboard:
+    // "[ui] - <user locale + timezone date+time>". Locale and IANA time zone
+    // were persisted by /api/new-session (setUserSetting); Intl performs the
+    // zone conversion — the backend never guesses the user's offset.
+    if (!this.resumedExistingSession && !this.state.sessionState.sessionName) {
+      try {
+        const locale = getUserSetting(this.user, 'locale', '');
+        const timeZone = getUserSetting(this.user, 'timeZone', '');
+        const autoName = autoSessionName('[ui]', {
+          locale: typeof locale === 'string' && locale ? locale : undefined,
+          timeZone: typeof timeZone === 'string' && timeZone ? timeZone : undefined,
+        });
+        await this.rpc.setSessionName(autoName);
+        this.state.sessionState.sessionName = autoName;
+      } catch (err) {
+        log.userSession.error('Failed to auto-name new session:', err);
+      }
+    }
+
     userLog(this.user).info('pi process started');
   }
 
@@ -553,7 +579,7 @@ export class UserSession {
         if (s.sessionState.sessionFile && existsSync(s.sessionState.sessionFile)) {
           const rawMessages = readMessageEntries(s.sessionState.sessionFile, this.historyLimit);
           if (rawMessages.length > 0) {
-            this.setHistoryFor(s.sessionState.sessionId, buildStreamHistoryFromMessages(rawMessages).slice(-50));
+            this.setHistoryFor(s.sessionState.sessionId, buildStreamHistoryFromMessages(rawMessages).slice(-this.historyLimit));
           }
         }
       } catch {}
@@ -772,6 +798,25 @@ export class UserSession {
 
     s.activeTools.set(event.toolCallId, toolEntry);
     this.broadcastToSession(s.sessionState.sessionId, { type: 'tool_start', data: { id: event.toolCallId, name: event.toolName, cmd } });
+
+    // Show the tool call directly in the chat as a streaming toolCall entry;
+    // handleToolEnd replaces it with the connected toolResult.
+    {
+      const buf = this.historyFor(s.sessionState.sessionId);
+      buf.push({
+        role: 'toolCall',
+        text: cmd,
+        streaming: true,
+        timestamp: Date.now(),
+        toolCallId: event.toolCallId,
+        toolCall: { name: event.toolName, cmd },
+      });
+      this.broadcastToSession(s.sessionState.sessionId, {
+        type: 'stream_history',
+        sessionId: s.sessionState.sessionId,
+        data: buf.slice(-this.historyLimit),
+      });
+    }
   }
 
   private handleToolEnd(event: any): void {
@@ -784,7 +829,8 @@ export class UserSession {
     if (s.recentTools.length > 5) s.recentTools.length = 5;
     this.broadcastToSession(s.sessionState.sessionId, { type: 'tool_end', data: { id: event.toolCallId, name: event.toolName, isError: event.isError, cmd, recentTools: s.recentTools } });
 
-    // Add tool result to stream history
+    // Add tool result to stream history — replacing the streaming toolCall
+    // entry so call and result render as one connected unit
     if (event.result || event.isError) {
       const entry = formatToolResult(
         event.toolName,
@@ -794,11 +840,14 @@ export class UserSession {
         Date.now(),
         event.result?.details,
         tool?.rmSnapshots,
+        { name: event.toolName, cmd },
       );
       if (entry) {
         const buf = this.historyFor(s.sessionState.sessionId);
+        const idx = buf.findIndex((e: any) => e.role === 'toolCall' && e.toolCallId === event.toolCallId);
+        if (idx >= 0) buf.splice(idx, 1, entry);
+        else buf.push(entry);
         const sessionId = s.sessionState.sessionId;
-        buf.push(entry);
         if (buf.length > 50) buf.splice(0, buf.length - 50);
         this.broadcastToSession(sessionId, { type: 'stream_history', sessionId, data: buf.slice(-this.historyLimit) });
       }

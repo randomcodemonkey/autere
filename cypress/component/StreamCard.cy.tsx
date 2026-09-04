@@ -1,6 +1,16 @@
 import React from 'react';
+import '../../src/frontend/styles.scss';
 import { StreamCard } from '../../src/frontend/components/StreamCard';
 import type { StreamMessage } from '../../src/frontend/types';
+
+// Build a large (1408x768) PNG at runtime to mimic a real generated image
+function makeBigPng(): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1408; canvas.height = 768;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = 'green'; ctx.fillRect(0, 0, 1408, 768);
+  return canvas.toDataURL('image/png').split(',')[1];
+}
 
 describe('StreamCard', () => {
   it('renders chat title', () => {
@@ -50,12 +60,96 @@ describe('StreamCard', () => {
     cy.get('.stream-role-thinking').should('contain', 'thinking');
   });
 
+  it('shows scroll button when scrolled up, switching label on new messages', () => {
+    const messages: StreamMessage[] = Array.from({ length: 60 }, (_, i) => (
+      { role: 'user', text: 'Message ' + i, streaming: false }
+    ));
+    // Fixed-height flex wrapper makes .stream-box actually scrollable
+    cy.mount(
+      <div style={{ height: 300, display: 'flex', flexDirection: 'column' }}>
+        <StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} />
+      </div>
+    );
+    // Autoscroll on mount → at bottom → button hidden
+    cy.get('.scroll-to-bottom').should('not.exist');
+    // Scroll up → button appears with default label
+    cy.get('.stream-box').then(($box) => {
+      $box[0].scrollTop = 0;
+      $box[0].dispatchEvent(new Event('scroll'));
+    });
+    cy.get('.scroll-to-bottom').should('contain', 'Scroll to bottom');
+    // Click → back at bottom → button hidden again
+    cy.get('.scroll-to-bottom').click();
+    cy.get('.scroll-to-bottom').should('not.exist');
+  });
+
   it('renders tool result messages', () => {
     const messages: StreamMessage[] = [
       { role: 'toolResult', text: '[bash] output here', streaming: false },
     ];
     cy.mount(<StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} />);
     cy.get('.stream-tool-output').should('contain', '[bash] output here');
+  });
+
+  it('renders images attached to tool result messages', () => {
+    const messages: StreamMessage[] = [
+      {
+        role: 'toolResult',
+        text: 'Here is your image',
+        streaming: false,
+        images: [{ mimeType: 'image/png', data: 'aGVsbG8=' }],
+      },
+    ];
+    cy.mount(<StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} />);
+    cy.get('.stream-images .stream-image')
+      .should('have.length', 1)
+      .and('have.attr', 'src', 'data:image/png;base64,aGVsbG8=');
+  });
+
+  it('opens image lightbox on click and closes on click', () => {
+    const messages: StreamMessage[] = [
+      {
+        role: 'toolResult',
+        text: '',
+        streaming: false,
+        images: [{ mimeType: 'image/jpeg', data: 'aGVsbG8=' }],
+      },
+    ];
+    cy.mount(<StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} />);
+    cy.get('.image-lightbox').should('not.exist');
+    cy.get('.stream-images .stream-image').click();
+    cy.get('.image-lightbox').should('exist');
+    cy.get('.image-lightbox img').should('have.attr', 'src', 'data:image/jpeg;base64,aGVsbG8=');
+    cy.get('.image-lightbox').click();
+    cy.get('.image-lightbox').should('not.exist');
+  });
+
+  it('shows a save button for displayed images', () => {
+    const messages: StreamMessage[] = [
+      {
+        role: 'toolResult',
+        text: '',
+        streaming: false,
+        images: [{ mimeType: 'image/png', data: 'aGVsbG8=' }],
+      },
+    ];
+    cy.mount(<StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} />);
+    cy.get('.stream-images .stream-image-save')
+      .should('have.length', 1)
+      .and('contain', 'Save image');
+  });
+
+  it('renders image-only messages with no text', () => {
+    const messages: StreamMessage[] = [
+      {
+        role: 'toolResult',
+        text: '',
+        streaming: false,
+        images: [{ mimeType: 'image/jpeg', data: 'aGVsbG8=' }],
+      },
+    ];
+    cy.mount(<StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} />);
+    cy.get('.stream-images .stream-image').should('have.length', 1);
   });
 
   it('hides thinking messages when filter is off', () => {
@@ -137,6 +231,25 @@ describe('StreamCard', () => {
 
   it('shows a dash on the model row when no model is set', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={null} />);
-    cy.get('.chat-model-name').should('have.text', '—');
+    cy.get('.chat-model-name').should('contain.text', '—');
+  });
+});
+
+describe('image overflow (large image)', () => {
+  it('image does not overflow stream-box', () => {
+    const data = makeBigPng();
+    const messages: StreamMessage[] = [
+      { role: 'toolResult', text: '', streaming: false, images: [{ mimeType: 'image/png', data }] },
+    ];
+    cy.mount(<div style={{ width: 500 }}><StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} /></div>);
+    cy.get('.stream-image').should('be.visible');
+    cy.get('.stream-box').then(($box) => {
+      const box = $box[0];
+      const img = box.querySelector('.stream-image') as HTMLImageElement;
+      expect(img.complete, 'img loaded').to.be.true;
+      expect(img.naturalWidth, 'natural width is large').to.equal(1408);
+      expect(img.getBoundingClientRect().width, 'img constrained to box').to.be.lte(box.clientWidth);
+      expect(box.scrollWidth, 'no horizontal overflow').to.be.lte(box.clientWidth);
+    });
   });
 });

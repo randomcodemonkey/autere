@@ -4,8 +4,6 @@ import { useCardState } from '../hooks/useCardState';
 import { url } from '../base-path';
 import type {
   SessionStats,
-  ActiveTool,
-  RecentTool,
   ExtensionInfo,
   AvailableModel,
 } from '../types';
@@ -16,8 +14,6 @@ interface StatusCardProps {
   messageCount: number;
   requestCount: number;
   stats: SessionStats;
-  activeTools: ActiveTool[];
-  recentTools: RecentTool[];
   extensions: ExtensionInfo[];
   models: AvailableModel[];
   activeModelId: string | null;
@@ -68,8 +64,6 @@ export const StatusCard: React.FC<StatusCardProps> = ({
   messageCount,
   requestCount,
   stats,
-  activeTools,
-  recentTools,
   extensions,
   models,
   activeModelId,
@@ -122,8 +116,6 @@ export const StatusCard: React.FC<StatusCardProps> = ({
         messageCount={messageCount}
         requestCount={requestCount}
         stats={stats}
-        activeTools={activeTools}
-        recentTools={recentTools}
         extensions={extensions}
       />
 

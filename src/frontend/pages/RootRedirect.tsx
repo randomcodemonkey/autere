@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { url } from '../base-path';
+import { uiSessionName } from '../session-name';
 
 export function RootRedirect() {
   const navigate = useNavigate();
@@ -17,7 +18,15 @@ export function RootRedirect() {
           navigate(`/session/${latest.id}`, { replace: true });
         } else if (data.success) {
           // No sessions available — create one and go to it
-          fetch(url('/api/new-session'), { method: 'POST' })
+          fetch(url('/api/new-session'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sessionName: uiSessionName(),
+              locale: navigator.language,
+              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            }),
+          })
             .then(res => res.json())
             .then(d => {
               if (d.success && d.navigateUrl) {

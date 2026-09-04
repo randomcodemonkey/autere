@@ -8,7 +8,8 @@ interface UseSSEOptions {
 }
 
 const HEARTBEAT_INTERVAL = 3000; // backend sends heartbeat every 3s
-const HEARTBEAT_TIMEOUT = 6000;  // consider dead if no heartbeat within 6s (2 missed)
+const HEARTBEAT_TIMEOUT = 20000; // consider dead if no heartbeat within 20s — mobile browsers suspend JS timers when backgrounded, so short timeouts cause false "disconnected" on return
+const MAX_SILENT_ATTEMPTS = 4;   // reconnect attempts before showing Disconnected (≈2+4+6+8s ≈ 20s)
 
 export function useSSE(options: UseSSEOptions = {}) {
   const { onMessage, autoConnect = true } = options;
@@ -36,14 +37,16 @@ export function useSSE(options: UseSSEOptions = {}) {
     heartbeatTimerRef.current = setInterval(() => {
       const elapsed = Date.now() - lastHeartbeatRef.current;
       if (elapsed > HEARTBEAT_TIMEOUT && connectedRef.current) {
-        console.log(`[autere] No heartbeat for ${Math.round(elapsed / 1000)}s, marking disconnected`);
+        console.log(`[autere] No heartbeat for ${Math.round(elapsed / 1000)}s, reconnecting`);
         connectedRef.current = false;
         setConnected(false);
-        // Force-close the EventSource to trigger reconnect
+        setConnecting(true); // show Loading/Reconnecting, not Disconnected
+        // Force-close the EventSource to trigger reconnect via backoff
         if (eventSourceRef.current) {
           eventSourceRef.current.close();
           eventSourceRef.current = null;
         }
+        setReconnectAttempts((prev) => prev + 1);
       }
     }, 1000); // check every 1s
   }, []);
@@ -87,7 +90,10 @@ export function useSSE(options: UseSSEOptions = {}) {
     es.onerror = () => {
       connectedRef.current = false;
       setConnected(false);
-      setConnecting(false);
+      // Stay in "connecting" (shown as Loading/Reconnecting) during the
+      // backoff retries — a dropped SSE stream is almost always transient
+      // (sleep/wake, network blip, backend restart). Only surface
+      // "Disconnected" after several consecutive failed attempts.
       stopHeartbeatCheck();
       es.close();
       setReconnectAttempts((prev) => prev + 1);
@@ -121,6 +127,7 @@ export function useSSE(options: UseSSEOptions = {}) {
     if (!connected && reconnectAttempts > 0) {
       const timeout = Math.min(2000 * reconnectAttempts, 10000);
       const timer = setTimeout(() => {
+        if (reconnectAttempts >= MAX_SILENT_ATTEMPTS) setConnecting(false); // give up silently → show Disconnected
         connect();
       }, timeout);
       return () => clearTimeout(timer);

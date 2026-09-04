@@ -10,6 +10,13 @@ const VIEW_LABELS: Record<ViewId, string> = {
   tasks: 'Tasks',
 };
 
+// Mobile (hamburger) menu labels — overrides for views whose desktop
+// title doesn't fit the mobile top-bar context
+const MOBILE_VIEW_LABELS: Partial<Record<ViewId, string>> = {
+  status: 'Agent/System',
+};
+const mobileLabel = (id: ViewId) => MOBILE_VIEW_LABELS[id] ?? VIEW_LABELS[id];
+
 interface HeaderProps {
   statusType: string;
   statusText: string;
@@ -67,7 +74,7 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={() => setMenuOpen((o) => !o)}
           >
             <span className="view-menu-hamburger">☰</span>
-            <span className="view-menu-label">{VIEW_LABELS[activeView]}</span>
+            <span className="view-menu-label">{mobileLabel(activeView)}</span>
             <span className="view-menu-caret">{menuOpen ? '▴' : '▾'}</span>
           </button>
           {menuOpen && (
@@ -81,7 +88,7 @@ export const Header: React.FC<HeaderProps> = ({
                     if (id !== activeView) onViewChange(id);
                   }}
                 >
-                  {VIEW_LABELS[id]}
+                  {mobileLabel(id)}
                 </button>
               ))}
             </div>

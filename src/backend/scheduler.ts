@@ -27,7 +27,10 @@ import { USER_SETTINGS_DIR } from './constants.js';
 import { ensurePiEnv } from './pi-env.js';
 import { MonitorRpcClient } from './rpc-client.js';
 import { cronMatches, validateCron } from '../shared/cron.js';
+import { sanitizeUserName } from '../shared/format.js';
 import { log } from './logger.js';
+import { autoSessionName } from './utils.js';
+import { getUserSetting } from './user-settings.js';
 
 // ── Types ──
 
@@ -38,6 +41,9 @@ export interface ScheduledTask {
   schedule: string;
   /** Prompt sent to the pi agent */
   prompt: string;
+  /** Optional model override for this task's runs (falls back to the
+   *  scheduler's default / the user's pi default model when unset) */
+  model?: string;
   /** Optional shell script whose stdout is seeded into the prompt */
   seedScript?: string;
   /** Optional shell script run against the final assistant message (stdin) */
@@ -65,8 +71,8 @@ export interface TaskRunLog extends TaskRunRecord {
   seedOutput?: string;
   agentResult?: string;
   resultScriptOutput?: string;
-  /** Human-readable progress lines */
-  log: string[];
+  /** Progress lines — structured so the UI renders timestamps in the user's locale/tz */
+  log: Array<{ t: number; line: string }>;
 }
 
 export interface SchedulerOptions {
@@ -81,20 +87,16 @@ export interface SchedulerOptions {
 
 // ── Paths ──
 
-function safeUserName(user: string): string {
-  return user.replace(/[^a-zA-Z0-9._-]/g, '_');
-}
-
 function isSafeId(id: string): boolean {
   return /^[\w-]+$/.test(id);
 }
 
 export function userTasksDir(user: string): string {
-  return join(USER_SETTINGS_DIR, safeUserName(user), 'scheduled-tasks');
+  return join(USER_SETTINGS_DIR, sanitizeUserName(user), 'scheduled-tasks');
 }
 
 export function userRunsDir(user: string): string {
-  return join(USER_SETTINGS_DIR, safeUserName(user), 'scheduled-task-logs');
+  return join(USER_SETTINGS_DIR, sanitizeUserName(user), 'scheduled-task-logs');
 }
 
 function taskFile(user: string, taskId: string): string {
@@ -171,6 +173,9 @@ export function validateTaskInput(input: any): string | null {
   if (typeof input.schedule !== 'string' || !input.schedule.trim()) return 'schedule is required';
   const cronErr = validateCron(input.schedule);
   if (cronErr) return `Invalid schedule: ${cronErr}`;
+  if (input.model !== undefined && input.model !== null && input.model !== '' && typeof input.model !== 'string') {
+    return 'model must be a string';
+  }
   for (const key of ['seedScript', 'resultScript'] as const) {
     if (input[key] !== undefined && input[key] !== null && input[key] !== '' && typeof input[key] !== 'string') {
       return `${key} must be a string`;
@@ -385,7 +390,9 @@ export class Scheduler {
       log: [],
     };
     const addLog = (line: string) => {
-      record.log.push(`[${new Date().toISOString()}] ${line}`);
+      // Epoch ms + message — NO backend time formatting; the frontend
+      // renders `t` in the user's locale and timezone.
+      record.log.push({ t: Date.now(), line });
     };
     const writeRecord = () => {
       try {
@@ -405,7 +412,9 @@ export class Scheduler {
     let abortWaiter: (() => void) | null = null;
     const rpc = new MonitorRpcClient({
       provider: this.spawnOptions.provider,
-      model: this.spawnOptions.model,
+      // Per-task model override wins over the scheduler default; when unset
+      // the user's pi default model applies.
+      model: task.model || this.spawnOptions.model,
       args: this.spawnOptions.args,
       agentDir: ensurePiEnv(user),
     });
@@ -430,6 +439,20 @@ export class Scheduler {
         addLog('Starting pi agent for scheduled run');
         await rpc.start();
         if (aborted) throw new Error('Run aborted');
+
+        // Auto-name task-run sessions: "[task] - <user locale + timezone date+time>".
+        // Uses the user's persisted locale/IANA timezone so the name matches
+        // what the user sees in the UI (Intl does the zone conversion).
+        try {
+          const locale = getUserSetting(user, 'locale', '');
+          const timeZone = getUserSetting(user, 'timeZone', '');
+          await rpc.setSessionName(autoSessionName('[task]', {
+            locale: typeof locale === 'string' && locale ? locale : undefined,
+            timeZone: typeof timeZone === 'string' && timeZone ? timeZone : undefined,
+          }));
+        } catch (err) {
+          log.scheduler.error(`Failed to auto-name run session ${runId}:`, err);
+        }
 
         // 2. Seed data into the prompt (optional script)
         let prompt = task.prompt;

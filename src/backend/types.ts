@@ -13,7 +13,10 @@ export interface ExtensionInfo {
   displayName: string;
   configPath: string | null;
   hasConfig: boolean;
+  /** Machine-readable state: 'ok' | 'error' | 'neutral' — drives dot/badge color */
   status: string;
+  /** Human-readable label (e.g. 'Connected', 'Available') — backend-decided */
+  statusText: string;
   details: Record<string, any>;
   /** Optional sections for the details modal (generic list-of-objects view) */
   sections?: ExtensionSection[];
