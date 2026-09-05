@@ -1,10 +1,19 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { url } from '../base-path';
 
+interface AttachedImage {
+  mimeType: string;
+  /** base64 data without the data: URL prefix */
+  data: string;
+}
+
 interface ChatInputProps {
   onNewSession: () => void;
   onCompact?: () => void;
   onError?: (message: string) => void;
+  /** Called after a successful send with the sent text and type — used for
+   * optimistic display of the user message in the chat. */
+  onSent?: (text: string, type: 'prompt' | 'steer' | 'followUp') => void;
   disabled?: boolean; // true when compacting — disables everything
   isStreaming?: boolean; // true when agent is streaming — shows Steer/Followup
   isActive?: boolean; // true when streaming or compacting — blocks /new command
@@ -16,6 +25,9 @@ interface ChatInputProps {
 // insert a newline, not submit.  Users tap the Send button instead.
 const IS_TOUCH_DEVICE = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
 
+const MAX_ATTACHED_IMAGES = 4;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB per image (decoded) — matches backend limit
+
 /** Available slash commands, shown by /help */
 const SLASH_COMMANDS: { cmd: string; description: string }[] = [
   { cmd: '/new', description: 'Start a new session (alias: /clear). Idle only.' },
@@ -23,29 +35,71 @@ const SLASH_COMMANDS: { cmd: string; description: string }[] = [
   { cmd: '/help', description: 'Show available commands.' },
 ];
 
-export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, onError, disabled, isStreaming, isActive, steerPending, followUpPending }) => {
+export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, onError, onSent, disabled, isStreaming, isActive, steerPending, followUpPending }) => {
   const [value, setValue] = useState('');
   const [sending, setSending] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [images, setImages] = useState<AttachedImage[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const autoResize = useCallback(() => {
-    const ta = textareaRef.current;
-    if (ta) {
-      ta.style.height = 'auto';
-      ta.style.height = Math.min(ta.scrollHeight, 150) + 'px';
-    }
+  // NOTE: the textarea has a CONSTANT size in both states (1 row collapsed,
+  // 4 rows expanded — set via `rows`). Overflowing text scrolls inside the
+  // input. The old auto-resize-on-type grew the input row by row, which
+  // resized the stream box on every new line and made the chat scroll
+  // jitter up/down while typing.
+
+  const removeImage = useCallback((idx: number) => {
+    setImages((prev) => prev.filter((_, i) => i !== idx));
   }, []);
+
+  const handleFiles = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const room = MAX_ATTACHED_IMAGES - images.length;
+    if (room <= 0) {
+      onError?.(`At most ${MAX_ATTACHED_IMAGES} images can be attached.`);
+      return;
+    }
+    const selected = Array.from(files).slice(0, room);
+    for (const file of selected) {
+      if (!file.type.startsWith('image/')) {
+        onError?.('Only image attachments are supported.');
+        continue;
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        onError?.(`"${file.name}" is too large (max 8 MB).`);
+        continue;
+      }
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+        const base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
+        setImages((prev) =>
+          prev.length < MAX_ATTACHED_IMAGES ? [...prev, { mimeType: file.type, data: base64 }] : prev
+        );
+      } catch (err) {
+        console.error('Failed to read image file:', err);
+        onError?.(`Failed to read "${file.name}".`);
+      }
+    }
+    // Reset so selecting the same file again still fires onChange
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, [images.length, onError]);
 
   const send = useCallback(async (type: 'prompt' | 'steer' | 'followUp') => {
     const text = value.trim();
-    if (!text) return;
+    if (!text && images.length === 0) return;
 
     // Slash commands are frontend-only — they never reach the backend/LLM.
     if (text.startsWith('/')) {
       const [cmd] = text.split(/\s+/);
       setValue('');
-      if (textareaRef.current) textareaRef.current.style.height = 'auto';
+      if (textareaRef.current) textareaRef.current.style.height = '';
 
       switch (cmd) {
         case '/new':
@@ -78,24 +132,44 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
 
     setSending(true);
     try {
-      const res = await fetch(url('/api/send'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, type }),
-      });
+      // Timeout guard: if the backend event loop is stalled (heavy stream,
+      // memory pressure) the request can hang indefinitely — without this
+      // the input stays disabled forever and only a UI reload recovers.
+      const abort = new AbortController();
+      const timeout = window.setTimeout(() => abort.abort(), 20_000);
+      let res: Response;
+      try {
+        res = await fetch(url('/api/send'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text, type, ...(images.length > 0 ? { images } : {}) }),
+          signal: abort.signal,
+        });
+      } finally {
+        window.clearTimeout(timeout);
+      }
       const data = await res.json();
       if (data.success) {
         setValue('');
-        if (textareaRef.current) textareaRef.current.style.height = 'auto';
+        setImages([]);
+        onSent?.(text, type);
+        // Collapse the expanded input and release focus so the UI returns to
+        // the compact one-row state after sending (Enter submit included).
+        setFocused(false);
+        textareaRef.current?.blur();
+        if (textareaRef.current) textareaRef.current.style.height = '';
         // On mobile, force the browser to recalculate layout after keyboard dismisses
         requestAnimationFrame(() => window.scrollTo(0, 0));
+      } else {
+        onError?.(data.error || 'Failed to send message.');
       }
     } catch (err) {
       console.error('Send error:', err);
+      onError?.('Failed to send message.');
     } finally {
       setSending(false);
     }
-  }, [value, onNewSession, onCompact, onError, isActive]);
+  }, [value, images, sending, onNewSession, onCompact, onError, onSent, isActive]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -106,27 +180,100 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
   };
 
   const isDisabled = sending || disabled;
+  const canSend = !isDisabled && (value.trim().length > 0 || images.length > 0);
+  const expanded = focused;
 
   return (
-    <div className="chat-input-container">
-      <textarea
-        ref={textareaRef}
-        className="chat-input"
-        placeholder={isStreaming ? 'Steer the agent...' : 'Type a message... (/help for commands)'}
-        rows={1}
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          autoResize();
-        }}
-        onKeyDown={handleKeyDown}
-        onBlur={() => {
-          // On mobile, when the keyboard dismisses, the viewport may not
-          // resize correctly, leaving a gray gap.  Scrolling to top forces
-          // the browser to recalculate the layout.
-          requestAnimationFrame(() => window.scrollTo(0, 0));
-        }}
-        disabled={isDisabled}
+    <div className={`chat-input-container${expanded ? ' expanded' : ''}`}>
+      {images.length > 0 && (
+        <div className="chat-attachments">
+          {images.map((img, i) => (
+            <div key={i} className="chat-attachment">
+              <img src={`data:${img.mimeType};base64,${img.data}`} alt={`attachment ${i + 1}`} />
+              <button
+                type="button"
+                className="chat-attachment-remove"
+                aria-label={`Remove attachment ${i + 1}`}
+                onMouseDown={(e) => e.preventDefault()} // keep textarea focus
+                onClick={() => removeImage(i)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {expanded && (
+        <div className="chat-toolbar">
+          <button
+            type="button"
+            className="chat-tool-btn"
+            title="Attach image"
+            aria-label="Attach image"
+            onMouseDown={(e) => e.preventDefault()} // keep textarea focus (no blur collapse)
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isDisabled || images.length >= MAX_ATTACHED_IMAGES}
+          >
+            ⬆️ Upload
+          </button>
+        </div>
+      )}
+      <div className="chat-input-row">
+        <textarea
+          ref={textareaRef}
+          className="chat-input"
+          placeholder={isStreaming ? 'Steer the agent...' : 'Type a message... (/help for commands)'}
+          rows={expanded ? 4 : 1}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            // On mobile, when the keyboard dismisses, the viewport may not
+            // resize correctly, leaving a gray gap.  Scrolling to top forces
+            // the browser to recalculate the layout.
+            requestAnimationFrame(() => window.scrollTo(0, 0));
+          }}
+          disabled={disabled}
+        />
+        {isStreaming ? (
+          <div className="chat-action-buttons">
+            <button
+              className="chat-send-btn chat-steer-btn"
+              onMouseDown={(e) => e.preventDefault()} // keep textarea focus (no collapse)
+              onClick={() => send('steer')}
+              disabled={canSend ? false : true}
+            >
+              Steer{steerPending ? <span className="badge warning pending-count">{steerPending}</span> : null}
+            </button>
+            <button
+              className="chat-send-btn chat-followup-btn"
+              onMouseDown={(e) => e.preventDefault()} // keep textarea focus (no collapse)
+              onClick={() => send('followUp')}
+              disabled={canSend ? false : true}
+            >
+              Follow-up{followUpPending ? <span className="badge warning pending-count">{followUpPending}</span> : null}
+            </button>
+          </div>
+        ) : (
+          <button
+            className="chat-send-btn"
+            onMouseDown={(e) => e.preventDefault()} // keep textarea focus (no collapse)
+            onClick={() => send('prompt')}
+            disabled={canSend ? false : true}
+          >
+            Send
+          </button>
+        )}
+      </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: 'none' }}
+        onChange={(e) => handleFiles(e.target.files)}
       />
       {showHelp && (
         <div className="chat-help-overlay" onClick={() => setShowHelp(false)}>
@@ -141,32 +288,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
             <button className="chat-help-close" onClick={() => setShowHelp(false)}>Close</button>
           </div>
         </div>
-      )}
-      {isStreaming ? (
-        <div className="chat-action-buttons">
-          <button
-            className="chat-send-btn chat-steer-btn"
-            onClick={() => send('steer')}
-            disabled={isDisabled || !value.trim()}
-          >
-            Steer{steerPending ? <span className="badge warning pending-count">{steerPending}</span> : null}
-          </button>
-          <button
-            className="chat-send-btn chat-followup-btn"
-            onClick={() => send('followUp')}
-            disabled={isDisabled || !value.trim()}
-          >
-            Follow-up{followUpPending ? <span className="badge warning pending-count">{followUpPending}</span> : null}
-          </button>
-        </div>
-      ) : (
-        <button
-          className="chat-send-btn"
-          onClick={() => send('prompt')}
-          disabled={isDisabled || !value.trim()}
-        >
-          Send
-        </button>
       )}
     </div>
   );

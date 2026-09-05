@@ -97,6 +97,9 @@ export function DashboardPage({
   const [stats, setStats] = useState<SessionStats>(EMPTY_STATS);
 
   const [streamHistory, setStreamHistory] = useState<StreamMessage[]>([]);
+  // Optimistic user messages: shown immediately after a successful send,
+  // removed once the backend broadcast carries the same text.
+  const [pendingUser, setPendingUser] = useState<StreamMessage[]>([]);
   const [activeTools, setActiveTools] = useState<ActiveTool[]>([]);
   const [recentTools, setRecentTools] = useState<RecentTool[]>([]);
   const [extensions, setExtensions] = useState<ExtensionInfo[]>([]);
@@ -108,6 +111,9 @@ export function DashboardPage({
   const [sessionError, setSessionError] = useState<string | null>(null);
   // True while a session switch request is in flight — shown as a banner
   const [switchingSession, setSwitchingSession] = useState(false);
+  // Label distinguishes a user-initiated switch ("Switching session…") from
+  // a load-time restore via URL / reload ("Loading session…").
+  const [switchLabel, setSwitchLabel] = useState('Switching session…');
   const [showSessionModal, setShowSessionModal] = useState(false);
 
   // SSE message handler
@@ -116,6 +122,38 @@ export function DashboardPage({
   // navigation must NOT affect the newly viewed session's state.
   const viewedSessionRef = useRef<string | null>(null);
   viewedSessionRef.current = urlSessionId || null;
+
+  // stream_delta throttling: latest delta text + scheduled flush timer.
+  // flushPendingDelta applies the buffered text to streamHistory; if a new
+  // streaming entry must be created (first delta of an entry), it does the
+  // same append the old unthrottled path did.
+  const STREAM_DELTA_FLUSH_MS = 100;
+  const pendingDeltaRef = useRef<{ role: 'assistant' | 'thinking'; text: string } | null>(null);
+  const deltaFlushTimerRef = useRef<number | null>(null);
+  const flushPendingDelta = useCallback(() => {
+    deltaFlushTimerRef.current = null;
+    const delta = pendingDeltaRef.current;
+    pendingDeltaRef.current = null;
+    if (!delta) return;
+    setStreamHistory((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === delta.role && last.streaming) {
+        const next = prev.slice();
+        next[next.length - 1] = { ...last, text: delta.text };
+        return next;
+      }
+      // Entry was finalized between buffering and flush (stream_history won
+      // the race) — don't re-append it as a streaming entry.
+      if (last && last.role === delta.role && !last.streaming && last.text === delta.text) return prev;
+      // Start of a new streaming entry (backend buffer already has it)
+      return [...prev, { role: delta.role, text: delta.text, streaming: true, timestamp: Date.now() } as any];
+    });
+  }, []);
+  // Clear any scheduled flush on unmount
+  useEffect(() => () => {
+    if (deltaFlushTimerRef.current !== null) clearTimeout(deltaFlushTimerRef.current);
+    deltaFlushTimerRef.current = null;
+  }, []);
   // Canonical session id (pi's id may drift from the URL's file-derived id)
   const canonicalSessionIdRef = useRef<string | null>(null);
   canonicalSessionIdRef.current = sessionState.sessionId;
@@ -153,6 +191,9 @@ export function DashboardPage({
         // Ignore history from a session other than the one being viewed
         // (defense against cross-session bleed during switch races).
         const viewed = viewedSessionRef.current;
+        // A full-history snapshot supersedes any pending delta — drop it so
+        // a late flush can't re-append already-finalized text.
+        pendingDeltaRef.current = null;
         if (msg.sessionId && viewed && msg.sessionId !== viewed) break;
         // Ignore EMPTY snapshots that carry no session id — that shape only
         // comes from the SSE connect-time initializer. Applying it would
@@ -162,8 +203,85 @@ export function DashboardPage({
         // what is already rendered — re-applying identical content rebuilds
         // the DOM for nothing.
         const incoming = msg.data || [];
-        if (JSON.stringify(streamHistoryRef.current) === JSON.stringify(incoming)) break;
+        // Retire optimistic copies whose text now exists in the real history
+        setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incoming as StreamMessage[]).some((m) => m.role === 'user' && m.text === p.text)));
+        // Skip no-op updates: the connect-time replay may deliver exactly
+        // what is already rendered — re-applying identical content rebuilds
+        // the DOM for nothing. Compare via a cheap signature (lengths only)
+        // — JSON.stringify here previously copied multi-MB buffers twice
+        // on every history event and janked the main thread.
+        const sig = (list: StreamMessage[]) => `${list.length}:${list.map((m) => (m.text || '').length).join(',')}`;
+        if (sig(streamHistoryRef.current) === sig(incoming)) break;
         setStreamHistory(incoming);
+        break;
+      }
+      case 'history_upsert': {
+        // Targeted live mutation: replace-by-stable-id or append. Full
+        // stream_history snapshots now only arrive on reconnect/reload/
+        // session switch — live turns use this lightweight event.
+        const viewed = viewedSessionRef.current;
+        if (msg.sessionId && viewed && msg.sessionId !== viewed) break;
+        const incoming = (msg.data || []) as StreamMessage[];
+        if (incoming.length === 0) break;
+        // Upserts are authoritative for the text they carry — drop any
+        // buffered delta so a late flush can't clobber finalized text.
+        pendingDeltaRef.current = null;
+        setStreamHistory((prev) => {
+          const next = [...prev];
+          let changed = false;
+          for (const e of incoming) {
+            if (!e) continue;
+            // Match priority: stable id → originating tool call → same-role
+            // streaming entry (finalize) → identical text. The fallbacks
+            // cover entries received before ids existed (bootstrap reads)
+            // and role-changing replacements (toolCall → toolResult).
+            let i = e.id ? next.findIndex((m) => m.id === e.id) : -1;
+            if (i < 0 && e.toolCallId) i = next.findIndex((m) => m.toolCallId === e.toolCallId);
+            if (i < 0 && e.role !== 'user') {
+              // Never text-match user entries: two identical user messages
+              // are legitimate — they must append, not replace.
+              for (let k = next.length - 1; k >= 0; k--) {
+                const m = next[k];
+                if (m.role === e.role && (m.streaming || (m.text || '') === (e.text || ''))) { i = k; break; }
+              }
+            }
+            if (i >= 0) next[i] = e;
+            else next.push(e);
+            changed = true;
+          }
+          return changed ? next : prev;
+        });
+        // A committed user entry retires its optimistic pending copy
+        setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !incoming.some((m) => m.role === 'user' && !m.streaming && m.text === p.text)));
+        break;
+      }
+      case 'history_remove': {
+        const viewed = viewedSessionRef.current;
+        if (msg.sessionId && viewed && msg.sessionId !== viewed) break;
+        const ids = new Set((msg.data || []) as string[]);
+        if (ids.size === 0) break;
+        setStreamHistory((prev) => prev.filter((m) => !m.id || !ids.has(m.id)));
+        break;
+      }
+      case 'stream_delta': {
+        // Lightweight per-token update: carries only the streaming entry's
+        // role and current text — never the full history buffer (which may
+        // contain multi-MB base64 images).
+        //
+        // THROTTLED: deltas can arrive dozens of times per second, and each
+        // unthrottled setState re-renders (and re-parses markdown for) the
+        // growing streaming message, which janks the main thread and makes
+        // typing in ChatInput stutter. Buffer the latest text in a ref and
+        // flush to state at most every STREAM_DELTA_FLUSH_MS.
+        const viewed = viewedSessionRef.current;
+        if (msg.sessionId && viewed && msg.sessionId !== viewed) break;
+        const role = msg.data?.role;
+        const text = msg.data?.text ?? '';
+        if (role !== 'assistant' && role !== 'thinking') break;
+        pendingDeltaRef.current = { role, text };
+        if (deltaFlushTimerRef.current === null) {
+          deltaFlushTimerRef.current = window.setTimeout(flushPendingDelta, STREAM_DELTA_FLUSH_MS);
+        }
         break;
       }
       case 'models':
@@ -182,9 +300,11 @@ export function DashboardPage({
         setActiveTools((prev) => prev.filter((t) => t.id !== msg.data.id));
         if (msg.data.recentTools) setRecentTools(msg.data.recentTools);
         break;
-      case 'external_activity': {
-        // Cross-session 'active elsewhere' signal. Accept both the URL id and
-        // the canonical sessionState id — pi id-drift can make them differ.
+      case 'session_activity': {
+        // 'Active elsewhere' signal from the per-user peer hub: another of
+        // the user's devices started/stopped driving this session. Accept
+        // both the URL id and the canonical sessionState id — pi id-drift
+        // can make them differ.
         const esid = msg.data?.sessionId;
         if (esid && (esid === viewedSessionRef.current || esid === canonicalSessionIdRef.current)) {
           setSessionState((prev) => ({ ...prev, externalActivity: !!msg.data.active }));
@@ -205,6 +325,11 @@ export function DashboardPage({
   // response — same shape) to the UI state.
   const applyBootstrap = useCallback((d: any) => {
     setSessionState((prev: any) => ({ ...prev, ...d.sessionState, sessionId: d.sessionState?.sessionId ?? prev.sessionId }));
+    // Initial 'active elsewhere' state for the bootstrapped session —
+    // computed live by the backend from its per-user peer registry.
+    if (d.sessionActivity && (!viewedSessionRef.current || !d.historySessionId || d.historySessionId === viewedSessionRef.current)) {
+      setSessionState((prev: any) => ({ ...prev, externalActivity: !!d.sessionActivity.active }));
+    }
     if (d.sessionStats) setStats(d.sessionStats);
     setActiveTools(d.activeTools ?? []);
     setRecentTools(d.recentTools ?? []);
@@ -212,6 +337,7 @@ export function DashboardPage({
     const viewed = viewedSessionRef.current;
     if (!viewed || !d.historySessionId || d.historySessionId === viewed) {
       setStreamHistory(d.streamHistory ?? []);
+      setPendingUser([]);
     }
     setAvailableSessions(d.availableSessions ?? []);
     setModels(d.availableModels ?? []);
@@ -263,6 +389,14 @@ export function DashboardPage({
   // causing a visible flash on every (re)load).
   const historyRenderedForRef = useRef<string | null>(null);
 
+  // Whether the in-flight switch-by-id was initiated FROM the sessions modal
+  // (user clicked a session in the list). Only then does completing the
+  // switch close the modal. Automatic switches (SSE reconnect re-sync,
+  // id-alias resolution after programmatic navigation) must NOT close a
+  // modal the user has open — that made the sessions modal blink shut on
+  // devices whenever a background re-sync raced with opening it.
+  const modalSwitchRef = useRef<boolean>(false);
+
   // When URL changes (browser back/forward, direct navigation, or programmatic
   // navigate), send a switch request. React Router handles the URL — we just
   // react to param changes.
@@ -282,6 +416,9 @@ export function DashboardPage({
     // switch the backend — it would switch BACK to the stale URL's session
     // right after creating a new one, sending subsequent messages there.
     if (!urlChanged) return;
+    // No session loaded yet (page reload / direct URL entry) → this is an
+    // initial load, not a user-initiated switch.
+    setSwitchLabel(sessionState.sessionId ? 'Switching session…' : 'Loading session…');
     setSwitchingSession(true);
     fetch(url('/api/sessions/switch-by-id'), {
       method: 'POST',
@@ -296,7 +433,12 @@ export function DashboardPage({
         applyBootstrap(data.data);
         historyRenderedForRef.current = sid;
         setSwitchingSession(false);
-        setShowSessionModal(false);
+        // Close the sessions modal only when the switch was user-initiated
+        // from within it (see modalSwitchRef above).
+        if (modalSwitchRef.current) {
+          modalSwitchRef.current = false;
+          setShowSessionModal(false);
+        }
         // The backend may resolve an id alias (e.g. a stale filename id)
         // to the canonical session id — sync the URL to it.
         const resolved = data.data.sessionState?.sessionId;
@@ -316,7 +458,9 @@ export function DashboardPage({
 
   // Clear per-session UI state (used when entering a fresh session)
   const resetSessionUI = useCallback(() => {
+    pendingDeltaRef.current = null; // drop stale delta from the previous session
     setStreamHistory([]);
+    setPendingUser([]);
     setStats(EMPTY_STATS);
     setActiveTools([]);
     setRecentTools([]);
@@ -409,6 +553,9 @@ export function DashboardPage({
 
   const handleSwitchSession = useCallback((sessionId: string) => {
     setSessionError(null);
+    // Mark the upcoming (navigation-triggered) switch as user-initiated so
+    // its completion closes the sessions modal. Automatic switches don't.
+    modalSwitchRef.current = true;
     // Navigate to the target session — the URL 'view' param defaults to chat,
     // so no explicit view change is needed. (Calling handleSetView('chat')
     // here would navigate BACK to the previous urlSessionId and swallow the
@@ -418,6 +565,14 @@ export function DashboardPage({
   }, [navigate]);
 
   const activeModelId = sessionState.model?.id || null;
+  // Optimistic pending copies whose text is already committed to the real
+  // history are hidden. Retirement by event ordering is unreliable: the
+  // backend broadcasts the user entry (history_upsert) BEFORE the send
+  // response returns, so the optimistic copy is created after the real one
+  // and no upsert ever targets it again.
+  const visiblePendingUser = pendingUser.filter(
+    (p) => !streamHistory.some((m) => m.role === 'user' && !m.streaming && m.text === p.text),
+  );
   const { type: statusType, text: statusText } = computeStatus(baseStatusType, baseStatusText, sessionState);
 
   if (creatingSession) {
@@ -469,7 +624,7 @@ export function DashboardPage({
         </div>
         <div className={`chat-wrapper${sessionState.externalActivity ? ' chat-external-activity' : ''}`}>
           {activeView === 'chat' && (
-            <StreamCard messages={streamHistory} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} />
+            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text, type) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} />
           )}
           {activeView === 'settings' && (
             <SettingsCard sseConnected={sseConnected} />
@@ -512,7 +667,7 @@ export function DashboardPage({
             boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
           }}
         >
-          Switching session…
+          {switchLabel}
         </div>
       )}
       <Modal open={!!sessionError} onClose={() => setSessionError(null)} className="modal-status">

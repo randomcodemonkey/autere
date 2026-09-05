@@ -93,10 +93,6 @@ async function main() {
     args: config.piArgs,
     idleTimeoutMs: config.idleTimeoutMinutes * 60 * 1000,
     resumeLastSession: !config.newSession,
-    // Isolation mode: each user's session listing excludes the legacy global
-    // sessions dir — used by e2e tests so they never see (or navigate into)
-    // sessions belonging to real users.
-    isolatedSessions: config.newSession,
   });
 
   // Start the scheduler — spawns dedicated pi processes per scheduled run

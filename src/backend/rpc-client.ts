@@ -14,7 +14,7 @@ import type {
   RpcSessionState,
   JsonAgentSessionEvent,
 } from '@earendil-works/pi-coding-agent';
-import { log } from './logger.js';
+import { log, Logger } from './logger.js';
 
 // Inline types not exported from the package
 interface ModelInfo {
@@ -23,6 +23,14 @@ interface ModelInfo {
   name?: string;
   contextWindow?: number;
   reasoning?: boolean;
+}
+
+/** Image attachment sent with prompt/steer/follow_up (pi ImageContent format) */
+export interface RpcImage {
+  type: 'image';
+  /** base64-encoded image data (no data: URL prefix) */
+  data: string;
+  mimeType: string;
 }
 
 // ── Types ──
@@ -99,6 +107,8 @@ export class MonitorRpcClient {
   private exitError: Error | null = null;
   private options: RpcClientOptions;
   private _state: RpcSessionState | null = null;
+  /** Logger bound to pi process PID — available after start() */
+  private piLog: Logger | null = null;
 
   constructor(options: RpcClientOptions = {}) {
     this.options = options;
@@ -164,10 +174,17 @@ export class MonitorRpcClient {
       process.removeListener('exit', parentExit);
     });
 
-    // Collect stderr for debugging
+    // Create a PID-bound logger for pi's own output (stderr → err.log, stdout non-JSON → out.log)
+    this.piLog = new Logger('pi', `pid=${childProcess.pid}`);
+
+    // Route pi's stderr through autere's logger (→ err.log) with process identification
     childProcess.stderr?.on('data', (data: Buffer) => {
-      this.stderr += data.toString();
-      process.stderr.write(data);
+      const text = data.toString();
+      this.stderr += text;
+      for (const raw of text.split('\n')) {
+        const line = raw.replace(/\r$/, '');
+        if (line) this.piLog!.warn(`[pi-stderr] ${line}`);
+      }
     });
 
     childProcess.once('exit', (code: number | null, signal: string | null) => {
@@ -270,19 +287,19 @@ export class MonitorRpcClient {
 
   // ── Commands ──
 
-  async prompt(message: string): Promise<void> {
-    log.rpc.debug(`RPC: prompt("${message.slice(0, 80)}${message.length > 80 ? '…' : ''}")`);
-    await this.send({ type: 'prompt', message });
+  async prompt(message: string, images?: RpcImage[]): Promise<void> {
+    log.rpc.debug(`RPC: prompt("${message.slice(0, 80)}${message.length > 80 ? '…' : ''}")${images?.length ? ` +${images.length} image(s)` : ''}`);
+    await this.send({ type: 'prompt', message, ...(images?.length ? { images } : {}) });
   }
 
-  async steer(message: string): Promise<void> {
-    log.rpc.debug(`RPC: steer("${message.slice(0, 80)}${message.length > 80 ? '…' : ''}")`);
-    await this.send({ type: 'steer', message });
+  async steer(message: string, images?: RpcImage[]): Promise<void> {
+    log.rpc.debug(`RPC: steer("${message.slice(0, 80)}${message.length > 80 ? '…' : ''}")${images?.length ? ` +${images.length} image(s)` : ''}`);
+    await this.send({ type: 'steer', message, ...(images?.length ? { images } : {}) });
   }
 
-  async followUp(message: string): Promise<void> {
-    log.rpc.debug(`RPC: follow_up("${message.slice(0, 80)}${message.length > 80 ? '…' : ''}")`);
-    await this.send({ type: 'follow_up', message });
+  async followUp(message: string, images?: RpcImage[]): Promise<void> {
+    log.rpc.debug(`RPC: follow_up("${message.slice(0, 80)}${message.length > 80 ? '…' : ''}")${images?.length ? ` +${images.length} image(s)` : ''}`);
+    await this.send({ type: 'follow_up', message, ...(images?.length ? { images } : {}) });
   }
 
   async abort(): Promise<void> {
@@ -376,7 +393,8 @@ export class MonitorRpcClient {
         }
       }
     } catch {
-      // Ignore non-JSON lines
+      // Non-JSON output from pi (debug prints, extension logs, etc.) — route to out.log
+      this.piLog?.debug(`[pi-stdout] ${line}`);
     }
   }
 

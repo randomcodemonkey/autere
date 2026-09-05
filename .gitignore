@@ -12,3 +12,6 @@ cypress/screenshots/
 cypress/videos/
 cypress/downloads/
 core.*
+
+# nested extension node_modules
+**/node_modules/*

@@ -18,6 +18,8 @@ interface StreamCardProps {
   models?: AvailableModel[];
   activeModelId?: string | null;
   onModelsFetched?: (models: AvailableModel[]) => void;
+  /** Called after a successful send (for optimistic user-message display) */
+  onSent?: (text: string, type: 'prompt' | 'steer' | 'followUp') => void;
 }
 
 /** Truncation limits per role (characters), for non-edit messages */
@@ -31,7 +33,7 @@ const TRUNC_LEN: Record<string, number> = {
 /** Collapse edit diffs longer than this many diff rows */
 const EDIT_COLLAPSE_ROWS = 12;
 
-export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError, steerPending, followUpPending, model, externalActivity, models, activeModelId, onModelsFetched }) => {
+export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError, steerPending, followUpPending, model, externalActivity, models, activeModelId, onModelsFetched, onSent }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const [filters, setFilters] = useState({
     thinking: localStorage.getItem('autere-filter-thinking') !== 'off',
@@ -41,16 +43,25 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
 
   // Generate a stable key based on message content, not array index
   const getKey = useCallback((msg: StreamMessage, idx: number): string => {
+    // Prefer the stable backend-assigned id: it survives text changes,
+    // entry insertions/removals and buffer trimming — so React keeps the
+    // component instance (expansion state, scroll anchoring) intact.
+    if (msg.id) return msg.id;
     if (msg.streaming) {
       return `streaming-${msg.role}-${idx}`;
     }
+    // STABLE across text changes: keying on the text hash would remount the
+    // DOM node whenever the text changes (stream finalize), which breaks the
+    // browser's scroll anchoring — the content the user is reading jumps
+    // away from their scroll position.
+    const ts = msg.timestamp || 0;
+    if (ts) return `msg-${msg.role}-${ts}-${idx}`;
     const text = msg.text || '';
     let hash = 0;
     for (let i = 0; i < Math.min(text.length, 200); i++) {
       hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
     }
-    const ts = msg.timestamp || 0;
-    return `msg-${msg.role}-${hash}-${ts}`;
+    return `msg-${msg.role}-${hash}-${idx}`;
   }, []);
 
   // Filter messages: skip empty non-streaming entries, and apply user filters
@@ -148,13 +159,42 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     return () => box.removeEventListener('load', onLoad, true);
   }, []);
 
+  // Keep the chat pinned to the bottom when the box RESIZES — e.g. focusing
+  // the chat input expands it and shrinks this box, which would otherwise
+  // leave the view scrolled up by the height delta.
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box || typeof ResizeObserver === 'undefined') return;
+    let lastHeight = box.clientHeight;
+    const ro = new ResizeObserver(() => {
+      if (box.clientHeight === lastHeight) return;
+      lastHeight = box.clientHeight;
+      if (isAtBottomRef.current) {
+        programmaticScrollRef.current = true;
+        box.scrollTop = box.scrollHeight;
+      }
+    });
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, []);
+
   // Auto-scroll when messages change, but only if user is at bottom
+  // NOTE: the messages array is rebuilt by the parent on every render (e.g.
+  // `[...streamHistory, ...pendingUser]`), so it changes REFERENCE even when
+  // no message content changed (periodic stats/status SSE updates). Without
+  // the content-signature check below, scrolling up + any no-op update
+  // flipped the label to "New messages" with nothing actually new.
+  const lastContentSigRef = useRef<string | null>(null);
   useLayoutEffect(() => {
     const box = boxRef.current;
+    const last = messages[messages.length - 1];
+    const sig = `${messages.length}:${last?.id ?? ''}:${last?.role ?? ''}:${(last?.text || '').length}:${last?.images?.length ?? 0}`;
+    const contentChanged = sig !== lastContentSigRef.current;
+    lastContentSigRef.current = sig;
     if (box && isAtBottomRef.current) {
       programmaticScrollRef.current = true;
       box.scrollTop = box.scrollHeight;
-    } else if (!isAtBottomRef.current) {
+    } else if (!isAtBottomRef.current && contentChanged) {
       setHasNewContent(true);
     }
   }, [messages, isStreaming]);
@@ -294,7 +334,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
           </button>
         )}
       </div>
-      <ChatInput onNewSession={onNewSession} onCompact={onCompact} onError={onCommandError} disabled={compacting || externalActivity} isStreaming={isStreaming} isActive={isStreaming || compacting} steerPending={steerPending} followUpPending={followUpPending} />
+      <ChatInput onNewSession={onNewSession} onCompact={onCompact} onError={onCommandError} disabled={compacting || externalActivity} isStreaming={isStreaming} isActive={isStreaming || compacting} steerPending={steerPending} followUpPending={followUpPending} onSent={onSent} />
     </div>
   );
 };

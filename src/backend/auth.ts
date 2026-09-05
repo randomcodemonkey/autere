@@ -7,10 +7,10 @@
 import { IncomingMessage, ServerResponse } from 'http';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
-import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { AUTH_TOKENS_FILE, AUTH_TOKEN_EXPIRY_MS } from './constants.js';
 import { log } from './logger.js';
+import { getPiEnvDir } from './pi-env.js';
 import { parseCookies } from '../shared/format.js';
 
 export { parseCookies };
@@ -199,32 +199,47 @@ export function getAuthPassword(): string {
   return authPassword;
 }
 
-// ── Last session per token (each login session tracks its own) ──
+// ── Last session per user+token (each login session tracks its own) ──
+// Stored INSIDE the user's pi environment so it is automatically scoped:
+// another user (or an isolated e2e env) can never see, resume, or corrupt
+// another environment's last-session pointer. The previous global
+// ~/.autere/monitor-last-session.json leaked exactly that way — an e2e
+// backend resolved the real admin's last session and resumed it.
 
-const LAST_SESSION_FILE = join(homedir(), '.autere', 'monitor-last-session.json');
+function lastSessionFile(user: string): string {
+  return join(getPiEnvDir(user), 'last-session.json');
+}
 
-export function getLastSession(token: string): string | null {
+export function getLastSession(user: string, token: string): string | null {
   try {
-    if (existsSync(LAST_SESSION_FILE)) {
-      const data = JSON.parse(readFileSync(LAST_SESSION_FILE, 'utf-8'));
-      return data[token] || null;
+    const file = lastSessionFile(user);
+    if (existsSync(file)) {
+      const data = JSON.parse(readFileSync(file, 'utf-8'));
+      const entry = data[token] || null;
+      if (typeof entry !== 'string') return null;
+      // Defense in depth: only ever resume sessions that live in THIS
+      // user's env — a stale/corrupted/global pointer is ignored.
+      const envSessions = join(getPiEnvDir(user), 'sessions');
+      if (!entry.startsWith(envSessions)) return null;
+      return entry;
     }
   } catch {}
   return null;
 }
 
-export function setLastSession(token: string, sessionFile: string): void {
+export function setLastSession(user: string, token: string, sessionFile: string): void {
   try {
+    const file = lastSessionFile(user);
     let data: Record<string, string> = {};
-    if (existsSync(LAST_SESSION_FILE)) {
-      data = JSON.parse(readFileSync(LAST_SESSION_FILE, 'utf-8'));
+    if (existsSync(file)) {
+      data = JSON.parse(readFileSync(file, 'utf-8'));
     }
     data[token] = sessionFile;
-    const dir = dirname(LAST_SESSION_FILE);
+    const dir = dirname(file);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const tmp = join(dir, `.last-session-tmp-${randomUUID()}`);
     writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
-    renameSync(tmp, LAST_SESSION_FILE);
+    renameSync(tmp, file);
   } catch (err) {
     log.auth.error('Failed to save last session:', err);
   }

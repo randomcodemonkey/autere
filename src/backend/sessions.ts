@@ -1,7 +1,6 @@
 import { readFileSync, readdirSync, existsSync, openSync, readSync, closeSync, fstatSync, statSync } from 'fs';
 import { join } from 'path';
 import { SessionInfo } from './types.js';
-import { PI_DIR } from './constants.js';
 import { getPiEnvDir } from './pi-env.js';
 import { log } from './logger.js';
 
@@ -12,7 +11,6 @@ import { log } from './logger.js';
  */
 export { findSession } from '../shared/find-session.js';
 
-const SESSIONS_DIR = join(PI_DIR, 'sessions');
 
 // ── Partial session file reading ──
 // Session JSONL layout: line 1 is always the session header (id, timestamp);
@@ -173,16 +171,13 @@ function readSessionInfoFull(fullPath: string): SessionInfo | null {
 // ── Session listing ──
 
 /**
- * Read session files, user-scoped.
- *
- * With per-user pi environments, each user's sessions live in
- * ~/.autere/pi-envs/{user}/sessions. Passing a user scans only that
- * user's environment (plus optionally the legacy global ~/.pi/agent
- * sessions, which predate per-user envs). Without a user, scans the
- * global dir and ALL user envs — only appropriate for tools that need
- * a global view; dashboard routes should always pass the user.
+ * Read session files for ONE user — exclusively from that user's own pi
+ * environment (~/.autere/pi-envs/{user}/sessions). The default pi location
+ * (~/.pi/agent) is never consulted here: the global "admin sees legacy
+ * sessions" hack was removed — the global dir belongs to the operator's
+ * own CLI pi, not to any autere user.
  */
-export function readSessions(user?: string, includeGlobal: boolean = true): SessionInfo[] {
+export function readSessions(user: string): SessionInfo[] {
   try {
     const sessions: SessionInfo[] = [];
 
@@ -205,15 +200,8 @@ export function readSessions(user?: string, includeGlobal: boolean = true): Sess
       }
     }
 
-    // Legacy global sessions (pre-per-user-env, and CLI sessions)
-    if (includeGlobal) {
-      findJsonlFiles(SESSIONS_DIR);
-    }
-
-    // The user's own pi environment sessions
-    if (user) {
-      findJsonlFiles(join(getPiEnvDir(user), 'sessions'));
-    }
+    // The user's own pi environment sessions — the ONLY source
+    findJsonlFiles(join(getPiEnvDir(user), 'sessions'));
 
     sessions.sort((a, b) => b.lastActivity - a.lastActivity);
     return sessions;

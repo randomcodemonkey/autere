@@ -70,7 +70,12 @@ describe('StreamCard', () => {
         <StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} />
       </div>
     );
-    // Autoscroll on mount → at bottom → button hidden
+    // Autoscroll on mount → at bottom → button hidden.
+    // The mount autoscroll runs in React's async passive-effect flush, so
+    // give it a tick to land before scrolling up (otherwise it can fire
+    // after our scroll-up and yank the box back to the bottom).
+    cy.get('.scroll-to-bottom').should('not.exist');
+    cy.wait(100);
     cy.get('.scroll-to-bottom').should('not.exist');
     // Scroll up → button appears with default label
     cy.get('.stream-box').then(($box) => {
@@ -106,6 +111,29 @@ describe('StreamCard', () => {
       .and('have.attr', 'src', 'data:image/png;base64,aGVsbG8=');
   });
 
+  it('stays scrolled to bottom when the chat input expands on focus', () => {
+    const messages: StreamMessage[] = Array.from({ length: 30 }, (_, i) => ({
+      role: 'assistant',
+      text: `filler message ${i}`,
+      streaming: false,
+    }));
+    cy.mount(<StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} />);
+    // Wait for mount autoscroll to settle, then confirm we're at bottom
+    cy.wait(150);
+    cy.get('.stream-box').then(($box) => {
+      const el = $box[0];
+      expect(el.scrollTop + el.clientHeight).to.be.closeTo(el.scrollHeight, 2);
+    });
+    // Focus the input — the expanded textarea shrinks the stream box;
+    // the view must remain pinned to the bottom.
+    cy.get('.chat-input').focus();
+    cy.wait(100);
+    cy.get('.stream-box').then(($box) => {
+      const el = $box[0];
+      expect(el.scrollTop + el.clientHeight).to.be.closeTo(el.scrollHeight, 2);
+    });
+  });
+
   it('opens image lightbox on click and closes on click', () => {
     const messages: StreamMessage[] = [
       {
@@ -120,7 +148,18 @@ describe('StreamCard', () => {
     cy.get('.stream-images .stream-image').click();
     cy.get('.image-lightbox').should('exist');
     cy.get('.image-lightbox img').should('have.attr', 'src', 'data:image/jpeg;base64,aGVsbG8=');
-    cy.get('.image-lightbox').click();
+    // Double-click zooms in and back out
+    cy.get('.image-lightbox img').dblclick();
+    cy.get('.image-lightbox img').should('have.attr', 'style').and('contain', 'scale(2.5)');
+    cy.get('.image-lightbox img').dblclick();
+    cy.get('.image-lightbox img').should('have.attr', 'style').and('contain', 'scale(1)');
+    // Wheel zooms in; tap while zoomed does NOT close
+    cy.get('.image-lightbox img').trigger('wheel', { deltaY: -100 });
+    cy.get('.image-lightbox img').should('have.attr', 'style').and('not.contain', 'scale(1)');
+    cy.get('.image-lightbox img').click();
+    cy.get('.image-lightbox').should('exist');
+    // Tap on the backdrop (not the image) closes
+    cy.get('.image-lightbox').click('topLeft');
     cy.get('.image-lightbox').should('not.exist');
   });
 

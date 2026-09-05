@@ -199,6 +199,7 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
         try { config = JSON.parse(readFileSync(configPath, 'utf-8')); } catch {}
       }
       config.imageModel = settings.imageModel || '';
+      if ('imageExtraPrompt' in settings) config.imageExtraPrompt = settings.imageExtraPrompt || '';
       const tmp = join(envDir, `.9router-config-tmp-${randomUUID()}`);
       writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf-8');
       renameSync(tmp, configPath);
@@ -260,6 +261,7 @@ function getUserSettingsDefaults(user: string): UserSettings {
 
   // pi-images: selected image model (stored in 9router-config.json)
   defaults.imageModel = nineRouterConfig?.imageModel || '';
+  defaults.imageExtraPrompt = nineRouterConfig?.imageExtraPrompt ?? undefined;
 
   // Pi settings defaults
   defaults.enabledModels = readJsonCached(join(PI_DIR, 'settings.json'))?.enabledModels || [];
@@ -338,6 +340,12 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
           description: imageModelOptions.length > 0
             ? 'Model used to generate images (e.g. "draw me a panda"). Empty = auto-select the first available.'
             : 'No image-capable models found on 9router. Add an upstream with image output support, then reload settings.',
+        },
+        {
+          key: 'imageExtraPrompt',
+          label: 'Extra Image Prompt',
+          type: 'text',
+          description: 'Appended to image-edit requests. Default: instruct the model to change the original as little as possible and only apply the requested edit. Empty = use default.',
         },
       ],
     });

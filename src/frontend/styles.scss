@@ -51,6 +51,11 @@ html, body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: #1a1a1a;
   color: #d4d4d4;
+  // Prevent iOS Safari/WebKit from inflating font sizes in landscape
+  // (its automatic "text size adjustment" — the standard way to opt out
+  // is 100%, which keeps font sizes identical in both orientations).
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -1097,6 +1102,9 @@ body {
   padding: 0.75rem 1rem;
   height: 100%;
   overflow-y: auto;
+  // Let the browser anchor the scroll position to nearby content when
+  // content around the viewport changes size (complements JS autoscroll).
+  overflow-anchor: auto;
   font-size: 0.8rem;
   line-height: 1.5;
 
@@ -1178,10 +1186,22 @@ body {
 }
 
 .stream-role-user      { color: var(--c-warning); }
+
+// Optimistic (not yet confirmed by backend broadcast) user message
+.stream-msg-pending {
+  opacity: 0.6;
+}
+.stream-pending-indicator {
+  color: var(--c-muted);
+  font-size: 0.65rem;
+  font-style: italic;
+  margin-left: 0.4rem;
+}
 .stream-role-assistant { color: #60a5fa; }
 .stream-role-thinking  { color: #a78bfa; font-style: italic; }
 .stream-role-tool      { color: #a78bfa; }
 .stream-role-toolResult { color: #a78bfa; }
+.stream-role-image { color: #f0abfc; }
 .stream-role-edit     { color: #6d28d9; }
 .stream-role-edit.stream-role-error { color: var(--c-danger); }
 .stream-role-system    { color: #666; font-style: italic; }
@@ -1482,6 +1502,13 @@ body {
     object-fit: contain;
     border-radius: 0;
   }
+
+  // Pinch-to-zoom image inside the lightbox (transformed by ZoomableImage)
+  img.zoomable-image {
+    will-change: transform;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
 }
 
 .stream-text-truncated {
@@ -1517,11 +1544,102 @@ body {
 .chat-input-container {
   flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid #333;
   position: relative;
+
+  // Expanded (focused) state: attachments + toolbar above the input,
+  // which grows to a real multi-row textarea
+  &.expanded {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+// Toolbar shown when the input is expanded (focused)
+.chat-toolbar {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.chat-tool-btn {
+  background: #222;
+  border: 1px solid #444;
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.7rem;
+  color: #d4d4d4;
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover:not(:disabled) {
+    background: #333;
+    border-color: #666;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+// Thumbnail previews of attached images
+.chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chat-attachment {
+  position: relative;
+  width: 3.5rem;
+  height: 3.5rem;
+  border: 1px solid #444;
+  border-radius: 0.4rem;
+  overflow: visible;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 0.35rem;
+    display: block;
+  }
+}
+
+.chat-attachment-remove {
+  position: absolute;
+  top: -0.45rem;
+  right: -0.45rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  border: 1px solid #666;
+  background: #222;
+  color: #d4d4d4;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+
+  &:hover {
+    background: #a33;
+    border-color: #c44;
+  }
 }
 
 .scroll-down-btn {
@@ -1559,7 +1677,7 @@ body {
   outline: none;
   transition: border-color 0.15s;
   resize: none;
-  overflow-y: hidden;
+  overflow-y: auto; // constant-size input: overflow scrolls inside
   min-height: 2.2rem;
   max-height: 150px;
   line-height: 1.4;

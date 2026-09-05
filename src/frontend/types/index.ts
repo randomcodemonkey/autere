@@ -37,7 +37,10 @@ export interface SessionStats {
 
 export interface StreamImage {
   mimeType: string;
-  data: string; // base64
+  /** base64 payload (only present if the backend could not persist to disk) */
+  data?: string;
+  /** URL of the image served from the user's pi env (preferred) */
+  url?: string;
 }
 
 export interface StreamMessage {
@@ -51,6 +54,12 @@ export interface StreamMessage {
   toolCall?: { name: string; cmd: string };
   /** Live only: id used to replace a streaming toolCall with its result */
   toolCallId?: string;
+  /** Optimistic frontend-only message — shown with a pending indicator until
+   * the backend broadcast with the same text arrives. */
+  pending?: boolean;
+  /** Stable backend-assigned id — never changes across broadcasts, so React
+   * keys (and thus expansion state, scroll anchoring) survive updates. */
+  id?: string;
 }
 
 export interface ActiveTool {
@@ -126,6 +135,9 @@ export type SSEEventType =
   | 'status'
   | 'stats'
   | 'stream_history'
+  | 'history_upsert'
+  | 'history_remove'
+  | 'stream_delta'
   | 'message'
   | 'tool_start'
   | 'tool_end'
@@ -135,7 +147,7 @@ export type SSEEventType =
   | 'new_session_creating'
   | 'navigate'
   | 'error'
-  | 'external_activity'
+  | 'session_activity'
   | 'heartbeat';
 export interface SSEMessage {
   type: SSEEventType;

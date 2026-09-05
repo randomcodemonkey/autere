@@ -15,8 +15,6 @@ export interface ProcessManagerOptions {
   idleTimeoutMs?: number;
   /** Resume the token's last session on pi startup (default true) */
   resumeLastSession?: boolean;
-    /** Exclude legacy global sessions from listing (isolation mode) */
-  isolatedSessions?: boolean;
 }
 
 export class ProcessManager {
@@ -48,7 +46,6 @@ export class ProcessManager {
       model: this.options.model,
       args: this.options.args,
       resumeLastSession: this.options.resumeLastSession,
-      isolatedSessions: this.options.isolatedSessions,
     }, this.defaultIdleTimeoutMs, user);
 
     session.onIdle(() => {

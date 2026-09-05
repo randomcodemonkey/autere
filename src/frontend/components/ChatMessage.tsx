@@ -8,7 +8,8 @@
 import React, { useState, useEffect, memo } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import type { StreamMessage } from '../types';
+import type { StreamMessage, StreamImage } from '../types';
+import { ZoomableImage } from './ZoomableImage';
 import { url } from '../base-path';
 
 marked.setOptions({
@@ -127,7 +128,10 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
 
   const isCallOnly = role === 'toolCall' && !!msg.toolCall;
   const bodyText = isCallOnly ? '' : displayText;
-  const showText = expanded || !isLong ? bodyText : bodyText.slice(0, truncLen);
+  // Don't truncate while streaming: collapsing a growing message to its
+  // truncated view mid-stream would yank surrounding content around and
+  // break the user's scroll position. Truncation applies once finalized.
+  const showText = expanded || !isLong || msg.streaming ? bodyText : bodyText.slice(0, truncLen);
   const roleClass = role === 'user' ? 'stream-role-user' : role === 'assistant' ? 'stream-role-assistant' : `stream-role-${role}`;
   const isNonText = displayText.startsWith('[');
   const isError = msg.isError;
@@ -140,9 +144,21 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   // Download an image. Mobile Safari ignores the download attribute on
   // data: URLs, so use the Web Share API (native save/share sheet on iOS)
   // when available, falling back to a Blob URL + download anchor.
-  const saveImage = async (mimeType: string, data: string) => {
-    const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
-    const blob = new Blob([bytes], { type: mimeType });
+  // Preferred src: backend-served URL (small SSE payloads); inline base64
+  // is only a fallback for entries predating the on-disk extraction.
+  // url() adds the reverse-proxy base path — raw /api/... 404s behind it.
+  const imageSrc = (img: StreamImage) => (img.url ? url(img.url) : `data:${img.mimeType};base64,${img.data ?? ''}`);
+
+  // Save a stream image via Web Share (iOS) or a Blob-URL download anchor.
+  const saveImage = async (mimeType: string, src: string) => {
+    let blob: Blob;
+    if (src.startsWith('data:')) {
+      const data = src.slice(src.indexOf(',') + 1);
+      blob = new Blob([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], { type: mimeType });
+    } else {
+      const resp = await fetch(src);
+      blob = await resp.blob();
+    }
     const ext = mimeType.split('/')[1] || 'png';
     const file = new File([blob], `image-${Date.now()}.${ext}`, { type: mimeType });
     if (typeof navigator.share === 'function' && navigator.canShare?.({ files: [file] })) {
@@ -163,10 +179,11 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   };
 
   return (
-    <div className="stream-msg">
+    <div className={`stream-msg${msg.pending ? ' stream-msg-pending' : ''}`}>
       <div className={`stream-role ${roleClass}${msg.isError ? ' stream-role-error' : ''}`}>
         <span>{role}</span>
         {ts && <span className="stream-timestamp">{ts}</span>}
+        {msg.pending && <span className="stream-pending-indicator" title="Sending…">⏳ pending</span>}
         {msg.streaming && <span className="stream-cursor" />}
       </div>
       <div className={textClass}>
@@ -194,14 +211,14 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
               <React.Fragment key={i}>
                 <img
                   className="stream-image"
-                  src={`data:${img.mimeType};base64,${img.data}`}
+                  src={imageSrc(img)}
                   alt="generated image"
                   title="Click to view full size"
                   onClick={() => setLightbox(true)}
                 />
                 <button
                   className="stream-image-save"
-                  onClick={(e) => { e.stopPropagation(); void saveImage(img.mimeType, img.data); }}
+                  onClick={(e) => { e.stopPropagation(); void saveImage(img.mimeType, imageSrc(img)); }}
                 >
                   Save image
                 </button>
@@ -213,15 +230,16 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
       {lightbox && msg.images && msg.images.length > 0 && (
         <div className="image-lightbox" onClick={() => setLightbox(false)}>
           {msg.images.map((img, i) => (
-            <img
+            <ZoomableImage
               key={i}
-              src={`data:${img.mimeType};base64,${img.data}`}
+              src={imageSrc(img)}
               alt="generated image (full size)"
+              onTap={() => setLightbox(false)}
             />
           ))}
         </div>
       )}
-      {isLong && (
+      {isLong && !msg.streaming && (
         <div
           className="stream-text-truncated"
           onClick={() => setExpanded((prev) => !prev)}

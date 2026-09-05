@@ -39,6 +39,10 @@ import {
 } from './scheduler.js';
 import { randomUUID } from 'crypto';
 
+// ── Image attachment limits (/api/send) ──
+const MAX_ATTACHED_IMAGES = 4;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB per image (decoded)
+
 /** Read and parse a JSON request body */
 function readBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -199,6 +203,26 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       return;
     }
 
+    // ── Serve images extracted from stream history (auth-scoped to the
+    // requesting user's own pi env; name is a server-generated hash). ──
+    if (url.pathname.startsWith('/api/images/') && req.method === 'GET') {
+      const name = url.pathname.slice('/api/images/'.length);
+      if (!/^hist-[a-f0-9]{16}\.[a-z0-9]{2,5}$/.test(name)) {
+        sendJSON(res, { success: false, error: 'Bad image name' }, 400);
+        return;
+      }
+      const file = join(session.getEnvDir(), 'uploads', name);
+      if (!existsSync(file)) {
+        sendJSON(res, { success: false, error: 'Not found' }, 404);
+        return;
+      }
+      const ext = name.split('.').pop() || 'png';
+      const types: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
+      res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream', 'Cache-Control': 'private, max-age=31536000, immutable' });
+      res.end(readFileSync(file));
+      return;
+    }
+
     const { sessionState, sessionStats, activeTools, recentTools,
             availableModels } = session.state;
     const rpc = session.rpc;
@@ -214,13 +238,16 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       const historySessionId = target?.id ?? sessionState.sessionId;
       let streamHistory: ReturnType<typeof readSessionHistory> = [];
       if (target?.sessionFile && existsSync(target.sessionFile)) {
-        try { streamHistory = readSessionHistory(target.sessionFile, session.historyLimit); } catch (err) {
+        try { streamHistory = session.withStableIds(readSessionHistory(target.sessionFile, session.historyLimit)); } catch (err) {
           log.http.error('bootstrap: failed to read session history:', err);
         }
       }
       return {
         sessionState: { ...sessionState },
         sessionStats: { ...sessionStats },
+        // Whether ANOTHER of the user's devices is currently driving this
+        // session — computed live from the peer registry (session-peers.ts)
+        sessionActivity: session.sessionActivityPayload(historySessionId).data,
         activeTools: activeToolsSnapshot(session),
         recentTools: [...recentTools],
         streamHistory,
@@ -521,8 +548,6 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           sessionState.compacting = false;
           sessionState.steerPending = 0;
           sessionState.followUpPending = 0;
-          // Pi is moving to this session — it's no longer "external" activity
-          session.clearExternalActivity(sess.id);
 
           const fileStats = readSessionUsage(sess.sessionFile);
           sessionState.messageCount = fileStats.messageCount;
@@ -535,7 +560,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           // pi's real state; a failure here must not leave state mutated)
           if (!alreadyActive) {
             await rpc.switchSession(sess.sessionFile);
-            setLastSession(token, sess.sessionFile);
+            setLastSession(user, token, sess.sessionFile);
           }
 
           // Fetch stats AFTER switch so contextUsage reflects the new session
@@ -644,7 +669,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         if (state.model) {
           sessionState.model = { provider: state.model.provider, id: state.model.id, name: state.model.name || state.model.id };
         }
-        setLastSession(token, state.sessionFile);
+        setLastSession(user, token, state.sessionFile);
 
         // 4. Inject the new session into availableSessions so switch-by-id can find it.
         //    The session file doesn't exist on disk yet — pi only writes it on first message.
@@ -857,23 +882,57 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     if (url.pathname === '/api/send' && req.method === 'POST') {
       try {
         {
-          const { message, type } = await readBody(req);
-          if (!message || typeof message !== 'string' || !message.trim()) {
+          const { message, type, images } = await readBody(req);
+          if ((!message || typeof message !== 'string' || !message.trim()) && !(Array.isArray(images) && images.length > 0)) {
             sendJSON(res, { success: false, error: 'Message is required' }, 400);
             return;
           }
-          const text = message.trim();
-          log.http.forSession(sessionState.sessionId).info(
-            `${type || 'prompt'}: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"`);
-          if (type === 'steer') {
-            await rpc.steer(text);
-          } else if (type === 'followUp') {
-            await rpc.followUp(text);
-          } else if (rpc.isStreaming) {
-            await rpc.steer(text);
-          } else {
-            await rpc.prompt(text);
+          // Image attachments (base64, pi ImageContent format)
+          let rpcImages: import('./rpc-client.js').RpcImage[] | undefined;
+          if (images !== undefined) {
+            if (!Array.isArray(images) || images.length > MAX_ATTACHED_IMAGES) {
+              sendJSON(res, { success: false, error: `images must be an array of at most ${MAX_ATTACHED_IMAGES} items` }, 400);
+              return;
+            }
+            rpcImages = [];
+            for (const img of images) {
+              const mime = typeof img?.mimeType === 'string' ? img.mimeType : '';
+              const data = typeof img?.data === 'string' ? img.data : '';
+              // Accept data: URLs too — strip the prefix
+              const raw = data.startsWith('data:') ? data.replace(/^data:[^;]+;base64,/, '') : data;
+              if (!mime.startsWith('image/')) {
+                sendJSON(res, { success: false, error: 'Only image attachments are supported' }, 400);
+                return;
+              }
+              if (!raw || Buffer.from(raw, 'base64').length === 0) {
+                sendJSON(res, { success: false, error: 'Invalid image data' }, 400);
+                return;
+              }
+              if (Buffer.from(raw, 'base64').length > MAX_IMAGE_BYTES) {
+                sendJSON(res, { success: false, error: 'Image too large (max 8 MB)' }, 400);
+                return;
+              }
+              rpcImages.push({ type: 'image', data: raw, mimeType: mime });
+            }
+            if (rpcImages.length === 0) rpcImages = undefined;
           }
+          const text = (message || '').trim();
+          log.http.forSession(sessionState.sessionId).info(
+            `${type || 'prompt'}: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"${rpcImages?.length ? ` [${rpcImages.length} image(s)]` : ''}`);
+          if (type === 'steer') {
+            await rpc.steer(text, rpcImages);
+          } else if (type === 'followUp') {
+            await rpc.followUp(text, rpcImages);
+          } else if (rpc.isStreaming) {
+            await rpc.steer(text, rpcImages);
+          } else {
+            await rpc.prompt(text, rpcImages);
+          }
+          // Commit the user message into the stream history immediately —
+          // retires the client's optimistic pending copy (pi never emits
+          // message_end for user messages, so the old snapshot-based
+          // retirement only fired at turn end).
+          session.addUserEntry(text);
           sendJSON(res, { success: true });
         }
       } catch (err) {
@@ -899,6 +958,16 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // Track which session this client is viewing (starts with current session)
       session.sseClients.set(res, sessionState.sessionId);
       session.registerClientId(clientId, res);
+
+      // Requirement: a newly connected client immediately learns whether the
+      // session it is viewing is active elsewhere (another of the user's
+      // devices driving it). Reconnects (device wake-up) get a fresh answer
+      // here, since the SSE stream itself carries no replays.
+      try {
+        res.write(`data: ${JSON.stringify(session.sessionActivityPayload(sessionState.sessionId))}\n\n`);
+      } catch (err) {
+        log.http.error('Failed to send initial session_activity:', err);
+      }
 
       // SSE carries LIVE events only — no connect-time replays. The client
       // fetches everything it needs once via GET /api/bootstrap at (re)load

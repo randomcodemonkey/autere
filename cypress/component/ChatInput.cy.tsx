@@ -71,3 +71,126 @@ describe('ChatInput slash commands', () => {
     cy.get('.chat-help-box').should('not.exist');
   });
 });
+
+describe('ChatInput image attachments', () => {
+  // 1x1 red PNG
+  const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  const attachPng = (name = 'dot.png') => {
+    cy.get('input[type=file]').selectFile(
+      { contents: Cypress.Buffer.from(PNG_B64, 'base64'), fileName: name, mimeType: 'image/png' },
+      { force: true }
+    );
+  };
+
+  it('shows the toolbar with Image button when focused, hides it on blur', () => {
+    cy.mount(<ChatInput onNewSession={() => {}} />);
+    cy.get('.chat-toolbar').should('not.exist');
+    cy.get('.chat-input').focus();
+    cy.get('.chat-toolbar').should('exist');
+    cy.get('.chat-tool-btn').should('contain', 'Upload');
+    cy.get('.chat-input').should('have.attr', 'rows', '4');
+    cy.get('.chat-input').blur();
+    cy.get('.chat-toolbar').should('not.exist');
+  });
+
+  it('attaching an image shows a removable thumbnail', () => {
+    const onError = cy.stub().as('onError');
+    cy.mount(<ChatInput onNewSession={() => {}} onError={onError} />);
+    cy.get('.chat-input').focus();
+    attachPng();
+    cy.get('.chat-attachment').should('have.length', 1);
+    cy.get('.chat-attachment img').should('have.attr', 'src').and('contain', 'data:image/png;base64,');
+    cy.get('.chat-attachment-remove').click();
+    cy.get('.chat-attachment').should('have.length', 0);
+  });
+
+  it('sends images with the message and clears them after send', () => {
+    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.mount(<ChatInput onNewSession={() => {}} />);
+    cy.get('.chat-input').focus();
+    attachPng();
+    cy.get('.chat-input').type('what is this?');
+    cy.get('.chat-input').type('{enter}');
+    cy.wait('@send').its('request.body').should('deep.equal', {
+      message: 'what is this?',
+      type: 'prompt',
+      images: [{ mimeType: 'image/png', data: PNG_B64 }],
+    });
+    cy.get('.chat-attachment').should('have.length', 0);
+  });
+
+  it('Send is enabled with an image but no text', () => {
+    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.mount(<ChatInput onNewSession={() => {}} />);
+    cy.get('.chat-input').focus();
+    attachPng();
+    cy.get('.chat-send-btn').should('not.be.disabled');
+    cy.get('.chat-send-btn').click();
+    cy.wait('@send').its('request.body').should('deep.equal', {
+      message: '',
+      type: 'prompt',
+      images: [{ mimeType: 'image/png', data: PNG_B64 }],
+    });
+  });
+
+  it('rejects non-image files with an error', () => {
+    const onError = cy.stub().as('onError');
+    cy.mount(<ChatInput onNewSession={() => {}} onError={onError} />);
+    cy.get('.chat-input').focus();
+    const txt = new Blob(['hello'], { type: 'text/plain' });
+    cy.get('input[type=file]').selectFile(
+      { contents: txt, fileName: 'note.txt', mimeType: 'text/plain' },
+      { force: true }
+    );
+    cy.get('@onError').should('have.been.calledWith', 'Only image attachments are supported.');
+    cy.get('.chat-attachment').should('have.length', 0);
+  });
+
+  it('limits attachments to 4 images', () => {
+    const onError = cy.stub().as('onError');
+    cy.mount(<ChatInput onNewSession={() => {}} onError={onError} />);
+    cy.get('.chat-input').focus();
+    attachPng('a.png');
+    attachPng('b.png');
+    attachPng('c.png');
+    attachPng('d.png');
+    cy.get('.chat-attachment').should('have.length', 4);
+    attachPng('e.png');
+    cy.get('@onError').should('have.been.calledWith', 'At most 4 images can be attached.');
+    cy.get('.chat-attachment').should('have.length', 4);
+  });
+});
+
+describe('ChatInput first-click send (expanded state regression)', () => {
+  it('sends on the FIRST click while the input is expanded (button position stable)', () => {
+    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={false} />);
+    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.get('.chat-input').focus().type('hello');
+    cy.get('.chat-input-container').should('have.class', 'expanded');
+    // Capture the button's position while expanded, then click it.
+    cy.get('.chat-send-btn').then(($btn) => {
+      const rect = $btn[0].getBoundingClientRect();
+      cy.wrap({ x: Math.round(rect.x), y: Math.round(rect.y) }).as('before');
+    });
+    cy.get('.chat-send-btn').click();
+    cy.wait('@send').its('request.body.message').should('eq', 'hello');
+    // Input collapses back to the compact one-row state after sending
+    cy.get('.chat-input-container').should('not.have.class', 'expanded');
+    // Click landed on the button (not displaced by a mid-click collapse) —
+    // proven by the request above being sent exactly once.
+    cy.get('.chat-send-btn').should('exist');
+  });
+
+  it('rapid double-click sends only once', () => {
+    cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={false} />);
+    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.get('.chat-input').focus().type('hello');
+    cy.get('.chat-send-btn').click();
+    // After the first click the input clears and the button disables — a
+    // second tap cannot send again.
+    cy.wait('@send').its('request.body.message').should('eq', 'hello');
+    cy.get('.chat-send-btn').should('be.disabled');
+    cy.get('@send.all').should('have.length', 1);
+  });
+});

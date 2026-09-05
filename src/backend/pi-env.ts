@@ -13,7 +13,15 @@
  *   override them per user.
  * - Heavy/shared directories (npm packages, extensions, skills, themes,
  *   bin, tmp) are symlinked so all users share one installed copy.
- * - sessions/ is created fresh per user (never shared).
+ * - sessions/ is created fresh per user (never shared, never copied,
+ *   never symlinked).
+ *
+ * BOUNDARY RULE: ~/.pi/agent is the seeding source and the location of
+ * the shared read-only install assets (the symlinked dirs) — nothing
+ * else. Session data never crosses this boundary in either direction:
+ * autere never reads global sessions, and per-user "last session"
+ * pointers live INSIDE the user's env (see auth.ts getLastSession),
+ * which also validates that a resumed session file belongs to the env.
  */
 
 import { existsSync, mkdirSync, readdirSync, copyFileSync, symlinkSync, lstatSync } from 'fs';

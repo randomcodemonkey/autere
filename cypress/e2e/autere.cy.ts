@@ -78,16 +78,16 @@ describe('Dashboard Loading', () => {
   });
 
   describe('Cards Display', () => {
-    it('shows Model card', () => {
-      cy.get('.card-title').contains('Model').should('exist');
+    it('shows Agent card', () => {
+      cy.get('.card-title').contains('Agent').should('exist');
     });
 
     it('shows Usage card', () => {
       cy.get('.card-title').contains('Usage').should('exist');
     });
 
-    it('shows Tools card', () => {
-      cy.get('.card-title').contains('Tools').should('exist');
+    it('shows model selector in the chat header', () => {
+      cy.get('.chat-model-row .chat-model-name').should('exist');
     });
 
     it('shows Extensions card', () => {
@@ -153,42 +153,41 @@ describe('Dashboard Loading', () => {
   });
 
   describe('Model Selection', () => {
-    it('displays available models', () => {
-      // Wait for models to load
-      cy.get('.model-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
+    // Model selection lives in the chat-header dropdown since the Model
+    // card was replaced by the inline selector.
+    it('opens the model dropdown listing available models', () => {
+      cy.get('.chat-model-name').click();
+      cy.get('.chat-model-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
+      cy.get('body').type('{esc}');
     });
 
-    it('highlights active model', () => {
-      cy.get('.model-item.active', { timeout: 5000 }).should('exist');
+    it('highlights the active model', () => {
+      cy.get('.chat-model-name').click();
+      cy.get('.chat-model-item.active', { timeout: 5000 }).should('exist');
+      cy.get('body').type('{esc}');
     });
 
     it('can select a different model', function() {
       this.timeout(30000);
 
-      // Wait for models to load
-      cy.get('.model-item', { timeout: 5000 }).should('have.length.greaterThan', 1);
-
-      // Get the current active model
-      cy.get('.model-item.active').then(($active) => {
-        const activeName = $active.find('.model-name').text();
-
-        // Find a different model to click
-        cy.get('.model-item').not('.active').first().then(($different) => {
-          const differentName = $different.find('.model-name').text();
-
-          // The different model should have a different name from the active one
-          expect(differentName).to.not.equal(activeName);
-
-          // Click it
-          $different.click();
-
-          // Wait for the click to be processed (model change is async via RPC)
-          cy.get('.model-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
-
-          // Click back to the original model to restore the default
-          cy.get('.model-item').contains(activeName).click();
-          cy.get('.model-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
+      cy.get('.chat-model-name').click();
+      cy.get('.chat-model-item.active .model-name', { timeout: 5000 }).invoke('text').then((activeName) => {
+        // Pick a model that is NOT the active one and select it
+        cy.get('.chat-model-item').then(($items) => {
+          const target = $items.toArray().find((el) => !el.classList.contains('active'));
+          expect(target, 'a non-active model exists').to.exist;
+          cy.wrap(target).click();
         });
+
+        // Selecting closes the dropdown (async /api/set-model round-trip)
+        cy.get('.chat-model-dropdown', { timeout: 5000 }).should('not.exist');
+
+        // Reopen: the selection is now the active model — then restore
+        cy.get('.chat-model-name').click();
+        cy.get('.chat-model-item.active .model-name', { timeout: 5000 }).invoke('text')
+          .should('not.equal', activeName);
+        cy.get('.chat-model-item').contains(activeName).click();
+        cy.get('.chat-model-dropdown', { timeout: 5000 }).should('not.exist');
       });
     });
   });
@@ -210,25 +209,16 @@ describe('Dashboard Loading', () => {
   });
 
   describe('Tools Display', () => {
-    it('shows tools card with empty state initially', () => {
-      cy.get('.tool-empty').should('contain', 'No active tools');
-    });
-
-    it('shows tools when agent uses them', function() {
+    it('renders tool calls inline in the chat stream', function() {
       this.timeout(120000);
 
-      // The tools card should always be visible and functional
-      cy.get('.card-title').contains('Tools').should('exist');
-
-      // Send a message that is likely to trigger tool use
+      // Tool calls are rendered as messages in the stream (toolCall role),
+      // not as a separate card — send something that triggers a tool.
       cy.get('.chat-input').clear().type('Run the command: echo hello');
       cy.get('.chat-send-btn').first().click();
 
-      // The tools card should always be rendered (with or without active tools)
-      cy.get('.card-title').contains('Tools').should('exist');
-
-      // Optionally, tools may appear depending on model behavior
-      // We just verify the UI doesn't crash — tools appearing is a bonus
+      cy.get('.tool-call-header', { timeout: 90000 }).should('exist');
+      cy.get('.tool-call-name').should('contain', '⚙');
     });
   });
 
@@ -301,14 +291,22 @@ describe('Dashboard Loading', () => {
   });
 
   describe('Card Collapse', () => {
-    it('can collapse and expand cards', () => {
-      // Click on Model card header to collapse
-      cy.get('.card-title').contains('Model').parent().click();
-      cy.get('.card').contains('Model').closest('.card').should('have.class', 'collapsed');
+    it('can collapse and expand the Agent card', () => {
+      // Collapse state persists in localStorage — normalize to expanded first.
+      // NOTE: the direct-child selector — ExtensionsCard and UsageCard nested
+      // inside the Agent card have their own .card-header toggles.
+      cy.get('.agent-card').then(($card) => {
+        if ($card.hasClass('collapsed')) cy.get('.agent-card > .card-header').click();
+      });
+      cy.get('.agent-card').should('not.have.class', 'collapsed');
+
+      // Click on the Agent card header to collapse
+      cy.get('.agent-card > .card-header').click();
+      cy.get('.agent-card').should('have.class', 'collapsed');
 
       // Click again to expand
-      cy.get('.card-title').contains('Model').parent().click();
-      cy.get('.card').contains('Model').closest('.card').should('not.have.class', 'collapsed');
+      cy.get('.agent-card > .card-header').click();
+      cy.get('.agent-card').should('not.have.class', 'collapsed');
     });
   });
 

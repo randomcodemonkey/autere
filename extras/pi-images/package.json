@@ -1,0 +1,13 @@
+{
+  "name": "pi-images",
+  "version": "0.1.0",
+  "description": "Pi Coding Agent extension: image generation via 9router (generate_image tool)",
+  "type": "module",
+  "main": "./index.ts",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "typebox": "*"
+  }
+}

@@ -199,7 +199,7 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
           msg.toolName, toolArgs, msg.content, msg.isError, timestamp, msg.details,
           undefined, toolCallInfo(msg.toolCallId),
         );
-        return formatted ? [formatted] : [];
+        return formatted ? splitImageEntry(formatted) : [];
       }
 
       // Assistant messages can contain a thinking block before the text
@@ -255,6 +255,30 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
         ? [{ role, text, streaming: false, timestamp, ...(images.length > 0 ? { images } : {}) }]
         : [];
     });
+}
+
+// ── Image pseudo-entry ──
+
+/**
+ * Split an entry that carries images into [entryWithoutImages, imageEntry].
+ * The pseudo entry has role 'image' so the frontend can render the pictures
+ * as first-class chat content instead of hiding them inside a (collapsed)
+ * tool result. If the leftover entry has no text, tool call info, or error
+ * flag it is dropped entirely (it would render as an empty box).
+ */
+export function splitImageEntry(e: any): any[] {
+  if (!e || !Array.isArray(e.images) || e.images.length === 0) return e ? [e] : [];
+  const rest = { ...e };
+  delete rest.images;
+  const hasBody = (rest.text && String(rest.text).trim()) || rest.toolCall || rest.isError;
+  const imageEntry = {
+    role: 'image',
+    text: '',
+    streaming: false,
+    timestamp: e.timestamp,
+    images: e.images,
+  };
+  return hasBody ? [rest, imageEntry] : [imageEntry];
 }
 
 // ── Deduplication ──
