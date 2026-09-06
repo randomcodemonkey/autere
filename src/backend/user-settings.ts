@@ -31,7 +31,7 @@ interface UserSettings {
 export interface SettingField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages';
+  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea';
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;
@@ -243,6 +243,100 @@ export function getEnabledPackages(user: string): string[] {
   return getAvailablePackages();
 }
 
+// ── Token pricing ──
+// pi computes message cost from its baked-in model catalog; models it does
+// not know (e.g. 9router fallback models like mimo-v2.5-all) report $0.
+// This optional user setting provides per-model rates to price usage
+// ourselves. Value: JSON in USD per million tokens:
+//   {
+//     "default": {"input":0.075,"output":0.25,"cacheRead":0.015,"cacheWrite":0},
+//     "mimo-v2.5-all": {"input":0,"output":0,"cacheRead":0},
+//     "image": 0.03
+//   }
+// "default" applies to models without an exact entry; a legacy flat object
+// ({"input":...} at the top level) is accepted as the default rates.
+// "image" is a flat USD cost added per completed image tool call
+// (generate_image / edit_image). Empty/unset = disabled (pi's cost used as-is).
+
+export interface TokenRates {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+export interface TokenPricingConfig {
+  default?: TokenRates;
+  models: Record<string, TokenRates>;
+  /** Flat USD cost per completed image tool call */
+  image?: number;
+}
+
+function parseRates(v: any): TokenRates | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const rates: TokenRates = {};
+  let any = false;
+  for (const k of ['input', 'output', 'cacheRead', 'cacheWrite'] as const) {
+    const n = Number(v[k]);
+    if (Number.isFinite(n) && n >= 0) { rates[k] = n; any = true; }
+  }
+  return any ? rates : null;
+}
+
+/** pi's catalog lists these rates for z-ai/glm-5.3-flash — the usual autere
+ *  model. Used when the user has not configured tokenPricing (pi itself
+ *  reports $0 because the runtime model id carries a provider prefix that
+ *  misses its catalog). */
+const BUILTIN_DEFAULT_RATES: TokenRates = { input: 0.075, output: 0.25, cacheRead: 0.015, cacheWrite: 0 };
+
+export function getTokenPricing(user: string): TokenPricingConfig | null {
+  const raw = getUserSetting(user, 'tokenPricing', '');
+  if (!raw || typeof raw !== 'string') {
+    return { default: { ...BUILTIN_DEFAULT_RATES }, models: {} };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    // Legacy flat format: top-level rates = default
+    if (parsed.input !== undefined || parsed.output !== undefined) {
+      const d = parseRates(parsed);
+      return d ? { default: d, models: {} } : null;
+    }
+    const config: TokenPricingConfig = { models: {} };
+    const d = parseRates(parsed.default);
+    if (d) config.default = d;
+    for (const [k, v] of Object.entries(parsed)) {
+      if (k === 'default') continue;
+      if (k === 'image') {
+        const n = Number(v);
+        if (Number.isFinite(n) && n >= 0) config.image = n;
+        continue;
+      }
+      const r = parseRates(v);
+      if (r) config.models[k] = r;
+    }
+    return (config.default || config.image !== undefined || Object.keys(config.models).length > 0) ? config : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Rates for a model id: exact entry, else default */
+export function getRatesForModel(config: TokenPricingConfig, modelId: string | null | undefined): TokenRates | null {
+  if (modelId && config.models[modelId]) return config.models[modelId];
+  return config.default || null;
+}
+
+/** Cost in USD for a usage object at rates in $/M tokens */
+export function computeTokenCost(usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }, rates: TokenRates): number {
+  return (
+    ((usage.input || 0) * (rates.input || 0) +
+      (usage.output || 0) * (rates.output || 0) +
+      (usage.cacheRead || 0) * (rates.cacheRead || 0) +
+      (usage.cacheWrite || 0) * (rates.cacheWrite || 0)) / 1e6
+  );
+}
+
 // ── Settings schema (based on enabled extensions) ──
 
 function getPiConfig(filename: string): Record<string, any> | null {
@@ -350,6 +444,20 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
       ],
     });
   }
+
+  // Usage
+  sections.push({
+    id: 'usage',
+    label: 'Usage',
+    fields: [
+      {
+        key: 'tokenPricing',
+        label: 'Token Pricing ($/M tokens, JSON)',
+        type: 'textarea',
+        description: 'Per-model cost rates in $/M tokens, used when pi cannot price a model (9router fallback/report ids miss its catalog). JSON: {"default":{"input":0.075,"output":0.25,"cacheRead":0.015},"MODEL_ID":{...},"image":0.03}. "image" = flat cost per image tool call. Empty = built-in default (GLM 5.3 Flash list price). Set {} to disable cost estimation.',
+      },
+    ],
+  });
 
   // Extensions (always available)
   sections.push({

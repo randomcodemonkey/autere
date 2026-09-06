@@ -774,6 +774,29 @@ body {
   margin-top: 0.25rem;
 }
 
+// "estimated" flag + info icon on the usage cost stat
+.est-flag {
+  font-weight: 400;
+  opacity: 0.55;
+  font-size: 0.7em;
+}
+
+.info-icon {
+  cursor: pointer;
+  opacity: 0.55;
+  font-size: 0.7em;
+  margin-left: 0.2rem;
+
+  &:hover { opacity: 1; }
+}
+
+// small "+N cached" suffix under/beside usage token values
+.stat-cache-sub {
+  font-size: 0.6rem;
+  opacity: 0.55;
+  white-space: nowrap;
+}
+
 .usage-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -804,8 +827,8 @@ body {
 // Context usage bar shown on the Usage header when the section is collapsed
 .usage-header-bar {
   flex: 1;
-  max-width: 7rem;
-  height: 0.35rem;
+  max-width: 5rem;   // compact bar so the collapsed header stays tidy
+  height: 0.3rem;
   margin-left: auto;
   margin-right: 0.75rem;
   background: #333;
@@ -3054,7 +3077,8 @@ body {
   padding: 0.625rem;
 }
 
-.scheduled-form textarea.settings-input {
+.scheduled-form textarea.settings-input,
+textarea.settings-input {
   resize: vertical;
   min-height: 2.5rem;
 }

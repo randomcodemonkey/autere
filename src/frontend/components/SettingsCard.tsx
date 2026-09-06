@@ -157,6 +157,23 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       );
     }
 
+    if (field.type === 'textarea') {
+      return (
+        <div key={field.key} className="settings-field">
+          <label className="settings-label">{field.label}</label>
+          {field.description && <div className="settings-description">{field.description}</div>}
+          <textarea
+            className="settings-input"
+            rows={5}
+            value={value}
+            placeholder={field.placeholder || ''}
+            spellCheck={false}
+            onChange={(e) => handleChange(field.key, e.target.value)}
+          />
+        </div>
+      );
+    }
+
     return (
       <div key={field.key} className="settings-field">
         <label className="settings-label">{field.label}</label>

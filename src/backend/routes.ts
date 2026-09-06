@@ -14,6 +14,7 @@ import { getUser, getUserRole, hasRole, checkAuth, requireAuth, parseCookies, ge
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filterScopedModels, autoSessionName } from './utils.js';
 import { extensionsState } from './state.js';
+import { getTokenPricing, getRatesForModel, computeTokenCost } from './user-settings.js';
 import { log } from './logger.js';
 import type { SessionInfo } from './types.js';
 
@@ -352,18 +353,21 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         sendJSON(res, { success: false, error: 'Compaction already in progress' }, 409);
         return;
       }
-      try { await rpc.compact(); sendJSON(res, { success: true }); }
-      catch (err) {
-        // A genuine compaction error (RPC error response / process death):
-        // reset the compacting state so the UI doesn't stay stuck on
-        // "Compacting", and surface the error to the user.
+      // Respond immediately — compaction can take minutes and holding the
+      // request open gets it killed by proxy timeouts (Apache etc.), making
+      // the UI report "failed to compact" while compaction is merely slow.
+      // pi's compaction_start/compaction_end events drive the UI state; a
+      // genuine failure is surfaced via the SSE error event below.
+      sendJSON(res, { success: true });
+      rpc.compact().catch((err) => {
+        log.http.forSession(sessionState.sessionId).error('Compaction failed:', err);
         if (sessionState.compacting) {
           sessionState.compacting = false;
           sessionState.isStreaming = false;
           session.broadcastToSession(sessionState.sessionId, { type: 'status', data: { ...sessionState } });
         }
-        sendJSON(res, { success: false, error: `Failed to compact: ${err}` });
-      }
+        session.broadcastToSession(sessionState.sessionId, { type: 'error', data: { message: `Compaction failed: ${err}` } });
+      });
       return;
     }
 
@@ -554,6 +558,11 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           sessionState.requestCount = fileStats.requestCount;
           sessionStats.tokens = fileStats.tokens;
           sessionStats.cost = 0;
+          {
+            const pricing = getTokenPricing(user);
+            const rates = pricing && getRatesForModel(pricing, sess.modelId || null);
+            if (rates) session.setCostTotal(computeTokenCost(fileStats.tokens, rates));
+          }
           sessionStats.contextUsage = null;
 
           // Tell pi to switch session (synchronous — the response reflects
@@ -567,7 +576,12 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           try {
             const rpcStats = await rpc.getSessionStats();
             if (rpcStats.contextUsage) sessionStats.contextUsage = rpcStats.contextUsage;
-            if (rpcStats.cost) sessionStats.cost = rpcStats.cost;
+            if (rpcStats.cost) session.setCostTotal(rpcStats.cost);
+            if (!sessionStats.cost) {
+              const pricing = getTokenPricing(user);
+              const rates = pricing && getRatesForModel(pricing, null);
+              if (rates) session.setCostTotal(computeTokenCost(sessionStats.tokens, rates));
+            }
           } catch (err) { log.http.error('Post-switch stats failed:', err); }
 
           log.http.forSession(sessionState.sessionId).info(`switch-by-id done: alreadyActive=${alreadyActive}`);
@@ -951,7 +965,11 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // which SSE connection they belong to. The frontend never sees this.
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': 'no-cache, no-transform',
+        // Critical behind reverse proxies: without this nginx buffers the
+        // stream, and small stream_delta frames sit in its buffer for seconds
+        // (streaming appears frozen until a large event flushes it).
+        'X-Accel-Buffering': 'no',
         'Connection': 'keep-alive',
         'Set-Cookie': `autere-client-id=${clientId}; Path=/; SameSite=Lax`,
       });

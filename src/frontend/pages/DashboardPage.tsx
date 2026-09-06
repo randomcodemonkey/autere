@@ -127,7 +127,7 @@ export function DashboardPage({
   // flushPendingDelta applies the buffered text to streamHistory; if a new
   // streaming entry must be created (first delta of an entry), it does the
   // same append the old unthrottled path did.
-  const STREAM_DELTA_FLUSH_MS = 100;
+  const STREAM_DELTA_FLUSH_MS = 10;
   const pendingDeltaRef = useRef<{ role: 'assistant' | 'thinking'; text: string } | null>(null);
   const deltaFlushTimerRef = useRef<number | null>(null);
   const flushPendingDelta = useCallback(() => {
@@ -350,30 +350,56 @@ export function DashboardPage({
   // between sessions is handled separately by switch-by-id. The SSE stream
   // carries LIVE events only — no history replays or state snapshots.
   const prevConnectedRef = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (!authenticated) return;
-    const isFirstLoad = prevConnectedRef.current === null;
-    const isReconnect = prevConnectedRef.current === false && sseConnected === true;
-    prevConnectedRef.current = sseConnected;
-    if (!isFirstLoad && !isReconnect) return;
 
-    let cancelled = false;
+  // Epoch-guarded bootstrap fetch — a later call supersedes an in-flight one
+  // (e.g. quick visibility flickers or reconnect storms).
+  const bootstrapEpochRef = useRef(0);
+  const refetchBootstrap = useCallback(() => {
+    const epoch = ++bootstrapEpochRef.current;
     const sid = viewedSessionRef.current;
     fetch(url(`/api/bootstrap${sid ? `?sessionId=${encodeURIComponent(sid)}` : ''}`))
       .then((res) => res.json())
       .then((data) => {
-        if (cancelled || !data.success || !data.data) return;
+        if (epoch !== bootstrapEpochRef.current || !data.success || !data.data) return;
         applyBootstrap(data.data);
         // A successful bootstrap means the backend is up — clear restart flags
         if (restarting) setRestarting(false);
         if (restartingBackend) setRestartingBackend(false);
       })
       .catch(() => {});
-    return () => { cancelled = true; };
     // restarting/restartingBackend intentionally excluded — flags only ever
-    // transition true→false here, and the closure value is still valid.
+    // transition true→false here; a stale-true closure just clears them once more.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyBootstrap]);
+  useEffect(() => {
+    if (!authenticated) return;
+    const isFirstLoad = prevConnectedRef.current === null;
+    const isReconnect = prevConnectedRef.current === false && sseConnected === true;
+    prevConnectedRef.current = sseConnected;
+    if (!isFirstLoad && !isReconnect) return;
+    refetchBootstrap();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated, sseConnected]);
+
+  // PWA resume: after a long stretch in the background, JS was frozen and
+  // the SSE stream may have gone stale without the browser noticing (no
+  // error, no reconnect). A service worker can't run while frozen, so the
+  // visibilitychange event on resume is the hook: re-bootstrap to re-sync
+  // stats/history/model/session with the backend.
+  const lastHiddenAtRef = useRef(0);
+  useEffect(() => {
+    if (!authenticated) return;
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        lastHiddenAtRef.current = Date.now();
+        return;
+      }
+      const hiddenFor = Date.now() - lastHiddenAtRef.current;
+      if (lastHiddenAtRef.current && hiddenFor > 30000) refetchBootstrap();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [authenticated, refetchBootstrap]);
 
   // After reconnect (e.g. a device waking from sleep), bootstrap refreshes
   // everything above — no per-resource refetching needed here.

@@ -16,7 +16,7 @@ import { getLastSession, setLastSession } from './auth.js';
 import { ensurePiEnv, getPiEnvDir } from './pi-env.js';
 import { readSessions } from './sessions.js';
 import type { SessionInfo } from './types.js';
-import { getHistoryLimit, getUserSetting } from './user-settings.js';
+import { getHistoryLimit, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost } from './user-settings.js';
 import { registerSessionPeer, isSessionActiveElsewhere, deliverToPeers } from './session-peers.js';
 import {
   isRmCommand,
@@ -113,6 +113,53 @@ export class UserSession {
   private unregisterPeer: (() => void) | null = null;
   /** This user's pi environment dir (images extracted from history land here) */
   private piEnvDir!: string;
+  /** Cumulative session cost (pi-reported + fallback-priced + image ops) */
+  private sessionCost = 0;
+
+  /**
+   * Set the session cost total (e.g. computed from session-file usage on
+   * switch/reload). Keeps the live accumulator in sync so the next streamed
+   * message CONTINUES from this value instead of resetting to it.
+   */
+  setCostTotal(cost: number): void {
+    this.sessionCost = cost;
+    this.state.sessionStats.cost = cost;
+  }
+
+  /**
+   * Cost of one assistant message: pi's own figure when it could price the
+   * model (its baked-in catalog), else the user's configured rates for the
+   * actual model id, else the user's default rates. Adds to the cumulative
+   * session total and broadcasts it.
+   */
+  private accumulateMessageCost(modelId: string | undefined, usage: any): void {
+    let msgCost = 0;
+    const piCost = Number(usage?.cost?.total);
+    if (Number.isFinite(piCost) && piCost > 0) {
+      msgCost = piCost; // pi catalog price
+    } else {
+      const pricing = getTokenPricing(this.user);
+      if (pricing) {
+        const rates = getRatesForModel(pricing, modelId);
+        if (rates) msgCost = computeTokenCost(usage || {}, rates);
+      }
+    }
+    if (msgCost > 0) {
+      this.sessionCost += msgCost;
+      this.state.sessionStats.cost = this.sessionCost;
+      this.broadcastToSession(this.state.sessionState.sessionId, { type: 'stats', data: { ...this.state.sessionStats } });
+    }
+  }
+
+  /** Add the configured flat cost for a completed image tool call */
+  private accumulateImageCost(toolName: string): void {
+    if (toolName !== 'generate_image' && toolName !== 'edit_image') return;
+    const pricing = getTokenPricing(this.user);
+    if (!pricing || pricing.image === undefined) return;
+    this.sessionCost += pricing.image;
+    this.state.sessionStats.cost = this.sessionCost;
+    this.broadcastToSession(this.state.sessionState.sessionId, { type: 'stats', data: { ...this.state.sessionStats } });
+  }
 
   constructor(token: string, user: string, rpcOptions: { provider?: string; model?: string; args?: string[]; resumeLastSession?: boolean }, idleTimeoutMs: number = 30 * 60 * 1000, envUser?: string) {
     this.token = token;
@@ -508,7 +555,9 @@ export class UserSession {
         this.state.sessionState.messageCount = stats.userMessages || 0;
         this.state.sessionState.requestCount = stats.userMessages || 0;
         this.state.sessionStats.tokens = stats.tokens || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-        this.state.sessionStats.cost = stats.cost || 0;
+        // Seed the cumulative cost from pi (covers pi-catalog-priced history);
+        // new messages accumulate on top (see handleMessageEnd/handleToolEnd).
+        this.setCostTotal(stats.cost || 0);
         if (stats.contextUsage) this.state.sessionStats.contextUsage = stats.contextUsage;
       } catch (err) {
         log.userSession.error('fetchInitialState: failed to get session stats:', err);
@@ -641,11 +690,19 @@ export class UserSession {
       if (state.sessionFile) s.sessionState.sessionFile = state.sessionFile;
 
       // Reload history for the new session so the buffer reflects its content
+      let lastSessionModel: string | null = null;
       try {
         if (s.sessionState.sessionFile && existsSync(s.sessionState.sessionFile)) {
           const rawMessages = readMessageEntries(s.sessionState.sessionFile, this.historyLimit);
           if (rawMessages.length > 0) {
             this.setHistoryFor(s.sessionState.sessionId, buildStreamHistoryFromMessages(rawMessages).slice(-this.historyLimit));
+          }
+          // The model the session ACTUALLY used — pi's getState().model can
+          // report its CLI default instead of the resumed session's model,
+          // which made the UI show e.g. mimo-v2.5-all for a glm session.
+          for (let i = rawMessages.length - 1; i >= 0; i--) {
+            const m: any = (rawMessages[i] as any).message;
+            if (m?.role === 'assistant' && m.model) { lastSessionModel = m.model; break; }
           }
         }
       } catch {}
@@ -654,10 +711,13 @@ export class UserSession {
       s.sessionState.isStreaming = state.isStreaming;
       s.sessionState.compacting = state.isCompacting;
       if (state.model) {
+        // Prefer the model observed in the session file over pi's reported
+        // default (see lastSessionModel above).
+        const id = lastSessionModel || state.model.id;
         s.sessionState.model = {
           provider: state.model.provider,
-          id: state.model.id,
-          name: state.model.name || state.model.id,
+          id,
+          name: (lastSessionModel ? lastSessionModel.replace(/^[a-z0-9-]+\//i, '') : state.model.name) || id,
         };
       }
       this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
@@ -707,7 +767,7 @@ export class UserSession {
       // Delta events send ONLY the streaming entry's text — never the full
       // history buffer. Re-broadcasting history (with multi-MB base64 images)
       // on every token caused multi-GB memory churn and client jank.
-      this.broadcastToSession(sessionId, { type: 'stream_delta', sessionId, role: 'thinking', text: s.currentThinkingText });
+      this.broadcastToSession(sessionId, { type: 'stream_delta', sessionId, data: { role: 'thinking', text: s.currentThinkingText } });
     } else if (evt.type === 'thinking_end') {
       s.isThinking = false;
       const text = evt.content || s.currentThinkingText;
@@ -739,18 +799,14 @@ export class UserSession {
       }
       s.currentStreamText += delta || '';
       buf[s.activeStreamIdx!].text = s.currentStreamText;
-      this.broadcastToSession(sessionId, { type: 'stream_delta', sessionId, role: 'assistant', text: s.currentStreamText });
+      this.broadcastToSession(sessionId, { type: 'stream_delta', sessionId, data: { role: 'assistant', text: s.currentStreamText } });
     }
 
     // Update usage if present
-    if (event.usage) {
-      const usage = event.usage;
-      if (usage.input) s.sessionStats.tokens.input = usage.input || 0;
-      if (usage.output) s.sessionStats.tokens.output = usage.output || 0;
-      if (usage.cacheRead) s.sessionStats.tokens.cacheRead = usage.cacheRead || 0;
-      if (usage.cacheWrite) s.sessionStats.tokens.cacheWrite = usage.cacheWrite || 0;
-      if (usage.cost) s.sessionStats.cost = usage.cost.total || 0;
-    }
+    // Token/cost stats are accumulated ONCE per finalized message in
+    // handleMessageEnd — message_update events stream partial per-request
+    // usage, and overwriting the cumulative totals with them (or adding
+    // them per delta) would corrupt the session totals.
   }
 
   private handleMessageEnd(event: any): void {
@@ -839,8 +895,11 @@ export class UserSession {
       this.broadcastHistoryUpsert(sessionId, [entry]);
     }
 
-    // Update stats
+    // Update stats + accumulate cost once per finalized message
     accumulateUsage(s.sessionStats, event.message.usage);
+    if (rawRole === 'assistant' && event.message.usage) {
+      this.accumulateMessageCost(event.message.model, event.message.usage);
+    }
 
     this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
     this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
@@ -904,6 +963,7 @@ export class UserSession {
     const args = tool?.args || {};
     s.activeTools.delete(event.toolCallId);
     s.recentTools.unshift({ name: event.toolName, isError: event.isError, timestamp: Date.now(), args });
+    this.accumulateImageCost(event.toolName);
     if (s.recentTools.length > 5) s.recentTools.length = 5;
     this.broadcastToSession(s.sessionState.sessionId, { type: 'tool_end', data: { id: event.toolCallId, name: event.toolName, isError: event.isError, cmd, recentTools: s.recentTools } });
 

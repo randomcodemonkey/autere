@@ -214,10 +214,10 @@ export async function readExtensions(): Promise<void> {
       configPath,
       hasConfig: configPath !== null,
       // 'no config' = the extension has no config file (perfectly normal —
-      // e.g. pi-memory keeps its data in a directory, not a config). Not an
-      // error state; handlers may still override status/statusText.
-      status: 'ok',
-      statusText: configPath ? 'Loaded' : 'Not configured',
+      // some extensions keep data in a directory or need nothing at all).
+      // Not an error state; handlers may still override status/statusText.
+      status: configPath ? 'ok' : 'neutral',
+      statusText: 'Loaded',
       details: config,
     };
 

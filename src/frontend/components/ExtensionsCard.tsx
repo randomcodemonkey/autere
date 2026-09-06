@@ -86,7 +86,8 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
                     <span className={`badge ${statusClass}`}>
                       {statusText}
                     </span>
-                    {hasDetails && <span className="ext-chevron">❯</span>}
+                    {/* Always rendered: reserves the chevron column so badges align across rows */}
+                    <span className="ext-chevron" style={hasDetails ? undefined : { visibility: 'hidden' }}>❯</span>
                   </div>
                 </div>
               );

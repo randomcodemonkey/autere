@@ -103,7 +103,7 @@ export interface AvailableModel {
 export interface SettingField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages';
+  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea';
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;

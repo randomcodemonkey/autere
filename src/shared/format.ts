@@ -132,7 +132,10 @@ export function accumulateUsage(
   if (usage.output) stats.tokens.output = (stats.tokens.output || 0) + usage.output;
   if (usage.cacheRead) stats.tokens.cacheRead = (stats.tokens.cacheRead || 0) + usage.cacheRead;
   if (usage.cacheWrite) stats.tokens.cacheWrite = (stats.tokens.cacheWrite || 0) + usage.cacheWrite;
-  if (usage.cost) stats.cost = (stats.cost || 0) + (usage.cost.total || 0);
+  // NOTE: cost is intentionally NOT accumulated here — session cost flows
+  // through UserSession.setCostTotal/accumulateMessageCost, which also
+  // price models pi's catalog doesn't know. Accumulating usage.cost here
+  // as well would double-count catalog-priced messages.
 }
 
 // ── Name sanitization (filesystem-safe user names) ──
