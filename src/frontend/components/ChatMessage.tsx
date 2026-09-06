@@ -124,14 +124,13 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
 
   // Don't render empty non-streaming messages (image-only messages still render)
   const hasBody = role === 'toolCall' && !!msg.toolCall ? false : !displayText.trim();
-  if (!msg.streaming && hasBody && !(msg.images && msg.images.length > 0)) return null;
+  if (!msg.streaming && hasBody && !(msg.images && msg.images.length > 0) && !msg.file) return null;
 
   const isCallOnly = role === 'toolCall' && !!msg.toolCall;
   const bodyText = isCallOnly ? '' : displayText;
-  // Don't truncate while streaming: collapsing a growing message to its
-  // truncated view mid-stream would yank surrounding content around and
-  // break the user's scroll position. Truncation applies once finalized.
-  const showText = expanded || !isLong || msg.streaming ? bodyText : bodyText.slice(0, truncLen);
+  // Truncate long messages even while streaming — the expand toggle works
+  // mid-stream. Bounded height also keeps autoscroll stable on long turns.
+  const showText = expanded || !isLong ? bodyText : bodyText.slice(0, truncLen);
   const roleClass = role === 'user' ? 'stream-role-user' : role === 'assistant' ? 'stream-role-assistant' : `stream-role-${role}`;
   const isNonText = displayText.startsWith('[');
   const isError = msg.isError;
@@ -184,7 +183,9 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
         <span>{role}</span>
         {ts && <span className="stream-timestamp">{ts}</span>}
         {msg.pending && <span className="stream-pending-indicator" title="Sending…">⏳ pending</span>}
-        {msg.streaming && <span className="stream-cursor" />}
+        {/* Single active indicator per message: toolCall entries render the
+            cursor inside the command header, not out here as well. */}
+        {msg.streaming && !(role === 'toolCall' && msg.toolCall) && <span className="stream-cursor" />}
       </div>
       <div className={textClass}>
         {/* Connected tool call: rendered as a header line inside the tool
@@ -205,6 +206,20 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
           </div>
         )}
         {role === 'edit' ? renderEditDiff(showText, !expanded && isLong, 12, isError) : <span dangerouslySetInnerHTML={{ __html: renderedText }} />}
+        {msg.file && (
+          <div className="file-card">
+            <span className="file-icon">📄</span>
+            <div className="file-meta">
+              <div className="file-name">{msg.file.name}</div>
+              <div className="file-size">
+                {msg.file.size >= 1048576 ? `${(msg.file.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(msg.file.size / 1024))} KB`}
+              </div>
+            </div>
+            <a className="file-dl" href={url(`/api/files/${encodeURIComponent(msg.file.savedName)}`)} download={msg.file.name}>
+              Download
+            </a>
+          </div>
+        )}
         {msg.images && msg.images.length > 0 && (
           <div className="stream-images">
             {msg.images.map((img, i) => (
@@ -239,7 +254,7 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
           ))}
         </div>
       )}
-      {isLong && !msg.streaming && (
+      {isLong && (
         <div
           className="stream-text-truncated"
           onClick={() => setExpanded((prev) => !prev)}

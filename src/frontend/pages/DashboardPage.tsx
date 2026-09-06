@@ -136,17 +136,23 @@ export function DashboardPage({
     pendingDeltaRef.current = null;
     if (!delta) return;
     setStreamHistory((prev) => {
-      const last = prev[prev.length - 1];
-      if (last && last.role === delta.role && last.streaming) {
-        const next = prev.slice();
-        next[next.length - 1] = { ...last, text: delta.text };
-        return next;
+      // The backend streams at most ONE entry per role — but its upserts
+      // (tool results, moved follow-ups, file entries) can land between our
+      // deltas, so the streaming entry may not be LAST. Scan for it; only
+      // append a synthetic entry when none exists (a blind append here is
+      // how duplicate/frozen thinking ghosts were born).
+      for (let k = prev.length - 1; k >= 0; k--) {
+        if (prev[k].role === delta.role && prev[k].streaming) {
+          const next = prev.slice();
+          next[k] = { ...prev[k], text: delta.text };
+          return next;
+        }
       }
-      // Entry was finalized between buffering and flush (stream_history won
-      // the race) — don't re-append it as a streaming entry.
-      if (last && last.role === delta.role && !last.streaming && last.text === delta.text) return prev;
-      // Start of a new streaming entry (backend buffer already has it)
-      return [...prev, { role: delta.role, text: delta.text, streaming: true, timestamp: Date.now() } as any];
+      // No streaming entry of this role found: drop the delta. The backend
+      // always upserts the entry (with stable id) before deltas flow, and a
+      // turn-end snapshot heals any gap — synthesizing entries here is how
+      // duplicate/frozen thinking ghosts were born.
+      return prev;
     });
   }, []);
   // Clear any scheduled flush on unmount
@@ -247,6 +253,14 @@ export function DashboardPage({
             }
             if (i >= 0) next[i] = e;
             else next.push(e);
+            // Invariant: at most one active stream per role. An authoritative
+            // finalized entry retires any OTHER streaming entries of the same
+            // role (ghosts from race windows would otherwise blink forever).
+            if (!e.streaming && (e.role === 'thinking' || e.role === 'assistant')) {
+              for (let k = next.length - 1; k >= 0; k--) {
+                if (k !== i && next[k].role === e.role && next[k].streaming) next[k].streaming = false;
+              }
+            }
             changed = true;
           }
           return changed ? next : prev;
@@ -362,15 +376,14 @@ export function DashboardPage({
       .then((data) => {
         if (epoch !== bootstrapEpochRef.current || !data.success || !data.data) return;
         applyBootstrap(data.data);
-        // A successful bootstrap means the backend is up — clear restart flags
-        if (restarting) setRestarting(false);
-        if (restartingBackend) setRestartingBackend(false);
+        // A successful bootstrap means the backend is up — clear restart flags.
+        // Unconditional: the callback is stable, so closures would go stale.
+        setRestarting(false);
+        setRestartingBackend(false);
       })
       .catch(() => {});
-    // restarting/restartingBackend intentionally excluded — flags only ever
-    // transition true→false here; a stale-true closure just clears them once more.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applyBootstrap]);
+  }, []);
   useEffect(() => {
     if (!authenticated) return;
     const isFirstLoad = prevConnectedRef.current === null;

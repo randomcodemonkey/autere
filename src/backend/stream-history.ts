@@ -141,6 +141,9 @@ export function readAllMessageEntries(sessionFile: string): any[] {
       try {
         const obj = JSON.parse(line);
         if (obj.type === 'message' && obj.message) messages.push(obj);
+        // Custom entries (e.g. file_saved from pi-filetools) ride along so
+        // bootstrap rebuilds can render them as file cards.
+        if (obj.type === 'custom' && (obj.customType === 'file_saved' || obj.customType === 'file_change')) messages.push(obj);
       } catch {}
     }
     return messages;
@@ -186,8 +189,16 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
     return { name: call.name, cmd: formatToolArgs(call.name, call.args) };
   };
 
-  return entries
+  const out = entries
     .flatMap(({ msg, entryTimestamp }: any) => {
+      // Custom entries (file_saved / file_change) are part of the file's
+      // chronological order — render them in place, NOT appended at the end.
+      if (msg.customType === 'file_saved' && msg.data?.savedName) {
+        return [{ role: 'file', text: '', streaming: false, timestamp: entryTimestamp ?? Date.now(), file: msg.data }];
+      }
+      if (msg.customType === 'file_change' && msg.data?.diff) {
+        return [{ role: 'edit', text: msg.data.diff, streaming: false, timestamp: entryTimestamp ?? Date.now() }];
+      }
       const role = msg.role || '';
       const timestamp = msg.timestamp
         ? new Date(msg.timestamp).getTime()
@@ -254,7 +265,10 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
       return text || images.length > 0
         ? [{ role, text, streaming: false, timestamp, ...(images.length > 0 ? { images } : {}) }]
         : [];
-    });
+    }) as any[];
+  // Custom 'file_saved' entries become 'file' pseudo-entries (downloadable
+  // file cards) — same treatment images get from splitImageEntry.
+  return out;
 }
 
 // ── Image pseudo-entry ──

@@ -17,7 +17,7 @@ describe('UsageCard', () => {
     cy.contains('Requests').parent().should('contain', '10');
     cy.contains('Input Tokens').parent().should('contain', '1.0K');
     cy.contains('Output Tokens').parent().should('contain', '500');
-    cy.contains('Cost').parent().should('contain', '$0.0234');
+    cy.contains('Cost').parent().should('contain', '$0.02'); // 2-decimal display
     cy.contains('Context').parent().should('contain', '15.0K / 200.0K');
   });
 

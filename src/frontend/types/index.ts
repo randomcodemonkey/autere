@@ -50,6 +50,8 @@ export interface StreamMessage {
   timestamp?: number;
   isError?: boolean;
   images?: StreamImage[];
+  /** Present on 'file' pseudo-entries — a file shared via pi-filetools */
+  file?: { name: string; savedName: string; size: number; mimeType?: string };
   /** Present on toolResult/toolCall entries — the connected tool call */
   toolCall?: { name: string; cmd: string };
   /** Live only: id used to replace a streaming toolCall with its result */

@@ -67,7 +67,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   // Filter messages: skip empty non-streaming entries, and apply user filters
   const filteredMessages = messages.filter((msg) => {
     // Skip empty finalized messages (image-only messages still render)
-    if (!msg.streaming && !msg.text?.trim() && !(msg.images && msg.images.length > 0)) return false;
+    if (!msg.streaming && !msg.text?.trim() && !(msg.images && msg.images.length > 0) && !msg.file) return false;
     if (msg.role === 'thinking' && !filters.thinking) return false;
     if ((msg.role === 'toolResult' || msg.role === 'toolCall') && !filters.toolResult) return false;
     if (msg.role === 'edit' && !filters.edit) return false;

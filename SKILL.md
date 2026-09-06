@@ -41,6 +41,12 @@ code — keep it up to date when architecture or workflows change.**
    node/tsx; e2e tests manage their own backend lifecycle.
 5. **Test runs are slow/expensive.** Pipe output to a temp file and grep from
    it; don't re-run suites without code changes between runs.
+6. **Prefer the `edit` and `write` tools over bash for file modifications.**
+   The dashboard renders them as diff cards; bash-driven edits only surface
+   as generic tool results (best-effort bash detection aside). Use bash for
+   file changes only when the tools genuinely can't (multi-file scripted
+   transforms, generated content, non-text files) — and share user-facing
+   outputs with the `save_file` tool.
 
 ## Architecture
 

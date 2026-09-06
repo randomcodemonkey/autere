@@ -790,6 +790,48 @@ body {
   &:hover { opacity: 1; }
 }
 
+// File card — 'file' pseudo-entries from pi-attachments' save_file tool
+.file-card {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.4rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.5rem;
+
+  .file-icon { font-size: 1.3rem; }
+
+  .file-meta {
+    flex: 1;
+    min-width: 0;
+
+    .file-name {
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-size {
+      font-size: 0.7rem;
+      opacity: 0.55;
+    }
+  }
+
+  .file-dl {
+    padding: 0.3rem 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 0.4rem;
+    font-size: 0.8rem;
+    text-decoration: none;
+    white-space: nowrap;
+
+    &:hover { background: rgba(255, 255, 255, 0.1); }
+  }
+}
+
 // small "+N cached" suffix under/beside usage token values
 .stat-cache-sub {
   font-size: 0.6rem;

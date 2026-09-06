@@ -3,6 +3,7 @@ import { useCardState } from '../hooks/useCardState';
 import { Modal } from './Modal';
 import type { ExtensionInfo } from '../types';
 import type { ExtensionSection } from '../types';
+import { formatTimestamp } from './ChatMessage';
 
 interface ExtensionsCardProps {
   extensions: ExtensionInfo[];
@@ -124,7 +125,9 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
                       {Object.entries(item).map(([k, v]) => (
                         <div key={k} className="ext-section-field">
                           <span className="ext-section-field-key">{k}</span>
-                          <span className="ext-section-field-val">{String(v ?? '-')}</span>
+                          <span className="ext-section-field-val">
+                            {k === 'Time' && typeof v === 'number' ? formatTimestamp(v) : String(v ?? '-')}
+                          </span>
                         </div>
                       ))}
                     </div>

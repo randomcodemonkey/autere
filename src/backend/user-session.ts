@@ -16,7 +16,7 @@ import { getLastSession, setLastSession } from './auth.js';
 import { ensurePiEnv, getPiEnvDir } from './pi-env.js';
 import { readSessions } from './sessions.js';
 import type { SessionInfo } from './types.js';
-import { getHistoryLimit, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost } from './user-settings.js';
+import { getEditIgnorePaths, getHistoryLimit, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost } from './user-settings.js';
 import { registerSessionPeer, isSessionActiveElsewhere, deliverToPeers } from './session-peers.js';
 import {
   isRmCommand,
@@ -43,8 +43,7 @@ export interface UserSessionState {
   newSessionCreating: boolean;
   historyLoadedSessionId: string | null;
   currentStreamText: string;
-  currentStreamRole: string;
-  activeStreamIdx: number | null;
+  activeStreamId: string | null;
   currentThinkingText: string;
   isThinking: boolean;
 }
@@ -80,8 +79,7 @@ function createInitialState(): UserSessionState {
     newSessionCreating: false,
     historyLoadedSessionId: null,
     currentStreamText: '',
-    currentStreamRole: '',
-    activeStreamIdx: null,
+    activeStreamId: null,
     currentThinkingText: '',
     isThinking: false,
   };
@@ -183,7 +181,7 @@ export class UserSession {
         this.resumedExistingSession = true;
       }
     }
-    this.rpc = new MonitorRpcClient({ ...rpcOptions, args, agentDir: piEnvDir });
+    this.rpc = new MonitorRpcClient({ ...rpcOptions, args, agentDir: piEnvDir, editIgnorePaths: getEditIgnorePaths(user) });
     this.state = createInitialState();
     this._idleTimeoutMs = idleTimeoutMs;
   }
@@ -307,10 +305,10 @@ export class UserSession {
    * pending copy — pi does not emit message_end for user messages, so
    * without this the pending indicator would linger until turn end.
    */
-  addUserEntry(text: string): void {
+  addUserEntry(text: string, queued = false): void {
     const sessionId = this.state.sessionState.sessionId;
     const buf = this.historyFor(sessionId);
-    const entry = this.tagEntry({ role: 'user', text, streaming: false, timestamp: Date.now() });
+    const entry = this.tagEntry({ role: 'user', text, streaming: false, timestamp: Date.now(), ...(queued ? { pending: true } : {}) });
     buf.push(entry);
     this.broadcastHistoryUpsert(sessionId, [entry]);
   }
@@ -381,7 +379,7 @@ export class UserSession {
   }
 
   /** Content event types forwarded to the user's other devices in real time */
-  private static readonly FORWARDED_EVENT_TYPES = new Set(['stream_history', 'history_upsert', 'history_remove', 'stats', 'tool_start', 'tool_end']);
+  private static readonly FORWARDED_EVENT_TYPES = new Set(['stream_history', 'history_upsert', 'history_remove', 'stream_delta', 'stats', 'tool_start', 'tool_end']);
 
   /**
    * Broadcast an SSE event only to clients viewing a specific session.
@@ -624,6 +622,12 @@ export class UserSession {
           // The UI is idle now, so the larger payload costs nothing, and it
           // guarantees clients converge to ground truth after every turn
           // (heals any drift from missed/dropped targeted events).
+          // Clear any stale streaming flags first: entries left streaming by
+          // an abort/error path would otherwise blink forever in every
+          // snapshot (they are only finalized on the happy path).
+          for (const e of this.historyFor(s.sessionState.sessionId)) {
+            if (e.streaming) e.streaming = false;
+          }
           this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', sessionId: s.sessionState.sessionId, data: this.historyFor(s.sessionState.sessionId).slice(-this.historyLimit) });
           break;
         case 'queue_update':
@@ -648,6 +652,36 @@ export class UserSession {
         case 'model_select':
           this.handleModelSelect(event);
           break;
+        case 'entry_appended': {
+          // pi-filetools announces shared files (save_file tool) and
+          // bash-driven file edits via pi.appendEntry — surface them as
+          // 'file' pseudo-entries (downloadable cards) and 'edit' entries
+          // (diff cards) respectively.
+          const entry = event.entry;
+          if (entry?.customType === 'file_saved' && entry.data?.savedName) {
+            const fileEntry = this.tagEntry({
+              role: 'file',
+              text: '',
+              streaming: false,
+              timestamp: Date.now(),
+              file: entry.data,
+            });
+            const buf = this.historyFor(s.sessionState.sessionId);
+            buf.push(fileEntry);
+            this.broadcastHistoryUpsert(s.sessionState.sessionId, [fileEntry]);
+          } else if (entry?.customType === 'file_change' && entry.data?.diff) {
+            const editEntry = this.tagEntry({
+              role: 'edit',
+              text: entry.data.diff,
+              streaming: false,
+              timestamp: Date.now(),
+            });
+            const buf = this.historyFor(s.sessionState.sessionId);
+            buf.push(editEntry);
+            this.broadcastHistoryUpsert(s.sessionState.sessionId, [editEntry]);
+          }
+          break;
+        }
         case 'compaction_start':
           s.sessionState.compacting = true;
           this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
@@ -674,7 +708,7 @@ export class UserSession {
     const rpc = this.rpc;
 
     // Reset streaming state — a new session has begun
-    s.activeStreamIdx = null;
+    s.activeStreamId = null;
     s.currentStreamText = '';
     s.currentThinkingText = '';
 
@@ -751,18 +785,21 @@ export class UserSession {
       s.currentThinkingText = '';
     } else if (evt.type === 'thinking_delta') {
       s.currentThinkingText += evt.delta || '';
-      const idx = s.activeStreamIdx;
-      if (idx === null || buf[idx]?.role !== 'thinking') {
-        if (idx !== null && buf[idx]) {
-          buf[idx].streaming = false;
-          this.broadcastHistoryUpsert(sessionId, [buf[idx]]); // finalize prior stream
+      // Track the streaming entry by stable id, NOT index — trimHistory
+      // shifts the buffer mid-turn and a numeric index goes stale (leaving
+      // the old thinking entry streaming forever + spawning a duplicate).
+      const cur = s.activeStreamId ? buf.find((m: any) => m.id === s.activeStreamId) : undefined;
+      if (!cur || cur.role !== 'thinking') {
+        if (cur) {
+          cur.streaming = false;
+          this.broadcastHistoryUpsert(sessionId, [cur]); // finalize prior stream
         }
         const entry = this.tagEntry({ role: 'thinking', text: s.currentThinkingText, streaming: true, timestamp: Date.now() });
         buf.push(entry);
         this.broadcastHistoryUpsert(sessionId, [entry]);
-        s.activeStreamIdx = buf.length - 1;
+        s.activeStreamId = entry.id;
       } else {
-        buf[idx].text = s.currentThinkingText;
+        cur.text = s.currentThinkingText;
       }
       // Delta events send ONLY the streaming entry's text — never the full
       // history buffer. Re-broadcasting history (with multi-MB base64 images)
@@ -780,25 +817,25 @@ export class UserSession {
           break;
         }
       }
-      s.activeStreamIdx = null;
+      s.activeStreamId = null;
       s.currentThinkingText = '';
     } else if (evt.type === 'text_delta') {
       const delta = evt.delta;
-      const idx = s.activeStreamIdx;
-      if (idx === null || buf[idx]?.role !== 'assistant') {
-        if (idx !== null && buf[idx]) {
-          buf[idx].streaming = false;
-          this.broadcastHistoryUpsert(sessionId, [buf[idx]]); // finalize prior stream
+      const cur = s.activeStreamId ? buf.find((m: any) => m.id === s.activeStreamId) : undefined;
+      if (!cur || cur.role !== 'assistant') {
+        if (cur) {
+          cur.streaming = false;
+          this.broadcastHistoryUpsert(sessionId, [cur]); // finalize prior stream
         }
-        s.currentStreamRole = 'assistant';
         s.currentStreamText = '';
         const entry = this.tagEntry({ role: 'assistant', text: '', streaming: true, timestamp: Date.now() });
         buf.push(entry);
         this.broadcastHistoryUpsert(sessionId, [entry]);
-        s.activeStreamIdx = buf.length - 1;
+        s.activeStreamId = entry.id;
       }
       s.currentStreamText += delta || '';
-      buf[s.activeStreamIdx!].text = s.currentStreamText;
+      const active = buf.find((m: any) => m.id === s.activeStreamId)!;
+      active.text = s.currentStreamText;
       this.broadcastToSession(sessionId, { type: 'stream_delta', sessionId, data: { role: 'assistant', text: s.currentStreamText } });
     }
 
@@ -832,6 +869,29 @@ export class UserSession {
     // time) respectively. Handling user messages here too would duplicate
     // the entry in the buffer.
     if (rawRole === 'toolResult' || rawRole === 'thinking' || rawRole === 'user') {
+      // A queued (steer/follow-up) user message reaching message_end means
+      // pi has now processed it — retire its pending flag. The entry itself
+      // was already added by addUserEntry at send time (no duplicate here).
+      if (rawRole === 'user' && text) {
+        const buf = this.historyFor(s.sessionState.sessionId);
+        const entry = [...buf].reverse().find((e: any) => e.role === 'user' && e.text === text && e.pending);
+        if (entry) {
+          entry.pending = false;
+          // A queued follow-up was appended at SEND time, mid-turn — buried
+          // under the rest of the old turn's output. Now that pi consumes
+          // it, move it to the end of the buffer so it sits directly above
+          // the new turn it starts. Clients: remove from old spot (by id),
+          // then upsert (appends at end).
+          const idx = buf.indexOf(entry);
+          const moved = idx >= 0 && idx !== buf.length - 1;
+          if (moved) buf.splice(idx, 1);
+          buf.push(entry);
+          if (moved) {
+            this.broadcastToSession(s.sessionState.sessionId, { type: 'history_remove', sessionId: s.sessionState.sessionId, data: [entry.id] });
+          }
+          this.broadcastHistoryUpsert(s.sessionState.sessionId, [entry]);
+        }
+      }
       // Still update stats
       accumulateUsage(s.sessionStats, event.message.usage);
       this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });

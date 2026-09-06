@@ -224,6 +224,30 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       return;
     }
 
+    // ── Serve files shared via pi-filetools' save_file tool (auth-scoped
+    // to the requesting user's own pi env; server-generated hash name). ──
+    if (url.pathname.startsWith('/api/files/') && req.method === 'GET') {
+      const name = decodeURIComponent(url.pathname.slice('/api/files/'.length));
+      if (!/^file-[a-f0-9]{16}-[A-Za-z0-9._-]{1,80}$/.test(name)) {
+        sendJSON(res, { success: false, error: 'Bad file name' }, 400);
+        return;
+      }
+      const file = join(session.getEnvDir(), 'uploads', name);
+      if (!existsSync(file)) {
+        sendJSON(res, { success: false, error: 'Not found' }, 404);
+        return;
+      }
+      const origName = name.slice('file-'.length + 16 + 1);
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': statSync(file).size,
+        'Content-Disposition': `attachment; filename="${origName.replace(/"/g, '')}"`,
+        'Cache-Control': 'private, max-age=31536000, immutable',
+      });
+      res.end(readFileSync(file));
+      return;
+    }
+
     const { sessionState, sessionStats, activeTools, recentTools,
             availableModels } = session.state;
     const rpc = session.rpc;
@@ -545,7 +569,6 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
 
           // Update shared state so live streaming goes to the right place
           session.state.currentStreamText = '';
-          session.state.currentStreamRole = '';
           sessionState.sessionId = sess.id;
           sessionState.sessionFile = sess.sessionFile;
           sessionState.sessionName = sess.sessionName;
@@ -933,6 +956,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           const text = (message || '').trim();
           log.http.forSession(sessionState.sessionId).info(
             `${type || 'prompt'}: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"${rpcImages?.length ? ` [${rpcImages.length} image(s)]` : ''}`);
+          const queued = type === 'steer' || type === 'followUp' || rpc.isStreaming;
           if (type === 'steer') {
             await rpc.steer(text, rpcImages);
           } else if (type === 'followUp') {
@@ -946,7 +970,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           // retires the client's optimistic pending copy (pi never emits
           // message_end for user messages, so the old snapshot-based
           // retirement only fired at turn end).
-          session.addUserEntry(text);
+          session.addUserEntry(text, queued);
           sendJSON(res, { success: true });
         }
       } catch (err) {

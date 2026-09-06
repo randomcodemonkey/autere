@@ -118,8 +118,8 @@ function formatRecentRequests(requests: NineRouterRecentRequest[]): ExtensionSec
   const items = requests.slice(0, 20).map((req) => {
     const row: Record<string, any> = {};
     if (req.timestamp) {
-      const d = new Date(req.timestamp);
-      row['Time'] = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      // UTC epoch millis — clients render timestamps themselves (locale/timezone)
+      row['Time'] = new Date(req.timestamp).getTime();
     }
     if (req.model) row['Model'] = req.model;
     if (req.provider) row['Provider'] = req.provider;

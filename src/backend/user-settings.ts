@@ -216,6 +216,13 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
  * Snapshot per UserSession construction — settings saves restart the pi
  * process, so a new session picks up the new value.
  */
+export function getEditIgnorePaths(user: string): string[] {
+  const raw = getUserSetting(user, 'editIgnorePaths', ['/tmp']);
+  if (!Array.isArray(raw)) return ['/tmp'];
+  const list = raw.filter((p: any) => typeof p === 'string' && p.trim()).map((p: string) => p.trim().replace(/\/+$/, ''));
+  return list.length > 0 ? list : ['/tmp'];
+}
+
 export function getHistoryLimit(user: string): number {
   const raw = getUserSetting(user, 'historyLimit', 50);
   const n = typeof raw === 'number' ? raw : parseInt(raw, 10);
@@ -483,6 +490,14 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
         label: 'Chat history length',
         type: 'number',
         description: 'Messages kept in the chat view and replayed on connect (10-500). Applies after a backend restart.',
+      },
+      {
+        key: 'editIgnorePaths',
+        label: 'Ignored folders for edit cards',
+        type: 'list',
+        listPlaceholder: '/tmp',
+        listAddLabel: 'Add folder',
+        description: 'Bash-driven file changes under these folders are not shown as edit cards (default: /tmp). Applies after a pi restart.',
       },
     ],
   });

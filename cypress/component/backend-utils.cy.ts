@@ -281,7 +281,10 @@ describe('Backend Utilities (real implementations)', () => {
       accumulateUsage(s, { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, cost: { total: 0.5 } });
       accumulateUsage(s, { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, cost: { total: 0.25 } });
       expect(s.tokens).to.deep.equal({ input: 20, output: 10, cacheRead: 4, cacheWrite: 2 });
-      expect(s.cost).to.eq(0.75);
+      // Cost is intentionally NOT accumulated here — it flows through
+      // UserSession.setCostTotal/accumulateMessageCost (would double-count
+      // catalog-priced messages)
+      expect(s.cost).to.eq(0);
     });
 
     it('tolerates missing usage and missing fields', () => {

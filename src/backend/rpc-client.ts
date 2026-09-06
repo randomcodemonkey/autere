@@ -6,6 +6,8 @@
  */
 
 import { spawn, ChildProcess } from 'node:child_process';
+import { existsSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
+import { transformSync } from 'esbuild'; // parse check only (tsx dependency, resolvable at runtime)
 import { StringDecoder } from 'node:string_decoder';
 import { join } from 'node:path';
 import type {
@@ -46,6 +48,8 @@ export interface RpcClientOptions {
   args?: string[];
   /** pi agent directory (PI_CODING_AGENT_DIR) — isolates config/sessions per user */
   agentDir?: string;
+  /** Folders hidden from pi-file-monitor's bash-edit cards (pi-file-monitor env) */
+  editIgnorePaths?: string[];
 }
 
 export type RpcEventListener = (event: JsonAgentSessionEvent) => void;
@@ -119,6 +123,46 @@ export class MonitorRpcClient {
     return this.process !== null && this.process.exitCode === null;
   }
 
+  /**
+   * Parse-check every .ts/.js extension file in the env's extensions dir and
+   * rename the broken ones aside (<name>.broken-<ts>) so pi never sees them.
+   * ponytail: catches parse errors only — runtime import failures inside a
+   * broken extension still kill pi; a real fix needs pi-side lazy loading.
+   */
+  private quarantineBrokenExtensions(): void {
+    const dir = this.options.agentDir ? join(this.options.agentDir, 'extensions') : null;
+    if (!dir || !existsSync(dir)) return;
+    let entries: string[];
+    try { entries = readdirSync(dir); } catch { return; }
+    for (const name of entries) {
+      if (!name.endsWith('.ts') && !name.endsWith('.js')) continue;
+      // Only direct files of the extensions dir; extension PACKAGES (dirs
+      // with index.ts, e.g. pi-images) get their entry file checked too.
+      const path = join(dir, name);
+      const files: string[] = [];
+      try {
+        if (statSync(path).isFile()) files.push(path);
+        else {
+          const idx = join(path, 'index.ts');
+          if (existsSync(idx)) files.push(idx);
+          else {
+            const idxJs = join(path, 'index.js');
+            if (existsSync(idxJs)) files.push(idxJs);
+          }
+        }
+      } catch { continue; }
+      for (const file of files) {
+        try {
+          transformSync(readFileSync(file, 'utf-8'), { loader: 'ts', sourcefile: file, format: 'esm' });
+        } catch (err: any) {
+          const broken = `${file}.broken-${Date.now()}`;
+          try { renameSync(file, broken); } catch {}
+          log.rpc.error(`Extension ${file} failed to parse — quarantined as ${broken}: ${err?.message || err}`);
+        }
+      }
+    }
+  }
+
   /** Whether the agent is streaming */
   get isStreaming(): boolean {
     return this._state?.isStreaming ?? false;
@@ -132,6 +176,8 @@ export class MonitorRpcClient {
       throw new Error('Client already started');
     }
     this.exitError = null;
+
+    this.quarantineBrokenExtensions();
 
     const args = ['--mode', 'rpc'];
     if (this.options.provider) {
@@ -156,6 +202,8 @@ export class MonitorRpcClient {
         // user env would share the master agent's memory. Keep it per-user,
         // inside the env dir.
         ...(this.options.agentDir ? { PI_MEMORY_DIR: join(this.options.agentDir, 'memory') } : {}),
+        // pi-file-monitor: folders hidden from bash-edit cards (colon-separated)
+        ...(this.options.editIgnorePaths ? { EDIT_IGNORE_PATHS: this.options.editIgnorePaths.join(':') } : {}),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true, // create a new process group so we can kill all children
