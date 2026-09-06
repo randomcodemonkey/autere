@@ -29,8 +29,16 @@ if ('serviceWorker' in navigator) {
       // Check for a new worker on visibility change and every 60s
       const check = () => { reg.update().catch(() => {}); };
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') check();
+        if (document.visibilityState === 'visible') {
+          // Update FIRST, before the app reacts to visibility (SSE wake
+          // reconnect) — otherwise a resumed page reconnects on old code
+          // and then reloads mid-stream when the new worker takes control.
+          check();
+        }
       });
+      // iOS standalone PWAs sometimes skip visibilitychange on snapshot
+      // resume — pageshow is the reliable signal there.
+      window.addEventListener('pageshow', check);
       setInterval(check, 60_000);
 
       // When a NEW worker takes control (i.e. an update was installed),

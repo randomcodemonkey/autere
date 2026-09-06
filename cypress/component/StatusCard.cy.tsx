@@ -20,8 +20,6 @@ function mountCard(props: Partial<Parameters<typeof StatusCard>[0]> = {}) {
       messageCount={3}
       requestCount={1}
       stats={{ tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, cost: 0, contextUsage: null }}
-      activeTools={[]}
-      recentTools={[]}
       extensions={[]}
       models={[]}
       activeModelId={null}
@@ -75,22 +73,11 @@ describe('StatusCard', () => {
     });
     cy.mount(
       <StatusCard
-        sessionId={null}
-        sessionName={null}
-        compacting={false}
         statusType="connected"
-        availableSessions={[]}
-        onNewSession={cy.stub()}
-        onAbort={cy.stub()}
-        onCompact={cy.stub()}
-        onSwitchSession={cy.stub()}
-        onSessionNameSet={cy.stub()}
         messageCount={0}
         requestCount={0}
         stats={{ tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, cost: 0, contextUsage: null }}
-        activeTools={[]}
-        recentTools={[]}
-        extensions={[]}
+            extensions={[]}
         models={[]}
         activeModelId={null}
         onModelsFetched={cy.stub()}
@@ -115,22 +102,11 @@ describe('StatusCard collapse', () => {
     );
     cy.mount(
       <StatusCard
-        sessionId="aaaa1111-0000"
-        sessionName="First"
-        compacting={false}
         statusType="connected"
-        availableSessions={[]}
-        onNewSession={cy.stub()}
-        onAbort={cy.stub()}
-        onCompact={cy.stub()}
-        onSwitchSession={cy.stub()}
-        onSessionNameSet={cy.stub()}
         messageCount={0}
         requestCount={0}
         stats={{ tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, cost: 0, contextUsage: null }}
-        activeTools={[]}
-        recentTools={[]}
-        extensions={[]}
+            extensions={[]}
         models={[]}
         activeModelId={null}
         onModelsFetched={() => {}}

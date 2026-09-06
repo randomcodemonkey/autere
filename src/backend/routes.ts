@@ -5,7 +5,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { readFileSync, existsSync, renameSync, mkdirSync, openSync, readSync, closeSync, statSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, renameSync, mkdirSync, openSync, readSync, closeSync, statSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -31,14 +31,14 @@ function activeToolsSnapshot(session: { state: { activeTools: Map<string, any> }
 }
 
 import { findSession } from './sessions.js';
-import { getUserSetting, getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages } from './user-settings.js';
+import { getUserSetting, getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality } from './user-settings.js';
 import {
   Scheduler,
   listTasks, getTask, saveTask, deleteTask, validateTaskInput,
   listRuns, readRunLog,
   type ScheduledTask,
 } from './scheduler.js';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 
 // ── Image attachment limits (/api/send) ──
 const MAX_ATTACHED_IMAGES = 4;
@@ -383,6 +383,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // pi's compaction_start/compaction_end events drive the UI state; a
       // genuine failure is surfaced via the SSE error event below.
       sendJSON(res, { success: true });
+      sessionState.compactionAborted = false; // clear stale flag from any previous abort
       rpc.compact().catch((err) => {
         log.http.forSession(sessionState.sessionId).error('Compaction failed:', err);
         if (sessionState.compacting) {
@@ -390,8 +391,49 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           sessionState.isStreaming = false;
           session.broadcastToSession(sessionState.sessionId, { type: 'status', data: { ...sessionState } });
         }
-        session.broadcastToSession(sessionState.sessionId, { type: 'error', data: { message: `Compaction failed: ${err}` } });
+        if (sessionState.compactionAborted) {
+          // User-initiated abort — not an error. Shared per-session flag, so
+          // no client on this session gets the error popup. Transient notice:
+          // not persisted to pi's session file, gone after reload.
+          sessionState.compactionAborted = false;
+          session.broadcastToSession(sessionState.sessionId, {
+            type: 'history_upsert',
+            sessionId: sessionState.sessionId,
+            data: [{ id: `sys-${Date.now()}`, role: 'system', text: 'Compaction aborted', streaming: false, timestamp: Date.now() }],
+          });
+        } else {
+          session.broadcastToSession(sessionState.sessionId, { type: 'error', data: { message: `Compaction failed: ${err}` } });
+        }
       });
+      return;
+    }
+
+    if (url.pathname === '/api/abort-compaction' && req.method === 'POST') {
+      log.http.forSession(sessionState.sessionId).info('Compaction abort requested');
+      if (!sessionState.compacting || !sessionState.sessionFile) {
+        sendJSON(res, { success: false, error: 'No compaction in progress' }, 409);
+        return;
+      }
+      try {
+        // pi exposes no RPC abort for compaction. switchSession to the SAME
+        // file tears the session down (dispose() -> abortCompaction()) and
+        // reloads it from disk — lossless, since no CompactionEntry is
+        // written until compaction succeeds. Teardown discards queued
+        // messages, so capture and re-queue them.
+        // Flag BEFORE the switch: the old compact() promise rejects the
+        // moment teardown fires, racing this handler's remaining awaits.
+        sessionState.compactionAborted = true;
+        const cleared = await rpc.clearQueue();
+        await rpc.switchSession(sessionState.sessionFile);
+        for (const t of cleared.steering) await rpc.steer(t);
+        for (const t of cleared.followUp) await rpc.followUp(t);
+        sessionState.compacting = false;
+        session.broadcastToSession(sessionState.sessionId, { type: 'status', data: { ...sessionState } });
+        sendJSON(res, { success: true });
+      } catch (err) {
+        sessionState.compactionAborted = false; // switch failed — compaction may still be running
+        sendJSON(res, { success: false, error: `Failed to abort compaction: ${err}` });
+      }
       return;
     }
 
@@ -572,9 +614,15 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           sessionState.sessionId = sess.id;
           sessionState.sessionFile = sess.sessionFile;
           sessionState.sessionName = sess.sessionName;
-          sessionState.compacting = false;
-          sessionState.steerPending = 0;
-          sessionState.followUpPending = 0;
+          // Pending queue counts (and compacting) live in pi for the active
+          // session — zeroing them when the switch is a no-op (alreadyActive,
+          // e.g. the reload race that re-switches to the same session) would
+          // desync the badges from pi's real queue until the next change.
+          if (!alreadyActive) {
+            sessionState.compacting = false;
+            sessionState.steerPending = 0;
+            sessionState.followUpPending = 0;
+          }
 
           const fileStats = readSessionUsage(sess.sessionFile);
           sessionState.messageCount = fileStats.messageCount;
@@ -606,6 +654,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
               if (rates) session.setCostTotal(computeTokenCost(sessionStats.tokens, rates));
             }
           } catch (err) { log.http.error('Post-switch stats failed:', err); }
+          // No pricing info anywhere (pi reported 0, no rates configured):
+          // the accumulator must still be zeroed or the next streamed message
+          // adds on top of the previous session's total.
+          if (!sessionStats.cost) session.setCostTotal(0);
 
           log.http.forSession(sessionState.sessionId).info(`switch-by-id done: alreadyActive=${alreadyActive}`);
           // Same payload shape as GET /api/bootstrap — the requesting client
@@ -702,6 +754,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         sessionState.followUpPending = 0;
         sessionStats.tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
         sessionStats.cost = 0;
+        session.setCostTotal(0); // reset the live accumulator too, or the next message adds on top of the old session's total
         sessionStats.contextUsage = null;
         if (state.model) {
           sessionState.model = { provider: state.model.provider, id: state.model.id, name: state.model.name || state.model.id };
@@ -953,18 +1006,63 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
             }
             if (rpcImages.length === 0) rpcImages = undefined;
           }
-          const text = (message || '').trim();
+          let text = (message || '').trim();
           log.http.forSession(sessionState.sessionId).info(
             `${type || 'prompt'}: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"${rpcImages?.length ? ` [${rpcImages.length} image(s)]` : ''}`);
           const queued = type === 'steer' || type === 'followUp' || rpc.isStreaming;
+          // pi only runs extension input hooks on the prompt() path — steer/
+          // followUp bypass them, so queued messages with images must get the
+          // same attachment intake here (save to uploads + path note) that
+          // pi-filetools provides for prompts.
+          if (queued && rpcImages && rpcImages.length > 0) {
+            const sendPreviews = getSendImagesToChatModel(user);
+            const preset = getImagePreviewQuality(user);
+            try {
+              const uploadsDir = join(session.getEnvDir(), 'uploads');
+              mkdirSync(uploadsDir, { recursive: true });
+              const stamp = Date.now();
+              const paths: string[] = [];
+              const previews: import('./rpc-client.js').RpcImage[] = [];
+              for (const [i, img] of rpcImages.entries()) {
+                const ext = (img.mimeType.split('/')[1] || 'png').replace('jpeg', 'jpg');
+                const file = join(uploadsDir, `upload-${stamp}-${i + 1}.${ext}`);
+                writeFileSync(file, Buffer.from(img.data, 'base64'));
+                paths.push(file);
+                // Publish under the hist-* name /api/images serves, and push
+                // an image entry so the attachment still renders in chat.
+                const name = `hist-${createHash('sha1').update(img.data).digest('hex').slice(0, 16)}.${ext}`;
+                const histFile = join(uploadsDir, name);
+                if (!existsSync(histFile)) writeFileSync(histFile, Buffer.from(img.data, 'base64'));
+                session.pushImageEntry(name, img.mimeType);
+                // Downscaled preview for the LLM (full res stays on disk)
+                if (sendPreviews) {
+                  try {
+                    if (preset === 'full') previews.push(img);
+                    else {
+                      const { resizeImage } = await import('@earendil-works/pi-coding-agent');
+                      const r = await resizeImage(Buffer.from(img.data, 'base64'), img.mimeType, preset);
+                      previews.push(r ? { type: 'image', mimeType: r.mimeType, data: r.data } : img);
+                    }
+                  } catch (e: any) {
+                    log.http.error('preview resize failed:', e?.message || e);
+                    previews.push(img);
+                  }
+                }
+              }
+              text += `\n\n[Attached file${paths.length > 1 ? 's' : ''} saved to:\n${paths.join('\n')}\n${sendPreviews ? 'Full-resolution originals are at these paths — use them with tools (read, bash, edit_image, …). The image(s) shown to you here are downscaled previews.' : 'Use these paths directly with tools (read, bash, edit_image, …) instead of searching for the attachment. Images are not shown inline.'}]`;
+              rpcImages = sendPreviews ? previews : undefined;
+            } catch (err: any) {
+              log.http.error('Failed to save queued image attachments:', err?.message || err);
+            }
+          }
           if (type === 'steer') {
-            await rpc.steer(text, rpcImages);
+            await rpc.steer(text);
           } else if (type === 'followUp') {
-            await rpc.followUp(text, rpcImages);
+            await rpc.followUp(text);
           } else if (rpc.isStreaming) {
-            await rpc.steer(text, rpcImages);
+            await rpc.steer(text);
           } else {
-            await rpc.prompt(text, rpcImages);
+            await rpc.prompt(text);
           }
           // Commit the user message into the stream history immediately —
           // retires the client's optimistic pending copy (pi never emits
@@ -979,8 +1077,22 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       return;
     }
 
-    // ── SSE endpoint ──
+    if (url.pathname === '/api/cancel-pending' && req.method === 'POST') {
+      try {
+        const { text } = await readBody(req);
+        if (!text || typeof text !== 'string') {
+          sendJSON(res, { success: false, error: 'text is required' }, 400);
+          return;
+        }
+        const cancelled = await session.cancelPending(text.trim());
+        sendJSON(res, { success: cancelled, error: cancelled ? undefined : 'No matching queued message' });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to cancel pending message: ${err}` }, 400);
+      }
+      return;
+    }
 
+    // ── SSE endpoint ──
     if (url.pathname === '/events') {
       // Generate a unique client ID for this SSE connection
       const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

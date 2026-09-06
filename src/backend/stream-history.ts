@@ -89,7 +89,9 @@ export function formatToolResult(
     return null;
   }
 
-  const images = toolName === 'edit' ? [] : extractImages(resultContent);
+  // 'read' returns image blocks only so the MODEL can see them — user-facing
+  // images come from image_saved entries / attachments, not tool results.
+  const images = toolName === 'edit' || toolName === 'read' ? [] : extractImages(resultContent);
   const prefix = isError ? `[${toolName} error]` : '';
   const displayText = prefix ? (text ? prefix + ' ' + text : prefix) : text;
   if (!displayText && images.length === 0) return null;
@@ -143,7 +145,7 @@ export function readAllMessageEntries(sessionFile: string): any[] {
         if (obj.type === 'message' && obj.message) messages.push(obj);
         // Custom entries (e.g. file_saved from pi-filetools) ride along so
         // bootstrap rebuilds can render them as file cards.
-        if (obj.type === 'custom' && (obj.customType === 'file_saved' || obj.customType === 'file_change')) messages.push(obj);
+        if (obj.type === 'custom' && (obj.customType === 'file_saved' || obj.customType === 'file_change' || obj.customType === 'image_saved')) messages.push(obj);
       } catch {}
     }
     return messages;
@@ -194,10 +196,17 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
       // Custom entries (file_saved / file_change) are part of the file's
       // chronological order — render them in place, NOT appended at the end.
       if (msg.customType === 'file_saved' && msg.data?.savedName) {
+        // Image files broadcast as 'image' entries (inline preview), others as file cards
+        if ((msg.data.mimeType || '').startsWith('image/')) {
+          return [{ role: 'image', text: '', streaming: false, timestamp: entryTimestamp ?? Date.now(), images: [{ mimeType: msg.data.mimeType, url: `/api/files/${encodeURIComponent(msg.data.savedName)}` }] }];
+        }
         return [{ role: 'file', text: '', streaming: false, timestamp: entryTimestamp ?? Date.now(), file: msg.data }];
       }
       if (msg.customType === 'file_change' && msg.data?.diff) {
         return [{ role: 'edit', text: msg.data.diff, streaming: false, timestamp: entryTimestamp ?? Date.now() }];
+      }
+      if (msg.customType === 'image_saved' && msg.data?.name) {
+        return [{ role: 'image', text: '', streaming: false, timestamp: entryTimestamp ?? Date.now(), images: [{ mimeType: msg.data.mimeType || 'image/png', url: `/api/images/${msg.data.name}` }] }];
       }
       const role = msg.role || '';
       const timestamp = msg.timestamp

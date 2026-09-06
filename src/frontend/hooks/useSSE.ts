@@ -136,14 +136,41 @@ export function useSSE(options: UseSSEOptions = {}) {
 
   // Reconnect when page becomes visible again (e.g. phone screen unlocked)
   useEffect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && !connectedRef.current && autoConnect) {
+    let lastResume = 0;
+    const handleResume = () => {
+      // visibilitychange, pageshow and focus fire together on resume (when
+      // they fire at all — iOS standalone PWAs sometimes skip visibilitychange
+      // on snapshot resume) — dedupe so the logic runs once per wake.
+      const now = Date.now();
+      if (now - lastResume < 2000) return;
+      lastResume = now;
+      if (!autoConnect) return;
+      if (!connectedRef.current) {
         console.log('[autere] Page became visible, reconnecting...');
+        connect();
+        return;
+      }
+      if (Date.now() - lastHeartbeatRef.current > HEARTBEAT_TIMEOUT) {
+        // Zombie EventSource: browser kept the socket "open" through
+        // suspension but no heartbeats arrived. Force a reconnect so the
+        // post-reconnect bootstrap refreshes stats/history/pending state.
+        console.log('[autere] Page visible with stale heartbeat, forcing reconnect');
+        eventSourceRef.current?.close();
+        eventSourceRef.current = null;
+        connectedRef.current = false;
+        setConnected(false);
         connect();
       }
     };
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
+    const onVisibility = () => { if (document.visibilityState === 'visible') handleResume(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pageshow', handleResume);
+    window.addEventListener('focus', handleResume);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pageshow', handleResume);
+      window.removeEventListener('focus', handleResume);
+    };
   }, [autoConnect, connect]);
 
   // Periodic polling to detect and recover from silent disconnections

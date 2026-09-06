@@ -13,6 +13,7 @@ interface SessionModalProps {
   isStreaming: boolean;
   isActive: boolean;
   onAbort: () => void;
+  onAbortCompaction: () => void;
   onNewSession: () => void;
   onCompact: () => void;
   onSwitchSession: (sessionId: string) => void;
@@ -48,7 +49,7 @@ export function formatSessionTime(ts: number, locale?: string): string {
 export const SessionModal: React.FC<SessionModalProps> = ({
   open, onClose, statusType, sessionId, sessionName,
   compacting, isStreaming, isActive,
-  onAbort, onNewSession, onCompact, onSwitchSession,
+  onAbort, onAbortCompaction, onNewSession, onCompact, onSwitchSession,
   switching = false,
 }) => {
   const [query, setQuery] = useState('');
@@ -161,6 +162,14 @@ export const SessionModal: React.FC<SessionModalProps> = ({
           >
             ⏹ Abort Operation
           </button>
+          {compacting && (
+            <button
+              className="btn btn-abort"
+              onClick={() => { if (window.confirm('Abort the compaction? Progress is discarded; the session stays as it was.')) onAbortCompaction(); }}
+            >
+              ⏹ Abort Compaction
+            </button>
+          )}
           <button className="btn btn-compact" onClick={onCompact} disabled={compactLoading || compacting || statusType !== 'connected'}>
             {compacting ? '⏳ Compacting…' : compactLoading ? '⏳ Starting…' : '🗜 Compact Context'}
           </button>

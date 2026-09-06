@@ -3,14 +3,13 @@ import { useSSE } from '../../src/frontend/hooks/useSSE';
 
 // Test wrapper component for the hook
 function TestComponent({ onMessage }: { onMessage?: (msg: any) => void }) {
-  const { connected, connect, disconnect, reconnectAttempts } = useSSE({
+  const { connected, connect, disconnect } = useSSE({
     onMessage,
     autoConnect: false,
   });
   return (
     <div>
       <span data-testid="connected">{String(connected)}</span>
-      <span data-testid="reconnectAttempts">{reconnectAttempts}</span>
       <button data-testid="connect" onClick={connect}>Connect</button>
       <button data-testid="disconnect" onClick={disconnect}>Disconnect</button>
     </div>

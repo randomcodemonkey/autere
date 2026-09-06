@@ -6,17 +6,17 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { createHash } from 'crypto';
 import type { ServerResponse } from 'http';
 import { MonitorRpcClient } from './rpc-client.js';
-import { filterScopedModels, autoSessionName } from './utils.js';
+import { filterScopedModels, autoSessionName, readSessionUsage } from './utils.js';
 import { log, userLog } from './logger.js';
 import { getLastSession, setLastSession } from './auth.js';
 import { ensurePiEnv, getPiEnvDir } from './pi-env.js';
 import { readSessions } from './sessions.js';
 import type { SessionInfo } from './types.js';
-import { getEditIgnorePaths, getHistoryLimit, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost } from './user-settings.js';
+import { getEditIgnorePaths, getHistoryLimit, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost } from './user-settings.js';
 import { registerSessionPeer, isSessionActiveElsewhere, deliverToPeers } from './session-peers.js';
 import {
   isRmCommand,
@@ -63,6 +63,10 @@ function createInitialState(): UserSessionState {
       connected: false,
       startTime: Date.now(),
       compacting: false,
+      // Set by /api/abort-compaction, consumed by the late compact()
+      // rejection: user-initiated aborts surface as a chat notice, not an
+      // error popup (shared per-session, so every client is covered).
+      compactionAborted: false,
       steerPending: 0,
       followUpPending: 0,
     },
@@ -106,6 +110,8 @@ export class UserSession {
 
   /** Whether this process was launched with --session pointing at an existing session */
   private resumedExistingSession: boolean;
+  /** Session file pi was spawned with (--session) — used to seed UI state before pi finishes loading it */
+  private resumedSessionFile: string | null = null;
 
   // Per-user peer registry membership (see session-peers.ts)
   private unregisterPeer: (() => void) | null = null;
@@ -179,9 +185,10 @@ export class UserSession {
       if (lastSession && !args.includes('--session') && !args.includes('--continue') && !args.includes('-c')) {
         args.push('--session', lastSession);
         this.resumedExistingSession = true;
+        this.resumedSessionFile = lastSession;
       }
     }
-    this.rpc = new MonitorRpcClient({ ...rpcOptions, args, agentDir: piEnvDir, editIgnorePaths: getEditIgnorePaths(user) });
+    this.rpc = new MonitorRpcClient({ ...rpcOptions, args, agentDir: piEnvDir, editIgnorePaths: getEditIgnorePaths(user), sendImagesToChatModel: getSendImagesToChatModel(user), imagePreviewQuality: getImagePreviewQuality(user), imageStreamFix: getImageStreamFix(user) });
     this.state = createInitialState();
     this._idleTimeoutMs = idleTimeoutMs;
   }
@@ -300,6 +307,25 @@ export class UserSession {
   }
 
   /**
+   * Publish an image (already saved in uploads under a hist-* name) as a
+   * first-class chat image entry — used for image_saved entries from
+   * pi-images and for user attachments whose base64 is stripped before the
+   * LLM context.
+   */
+  pushImageEntry(name: string, mimeType?: string): void {
+    const imgEntry = this.tagEntry({
+      role: 'image',
+      text: '',
+      streaming: false,
+      timestamp: Date.now(),
+      images: [{ mimeType: mimeType || 'image/png', url: `/api/images/${name}` }],
+    });
+    const buf = this.historyFor(this.state.sessionState.sessionId);
+    buf.push(imgEntry);
+    this.broadcastHistoryUpsert(this.state.sessionState.sessionId, [imgEntry]);
+  }
+
+  /**
    * Record a just-sent user message in the history buffer and broadcast it
    * as a targeted upsert. This is what retires the client's optimistic
    * pending copy — pi does not emit message_end for user messages, so
@@ -311,6 +337,39 @@ export class UserSession {
     const entry = this.tagEntry({ role: 'user', text, streaming: false, timestamp: Date.now(), ...(queued ? { pending: true } : {}) });
     buf.push(entry);
     this.broadcastHistoryUpsert(sessionId, [entry]);
+  }
+
+  /**
+   * Cancel one queued (steer/follow-up) user message by text. pi's RPC only
+   * offers all-or-nothing clear_queue — which returns the dropped texts — so
+   * we clear, prune the match, and re-queue the rest in order.
+   * ponytail: re-queue is text-only; a queued message with image attachments
+   * would lose them. Add image round-tripping if that ever matters.
+   */
+  async cancelPending(text: string): Promise<boolean> {
+    const cleared = await this.rpc.clearQueue();
+    let cancelled = false;
+    const prune = (arr: string[]) => {
+      const idx = arr.indexOf(text);
+      if (idx >= 0) { arr.splice(idx, 1); cancelled = true; }
+    };
+    prune(cleared.steering);
+    prune(cleared.followUp);
+    for (const t of cleared.steering) await this.rpc.steer(t);
+    for (const t of cleared.followUp) await this.rpc.followUp(t);
+    if (!cancelled) return false;
+    // Drop the pending copy from the history buffer (optimistic client
+    // copies are removed by the caller)
+    const sessionId = this.state.sessionState.sessionId;
+    const buf = this.historyFor(sessionId);
+    for (let i = buf.length - 1; i >= 0; i--) {
+      if (buf[i].role === 'user' && (buf[i] as any).pending && buf[i].text === text) {
+        const [removed] = buf.splice(i, 1);
+        this.broadcastToSession(sessionId, { type: 'history_remove', sessionId, data: [removed.id] });
+        break;
+      }
+    }
+    return true;
   }
 
   /**
@@ -465,6 +524,24 @@ export class UserSession {
 
     // Fetch initial state
     await this.fetchInitialState();
+
+    // pi loads its --session file asynchronously: right after spawn its
+    // get_state/stats can still be null/zero (seen as boot st=in0 msgs=0
+    // sess=? after an idle respawn). Seed the UI state from the session
+    // file we spawned pi with — only filling what pi hasn't reported yet.
+    if (this.resumedSessionFile && existsSync(this.resumedSessionFile)) {
+      const st = this.state.sessionState;
+      if (!st.sessionId) st.sessionId = basename(this.resumedSessionFile, '.jsonl');
+      st.sessionFile = st.sessionFile || this.resumedSessionFile;
+      const fileStats = readSessionUsage(this.resumedSessionFile);
+      if (!st.messageCount) st.messageCount = fileStats.messageCount;
+      if (!st.requestCount) st.requestCount = fileStats.requestCount;
+      const tok = this.state.sessionStats.tokens;
+      if (!tok.input && !tok.output && !tok.cacheRead && !tok.cacheWrite) {
+        this.state.sessionStats.tokens = fileStats.tokens;
+        log.userSession.info(`Seeded state from resumed session file (${st.messageCount} messages, in=${fileStats.tokens.input})`);
+      }
+    }
 
     // Start idle timer
     this.resetIdleTimer();
@@ -659,7 +736,16 @@ export class UserSession {
           // (diff cards) respectively.
           const entry = event.entry;
           if (entry?.customType === 'file_saved' && entry.data?.savedName) {
-            const fileEntry = this.tagEntry({
+            // Images broadcast as 'image' entries (inline preview) — the mime
+            // type from save_file is reliable; everything else is a file card.
+            const isImage = (entry.data.mimeType || '').startsWith('image/');
+            const fileEntry = this.tagEntry(isImage ? {
+              role: 'image',
+              text: '',
+              streaming: false,
+              timestamp: Date.now(),
+              images: [{ mimeType: entry.data.mimeType, url: `/api/files/${encodeURIComponent(entry.data.savedName)}` }],
+            } : {
               role: 'file',
               text: '',
               streaming: false,
@@ -679,6 +765,8 @@ export class UserSession {
             const buf = this.historyFor(s.sessionState.sessionId);
             buf.push(editEntry);
             this.broadcastHistoryUpsert(s.sessionState.sessionId, [editEntry]);
+          } else if (entry?.customType === 'image_saved' && entry.data?.name) {
+            this.pushImageEntry(entry.data.name, entry.data.mimeType);
           }
           break;
         }
@@ -691,6 +779,12 @@ export class UserSession {
           s.sessionState.isStreaming = false;
           this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
           this.notifyPeersSessionActivity(false);
+          // Context shrank — refresh usage stats immediately (pi updates them
+          // at compaction, we otherwise only re-fetch on message_end).
+          this.rpc.getSessionStats().then(stats => {
+            if (stats.contextUsage) s.sessionStats.contextUsage = stats.contextUsage;
+            this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
+          }).catch(() => {});
           break;
         case 'turn_start':
           s.sessionState.isStreaming = true;

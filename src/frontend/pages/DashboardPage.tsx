@@ -174,7 +174,9 @@ export function DashboardPage({
         // creating a new session) — applying them would revert
         // sessionState.sessionId and trigger a redundant switch-by-id that
         // aborts an in-flight prompt.
-        if (viewed && incoming?.sessionId && incoming.sessionId !== viewed) break;
+        if (viewed && incoming?.sessionId && incoming.sessionId !== viewed) {
+          break;
+        }
         // Null sessionId (mid-switch snapshot) must not clear the viewed id
         setSessionState((prev: any) => ({ ...prev, ...incoming, sessionId: incoming?.sessionId ?? prev.sessionId }));
         break;
@@ -210,7 +212,8 @@ export function DashboardPage({
         // the DOM for nothing.
         const incoming = msg.data || [];
         // Retire optimistic copies whose text now exists in the real history
-        setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incoming as StreamMessage[]).some((m) => m.role === 'user' && m.text === p.text)));
+        // prefix match: queued messages get attachment notes appended server-side, so the committed text is pending text + note
+setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incoming as StreamMessage[]).some((m) => m.role === 'user' && (m.text === p.text || m.text.startsWith(p.text)))));
         // Skip no-op updates: the connect-time replay may deliver exactly
         // what is already rendered — re-applying identical content rebuilds
         // the DOM for nothing. Compare via a cheap signature (lengths only)
@@ -246,9 +249,12 @@ export function DashboardPage({
             if (i < 0 && e.role !== 'user') {
               // Never text-match user entries: two identical user messages
               // are legitimate — they must append, not replace.
+              // Text-match requires non-empty text: empty-text entries
+              // (image/file pseudo-entries) would otherwise replace each
+              // other — each new image must append, not overwrite the last.
               for (let k = next.length - 1; k >= 0; k--) {
                 const m = next[k];
-                if (m.role === e.role && (m.streaming || (m.text || '') === (e.text || ''))) { i = k; break; }
+                if (m.role === e.role && (m.streaming || (!!e.text && (m.text || '') === e.text))) { i = k; break; }
               }
             }
             if (i >= 0) next[i] = e;
@@ -266,7 +272,7 @@ export function DashboardPage({
           return changed ? next : prev;
         });
         // A committed user entry retires its optimistic pending copy
-        setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !incoming.some((m) => m.role === 'user' && !m.streaming && m.text === p.text)));
+        setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !incoming.some((m) => m.role === 'user' && !m.streaming && (m.text === p.text || m.text.startsWith(p.text)))));
         break;
       }
       case 'history_remove': {
@@ -375,6 +381,27 @@ export function DashboardPage({
       .then((res) => res.json())
       .then((data) => {
         if (epoch !== bootstrapEpochRef.current || !data.success || !data.data) return;
+        const d = data.data;
+        // Invalid snapshot: the backend hasn't loaded a session yet (race
+        // after an idle respawn) — applying it would zero the UI and strand
+        // pending messages. Don't apply; force a switch-by-id instead, whose
+        // response is the same payload shape with state recomputed from the
+        // session file. No loop: one recovery attempt per bootstrap.
+        if (!d.sessionState?.sessionId && sid) {
+          fetch(url('/api/sessions/switch-by-id'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: sid }),
+          })
+            .then((r) => r.json())
+            .then((r) => {
+              if (r.success && r.data && epoch === bootstrapEpochRef.current) {
+                applyBootstrap(r.data);
+              }
+            })
+            .catch(() => {});
+          return;
+        }
         applyBootstrap(data.data);
         // A successful bootstrap means the backend is up — clear restart flags.
         // Unconditional: the callback is stable, so closures would go stale.
@@ -402,16 +429,32 @@ export function DashboardPage({
   const lastHiddenAtRef = useRef(0);
   useEffect(() => {
     if (!authenticated) return;
-    const onVisibility = () => {
+    let lastResume = 0;
+    const onResume = (e?: Event) => {
+      // iOS standalone PWAs sometimes skip visibilitychange on snapshot
+      // resume — pageshow/focus are the reliable signals there. All three
+      // fire together on a normal resume; dedupe to run once per wake.
+      const now = Date.now();
+      if (now - lastResume < 2000) return;
+      lastResume = now;
       if (document.visibilityState === 'hidden') {
-        lastHiddenAtRef.current = Date.now();
+        lastHiddenAtRef.current = now;
         return;
       }
-      const hiddenFor = Date.now() - lastHiddenAtRef.current;
-      if (lastHiddenAtRef.current && hiddenFor > 30000) refetchBootstrap();
+      // A persisted pageshow is a snapshot restore — the page was hidden
+      // for an unknown (likely long) time even if no 'hidden' event fired.
+      const snapshotResume = (e as PageTransitionEvent | undefined)?.persisted === true;
+      const hiddenFor = now - lastHiddenAtRef.current;
+      if ((lastHiddenAtRef.current && hiddenFor > 30000) || snapshotResume) refetchBootstrap();
     };
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => document.removeEventListener('visibilitychange', onVisibility);
+    document.addEventListener('visibilitychange', onResume);
+    window.addEventListener('pageshow', onResume);
+    window.addEventListener('focus', onResume);
+    return () => {
+      document.removeEventListener('visibilitychange', onResume);
+      window.removeEventListener('pageshow', onResume);
+      window.removeEventListener('focus', onResume);
+    };
   }, [authenticated, refetchBootstrap]);
 
   // After reconnect (e.g. a device waking from sleep), bootstrap refreshes
@@ -505,6 +548,20 @@ export function DashboardPage({
     setRecentTools([]);
   }, []);
 
+  // Cancel a queued (steer/follow-up) message: optimistic UI removal; the
+  // backend prunes pi's queue and broadcasts history_remove for the
+  // committed pending copy in streamHistory.
+  const handleCancelPending = useCallback(async (text: string) => {
+    setPendingUser((prev) => prev.filter((p) => p.text !== text));
+    try {
+      await fetch(url('/api/cancel-pending'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+    } catch {}
+  }, []);
+
   // Badge click: on desktop the status card lives in the always-visible left
   // column — scroll it into view and flash it so the click gives visible
   // feedback. (On mobile onViewChange('status') shows the card full-screen.)
@@ -545,6 +602,18 @@ export function DashboardPage({
     } catch (err) {
       console.error('Failed to compact:', err);
       setSessionError('Failed to compact');
+    }
+  }, []);
+
+  const handleAbortCompaction = useCallback(async () => {
+    // Confirm lives at the button (SessionModal) — this handler must fire directly.
+    try {
+      const res = await fetch(url('/api/abort-compaction'), { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) setSessionError(data.error || 'Failed to abort compaction');
+    } catch (err) {
+      console.error('Failed to abort compaction:', err);
+      setSessionError('Failed to abort compaction');
     }
   }, []);
 
@@ -663,7 +732,7 @@ export function DashboardPage({
         </div>
         <div className={`chat-wrapper${sessionState.externalActivity ? ' chat-external-activity' : ''}`}>
           {activeView === 'chat' && (
-            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text, type) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} />
+            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text, type) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} />
           )}
           {activeView === 'settings' && (
             <SettingsCard sseConnected={sseConnected} />
@@ -684,6 +753,7 @@ export function DashboardPage({
         isStreaming={sessionState.isStreaming}
         isActive={sessionState.isStreaming || sessionState.compacting}
         onAbort={handleAbort}
+        onAbortCompaction={handleAbortCompaction}
         onNewSession={handleNewSession}
         onCompact={handleCompact}
         onSwitchSession={handleSwitchSession}

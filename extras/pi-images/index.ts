@@ -16,9 +16,14 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
 import { Type } from "typebox";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, isAbsolute, join, resolve } from "node:path";
+// ponytail: delegates to the stock openai-completions stream with a swapped
+// fetch. Drop the whole streamfix block when upstream (OpenRouter streamed
+// usage accounting) fixes image token counting.
+import { stream as stockStream } from "@earendil-works/pi-ai/api/openai-completions";
 
 const MAX_IMAGE_EDIT_BYTES = 8 * 1024 * 1024;
 
@@ -40,6 +45,84 @@ import { homedir } from "node:os";
 
 const REQUEST_TIMEOUT_MS = 120_000;
 
+// ── streamfix: non-streamed upstream requests for image-bearing chats ──
+// OpenRouter's streamed "estimated" usage recount tokenizes base64 data-URLs
+// as text (~4x prompt inflation, image_tokens: 0); the non-streamed path
+// relays the provider's vision-correct usage. IMAGE_STREAM_FIX=0 disables.
+const STREAM_FIX_RAW = String(process.env.IMAGE_STREAM_FIX ?? "").toLowerCase();
+const STREAM_FIX_ENABLED = STREAM_FIX_RAW !== "0" && STREAM_FIX_RAW !== "false";
+
+const sseEnc = new TextEncoder();
+
+/** Convert a non-streaming chat-completion JSON body into the minimal SSE the OpenAI SDK / stock parser consumes. */
+function sseFromJson(j: any): Uint8Array {
+	const choice = j.choices?.[0] ?? {};
+	const msg = choice.message ?? {};
+	const delta: any = { role: "assistant" };
+	if (msg.content) delta.content = msg.content;
+	for (const f of ["reasoning", "reasoning_content", "reasoning_text"]) {
+		if (msg[f]) delta[f] = msg[f];
+	}
+	if (msg.tool_calls) {
+		delta.tool_calls = msg.tool_calls.map((tc: any, i: number) => ({
+			index: i,
+			id: tc.id,
+			type: "function",
+			function: { name: tc.function?.name, arguments: tc.function?.arguments },
+		}));
+	}
+	const chunk = (d: any, fr: any, usage: any) =>
+		`data: ${JSON.stringify({ id: j.id, object: "chat.completion.chunk", created: j.created, model: j.model, choices: [{ index: 0, delta: d, finish_reason: fr }], usage })}\n\n`;
+	const out =
+		chunk(delta, null, undefined) +
+		chunk({}, choice.finish_reason ?? (msg.tool_calls ? "tool_calls" : "stop"), j.usage) +
+		"data: [DONE]\n\n";
+	return sseEnc.encode(out);
+}
+
+/** fetch wrapper: image requests go out non-streaming (JSON re-served as SSE); also scrubs reasoning_effort:"none" (upstream 400s on it). */
+const scrubFetch: typeof globalThis.fetch = async (url, init) => {
+	try {
+		if (typeof init?.body === "string" && init.body.includes('"messages"')) {
+			const body = JSON.parse(init.body);
+			if (body.reasoning_effort === "none") delete body.reasoning_effort;
+			if (init.body.includes('"image_url"') && body.stream) {
+				body.stream = false;
+				delete body.stream_options;
+				const headers: Record<string, string> = {};
+				const src: any = init.headers ?? {};
+				if (typeof src.forEach === "function") {
+					src.forEach((v: string, k: string) => {
+						const lk = k.toLowerCase();
+						if (lk !== "accept" && !lk.startsWith("x-stainless")) headers[k] = v;
+					});
+				} else {
+					for (const [k, v] of Object.entries(src)) {
+						const lk = k.toLowerCase();
+						if (lk !== "accept" && !lk.startsWith("x-stainless")) headers[k] = String(v);
+					}
+				}
+				headers.accept = "application/json";
+				const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+				const ct = resp.headers.get("content-type") ?? "";
+				if (resp.ok && ct.includes("json")) {
+					const j = await resp.json();
+					return new Response(sseFromJson(j), {
+						status: resp.status,
+						statusText: resp.statusText,
+						headers: { "content-type": "text/event-stream" },
+					});
+				}
+				return resp;
+			}
+			return fetch(url, { ...init, body: JSON.stringify(body) });
+		}
+	} catch {
+		/* fall through to plain fetch */
+	}
+	return fetch(url, init);
+};
+
 interface RouterConfig {
 	baseUrl: string;
 	apiKey: string;
@@ -51,7 +134,7 @@ interface RouterConfig {
 
 /** Appended to edit_image prompts unless config overrides it (empty string disables). */
 const DEFAULT_EXTRA_PROMPT =
-	"Change the original image as little as possible. Apply only the requested edit(s) and keep everything else — composition, framing, colors, lighting, style, and all unedited details — exactly as they are.";
+	"This is a localized photo edit, NOT a re-creation. Keep the original image's exact orientation, aspect ratio, framing, and camera angle — do NOT rotate, tilt, reposition, crop, or recompose the subject or scene. Apply only the requested edit(s) in place; every other pixel-level detail (composition, colors, lighting, style, background, and all unedited elements) must remain identical to the input image.";
 
 function extraPrompt(config: RouterConfig): string {
 	// unset or empty → default (set to a custom text to override)
@@ -210,6 +293,52 @@ async function generateViaImagesApi(
 }
 
 export default function (pi: ExtensionAPI) {
+	if (STREAM_FIX_ENABLED) {
+		// Re-register the 9router provider with a stream wrapper: image-bearing
+		// requests go out non-streamed. Registration merges over pi-9router-ext's
+		// (which loads later without a streamSimple, so ours survives).
+		pi.registerProvider("9router", {
+			api: "openai-completions",
+			streamSimple: (model, context, options) =>
+				stockStream(model as any, context, { ...options, fetch: scrubFetch } as any),
+		});
+	}
+
+	/**
+	 * Save generated/edited images to disk and surface them to the dashboard.
+	 * IMPORTANT: image base64 must NEVER be returned in tool result content —
+	 * it would enter the LLM context and be re-sent on every subsequent
+	 * request (multi-100K-token blowup). We persist to disk, emit an
+	 * 'image_saved' custom entry (dashboard renders it as an image card),
+	 * and return text-only content to the model.
+	 */
+	const persistImages = (images: { data: string; mimeType: string }[], prefix: string): string[] => {
+		const savedPaths: string[] = [];
+		if (images.length === 0) return savedPaths;
+		const dir = join(homedir(), ".autere", "pi-images");
+		mkdirSync(dir, { recursive: true });
+		for (const [i, img] of images.entries()) {
+			const ext = img.mimeType.split("/")[1]?.replace("jpeg", "jpg") || "png";
+			const file = join(dir, `${prefix}-${Date.now()}-${i + 1}.${ext}`);
+			writeFileSync(file, Buffer.from(img.data, "base64"));
+			savedPaths.push(file);
+			// Copy into the uploads dir under the hist-* name served by
+			// autere's /api/images route, and announce it to the dashboard.
+			try {
+				const envDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+				const uploads = join(envDir, "uploads");
+				mkdirSync(uploads, { recursive: true });
+				const name = `hist-${createHash("sha1").update(img.data).digest("hex").slice(0, 16)}.${ext}`;
+				const histFile = join(uploads, name);
+				if (!existsSync(histFile)) writeFileSync(histFile, Buffer.from(img.data, "base64"));
+				pi.appendEntry("image_saved", { name, mimeType: img.mimeType, path: file });
+			} catch (err: any) {
+				console.error("[pi-images] failed to publish image to uploads:", err?.message || err);
+			}
+		}
+		return savedPaths;
+	};
+
 	pi.registerTool({
 		name: "generate_image",
 		label: "Generate Image",
@@ -269,27 +398,14 @@ export default function (pi: ExtensionAPI) {
 				.join("\n")
 				.trim();
 
-			const content: any[] = images.map((p) => ({ type: "image", data: p.data, mimeType: p.mimeType }));
-
-			// Save to disk so the image can be referenced later (e.g. as an
-			// edit_image input) without round-tripping base64 through the LLM.
-			const savedPaths: string[] = [];
-			if (images.length > 0) {
-				try {
-					const dir = join(homedir(), ".autere", "pi-images");
-					mkdirSync(dir, { recursive: true });
-					for (const [i, img] of images.entries()) {
-						const ext = img.mimeType.split("/")[1]?.replace("jpeg", "jpg") || "png";
-						const file = join(dir, `gen-${Date.now()}-${i + 1}.${ext}`);
-						writeFileSync(file, Buffer.from(img.data, "base64"));
-						savedPaths.push(file);
-					}
-					content.push({ type: "text", text: `Saved to: ${savedPaths.join(", ")}` });
-				} catch (err: any) {
-					console.error("[pi-images] Failed to save image to disk:", err?.message || err);
-				}
-			}
+			// Text-only result: images go to disk + dashboard entry, never into
+			// LLM context (ponytail: ceiling is that the model can't see its own
+			// output image; add a downscaled preview block only if ever needed).
+			const savedPaths = persistImages(images, "gen");
+			const content: any[] = [];
+			if (savedPaths.length > 0) content.push({ type: "text", text: `Saved to: ${savedPaths.join(", ")}` });
 			if (text) content.push({ type: "text", text });
+			if (content.length === 0) content.push({ type: "text", text: "Image generated." });
 
 			return {
 				content,
@@ -371,29 +487,13 @@ export default function (pi: ExtensionAPI) {
 				.join("\n")
 				.trim();
 
-			const content: any[] = images.map((p) => ({ type: "image", data: p.data, mimeType: p.mimeType }));
-
-			// Save edited result to disk like generate_image does
-			const savedPaths: string[] = [];
-			if (images.length > 0) {
-				try {
-					const dir = join(homedir(), ".autere", "pi-images");
-					mkdirSync(dir, { recursive: true });
-					for (const [i, img] of images.entries()) {
-						const ext = img.mimeType.split("/")[1]?.replace("jpeg", "jpg") || "png";
-						const file = join(dir, `edit-${Date.now()}-${i + 1}.${ext}`);
-						writeFileSync(file, Buffer.from(img.data, "base64"));
-						savedPaths.push(file);
-					}
-					content.push({ type: "text", text: `Saved to: ${savedPaths.join(", ")}` });
-				} catch (err: any) {
-					console.error("[pi-images] Failed to save edited image to disk:", err?.message || err);
-				}
-			}
+			const savedPaths = persistImages(images, "edit");
+			const content: any[] = [];
+			if (savedPaths.length > 0) content.push({ type: "text", text: `Saved to: ${savedPaths.join(", ")}` });
 			if (text) content.push({ type: "text", text });
+			if (content.length === 0) content.push({ type: "text", text: "Image edited." });
 
 			return {
-				content,
 				details: { model, imageCount: images.length, savedPaths },
 			};
 		},

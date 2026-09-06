@@ -679,7 +679,7 @@ describe('Dashboard Loading', () => {
       cy.get('.sortable-list-item').first().find('.sortable-list-input').invoke('val').then((existingName) => {
         cy.get('.sortable-list-item').its('length').then((initialCount) => {
           // Try to add the same name
-          cy.get('.sortable-list-add .sortable-list-input').type(existingName);
+          cy.get('.sortable-list-add .sortable-list-input').type(String(existingName));
           cy.get('.sortable-list-add-btn').click();
 
           // Should NOT add a duplicate — count stays the same

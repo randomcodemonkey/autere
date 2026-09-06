@@ -106,9 +106,11 @@ interface ChatMessageProps {
   isLong: boolean;
   truncLen: number;
   lineCount?: number;
+  /** Present on pending (queued steer/follow-up) user messages — cancels it */
+  onCancelPending?: (text: string) => void;
 }
 
-export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isAssistant, isToolResult, isLong, truncLen, lineCount }) => {
+export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isAssistant, isToolResult, isLong, truncLen, lineCount, onCancelPending }) => {
   const [expanded, setExpanded] = useState(false);
   const [lightbox, setLightbox] = useState(false);
   // Tool command line: click toggles between one ellipsized line and full wrap
@@ -183,6 +185,9 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
         <span>{role}</span>
         {ts && <span className="stream-timestamp">{ts}</span>}
         {msg.pending && <span className="stream-pending-indicator" title="Sending…">⏳ pending</span>}
+        {msg.pending && role === 'user' && onCancelPending && (
+          <button className="pending-cancel" title="Cancel this queued message" onClick={() => onCancelPending(displayText)}>✕</button>
+        )}
         {/* Single active indicator per message: toolCall entries render the
             cursor inside the command header, not out here as well. */}
         {msg.streaming && !(role === 'toolCall' && msg.toolCall) && <span className="stream-cursor" />}

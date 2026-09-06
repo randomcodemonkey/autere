@@ -35,15 +35,15 @@ interface UptimeInfo {
 
 const EMPTY_UPTIME: UptimeInfo = { autereStartedAt: null, piStartedAt: null };
 
-// Build id injected by Vite (see vite.config.ts define). Shown in the
-// System card so a client can verify which UI version it is running —
-// stale-PWA debugging has no other JS-visible clue.
+// Build id injected by Vite (see vite.config.ts define) — an ISO timestamp
+// of the build. Shown in the System card so a client can verify which UI
+// version it is running; formatted client-side into the viewer's timezone.
 declare const __BUILD_ID__: string;
 function formatBuildId(): string {
   // Component tests mount the source without Vite's define — fall back
   if (typeof __BUILD_ID__ === 'undefined') return 'dev';
-  // 'YYYY-MM-DDTHH:MM' from the ISO timestamp
-  return __BUILD_ID__.slice(0, 16).replace('T', ' ');
+  const d = new Date(__BUILD_ID__);
+  return isNaN(d.getTime()) ? __BUILD_ID__ : d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' });
 }
 
 function formatUptime(startedAt: number | null, now: number): string {

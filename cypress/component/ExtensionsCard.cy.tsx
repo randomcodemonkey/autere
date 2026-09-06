@@ -43,9 +43,8 @@ describe('ExtensionsCard', () => {
         configPath: '/path/to/config',
         hasConfig: true,
         status: 'error',
-        status: 'error',
-    statusText: 'Error',
-    details: {},
+        statusText: 'Error',
+        details: {},
       },
     ];
     cy.mount(<ExtensionsCard extensions={extensions} />);

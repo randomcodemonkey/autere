@@ -230,6 +230,41 @@ export function getHistoryLimit(user: string): number {
   return Math.min(500, Math.max(10, Math.floor(n)));
 }
 
+// ── Image preview (what the chat model sees for attached images) ──
+
+export function getSendImagesToChatModel(user: string): boolean {
+  const raw = getUserSetting(user, 'sendImagesToChatModel', true);
+  return raw !== false && raw !== 'false';
+}
+
+/** streamfix (pi-images): non-streamed upstream requests for image-bearing chats. Default on. */
+export function getImageStreamFix(user: string): boolean {
+  const raw = getUserSetting(user, 'imageStreamFix', true);
+  return raw !== false && raw !== 'false';
+}
+
+export interface ImagePreviewQuality {
+  maxWidth: number;
+  maxHeight: number;
+  maxBytes: number;
+  jpegQuality: number;
+}
+
+/**
+ * Named preview qualities. 'full' means the original bytes are sent to the
+ * chat model; null return value is never used — use getSendImagesToChatModel
+ * for the on/off decision.
+ */
+export function getImagePreviewQuality(user: string): ImagePreviewQuality | 'full' {
+  const raw = getUserSetting(user, 'imagePreviewQuality', 'medium');
+  switch (raw) {
+    case 'low': return { maxWidth: 512, maxHeight: 512, maxBytes: 100 * 1024, jpegQuality: 60 };
+    case 'high': return { maxWidth: 2048, maxHeight: 2048, maxBytes: 1024 * 1024, jpegQuality: 80 };
+    case 'full': return 'full';
+    default: return { maxWidth: 1024, maxHeight: 1024, maxBytes: 300 * 1024, jpegQuality: 70 }; // medium
+  }
+}
+
 /**
  * Extensions ("packages") installed in the master pi environment — from
  * ~/.pi/agent/settings.json. Installing a new extension with pi adds it here;
@@ -363,6 +398,11 @@ function getUserSettingsDefaults(user: string): UserSettings {
   // pi-images: selected image model (stored in 9router-config.json)
   defaults.imageModel = nineRouterConfig?.imageModel || '';
   defaults.imageExtraPrompt = nineRouterConfig?.imageExtraPrompt ?? undefined;
+
+  // Image pipeline toggles default to enabled — must be explicit so the
+  // settings UI shows them as on when unset (undefined renders as off).
+  defaults.sendImagesToChatModel = true;
+  defaults.imageStreamFix = true;
 
   // Pi settings defaults
   defaults.enabledModels = readJsonCached(join(PI_DIR, 'settings.json'))?.enabledModels || [];
@@ -498,6 +538,30 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
         listPlaceholder: '/tmp',
         listAddLabel: 'Add folder',
         description: 'Bash-driven file changes under these folders are not shown as edit cards (default: /tmp). Applies after a pi restart.',
+      },
+      {
+        key: 'sendImagesToChatModel',
+        label: 'Send images to chat model',
+        type: 'toggle',
+        description: 'Attached images are downscaled and shown to the chat model. When off, the model only gets the saved file paths. Applies after a pi restart.',
+      },
+      {
+        key: 'imageStreamFix',
+        label: 'Non-streamed image requests',
+        type: 'toggle',
+        description: 'Send image-bearing chat requests non-streamed and relay the response as a stream. Works around upstream stream-usage accounting inflating image token counts ~4x. Applies after a pi restart.',
+      },
+      {
+        key: 'imagePreviewQuality',
+        label: 'Image preview quality',
+        type: 'select',
+        options: [
+          { value: 'low', label: 'Low (512px, ~100 KB)' },
+          { value: 'medium', label: 'Medium (1024px, ~300 KB)' },
+          { value: 'high', label: 'High (2048px, ~1 MB)' },
+          { value: 'full', label: 'Full (original file)' },
+        ],
+        description: 'Downscale applied to attached images before the chat model sees them. Full-resolution originals are always saved to disk for tools. Applies after a pi restart.',
       },
     ],
   });

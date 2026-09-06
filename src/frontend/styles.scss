@@ -1108,10 +1108,21 @@ body {
     &.chat-model-active {
       color: var(--c-warning);
     }
+
+    // 'Compacting' — blueish, distinct from streaming/active
+    &.chat-model-compacting {
+      color: #5ba3f5;
+      animation: pulse-compact 1.4s ease-in-out infinite;
+    }
   }
 
   &.working {
     border-color: var(--c-warning);
+  }
+
+  @keyframes pulse-compact {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
   }
 
   > .card-title {
@@ -1256,6 +1267,20 @@ body {
 .stream-msg-pending {
   opacity: 0.6;
 }
+.pending-cancel {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+
+  &:hover { opacity: 1; background: rgba(255, 255, 255, 0.1); }
+}
+
 .stream-pending-indicator {
   color: var(--c-muted);
   font-size: 0.65rem;

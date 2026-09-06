@@ -17,6 +17,7 @@ import type {
   JsonAgentSessionEvent,
 } from '@earendil-works/pi-coding-agent';
 import { log, Logger } from './logger.js';
+import type { ImagePreviewQuality } from './user-settings.js';
 
 // Inline types not exported from the package
 interface ModelInfo {
@@ -50,6 +51,12 @@ export interface RpcClientOptions {
   agentDir?: string;
   /** Folders hidden from pi-file-monitor's bash-edit cards (pi-file-monitor env) */
   editIgnorePaths?: string[];
+  /** Whether attached images are downscaled and shown to the chat model (pi-filetools env) */
+  sendImagesToChatModel?: boolean;
+  /** Preview quality preset name passed to pi-filetools */
+  imagePreviewQuality?: ImagePreviewQuality | 'full';
+  /** Non-streamed upstream requests for image-bearing chats (pi-images env) */
+  imageStreamFix?: boolean;
 }
 
 export type RpcEventListener = (event: JsonAgentSessionEvent) => void;
@@ -204,6 +211,10 @@ export class MonitorRpcClient {
         ...(this.options.agentDir ? { PI_MEMORY_DIR: join(this.options.agentDir, 'memory') } : {}),
         // pi-file-monitor: folders hidden from bash-edit cards (colon-separated)
         ...(this.options.editIgnorePaths ? { EDIT_IGNORE_PATHS: this.options.editIgnorePaths.join(':') } : {}),
+        // pi-filetools: attachment preview policy for the chat model
+        ...(this.options.sendImagesToChatModel !== undefined ? { IMAGE_SEND_PREVIEWS: this.options.sendImagesToChatModel ? '1' : '0' } : {}),
+        ...(this.options.imagePreviewQuality ? { IMAGE_PREVIEW_QUALITY: this.options.imagePreviewQuality === 'full' ? 'full' : JSON.stringify(this.options.imagePreviewQuality) } : {}),
+        ...(this.options.imageStreamFix !== undefined ? { IMAGE_STREAM_FIX: this.options.imageStreamFix ? '1' : '0' } : {}),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true, // create a new process group so we can kill all children
@@ -348,6 +359,14 @@ export class MonitorRpcClient {
   async followUp(message: string, images?: RpcImage[]): Promise<void> {
     log.rpc.debug(`RPC: follow_up("${message.slice(0, 80)}${message.length > 80 ? '…' : ''}")${images?.length ? ` +${images.length} image(s)` : ''}`);
     await this.send({ type: 'follow_up', message, ...(images?.length ? { images } : {}) });
+  }
+
+  /** Clear all queued steer/follow-up messages; pi returns what it dropped. */
+  async clearQueue(): Promise<{ steering: string[]; followUp: string[] }> {
+    // ponytail: 0.84.2 typings lack clear_queue (runtime pi is 0.84.4); drop the cast when the dep bumps
+    const response = await this.send({ type: 'clear_queue' } as never);
+    const data = this.getData(response) as { steering?: string[]; followUp?: string[] };
+    return { steering: data.steering ?? [], followUp: data.followUp ?? [] };
   }
 
   async abort(): Promise<void> {

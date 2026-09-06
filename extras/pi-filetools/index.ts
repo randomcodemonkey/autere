@@ -12,7 +12,8 @@
  *    are skipped.
  */
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { resizeImage } from "@earendil-works/pi-coding-agent";
 import { basename, extname, join, relative } from "node:path";
 import { Type } from "typebox";
 import { createTwoFilesPatch } from "diff";
@@ -249,6 +250,42 @@ export default function (pi: any) {
 		},
 	});
 
+	// Attachment/tool-result image policy from autere settings (spawn env).
+	// IMAGE_SEND_PREVIEWS=0 → attachment base64 never reaches the model. Images
+	// (attachments and tool-result blocks) get a downscaled preview
+	// (quality = IMAGE_PREVIEW_QUALITY, 'full' or JSON preset); full-res
+	// originals stay on disk.
+	const sendPreviews = process.env.IMAGE_SEND_PREVIEWS !== '0';
+	let preset: { maxWidth: number; maxHeight: number; maxBytes: number; jpegQuality: number } | 'full' = { maxWidth: 1024, maxHeight: 1024, maxBytes: 300 * 1024, jpegQuality: 70 };
+	try {
+		const raw = process.env.IMAGE_PREVIEW_QUALITY;
+		if (raw === 'full') preset = 'full';
+		else if (raw) {
+			const parsed = JSON.parse(raw);
+			if (parsed && typeof parsed === 'object') preset = parsed;
+		}
+	} catch {}
+
+	pi.on("tool_result", async (event: any) => {
+		// Cap image blocks in tool results (e.g. built-in read returns up to
+		// 2000px / 4.5MB base64 which balloons context). Resize to the user's
+		// preview-quality preset; 'full' keeps originals.
+		if (preset === 'full') return undefined;
+		let changed = false;
+		const content = await Promise.all((event.content || []).map(async (block: any) => {
+			if (block?.type !== 'image' || !block.data) return block;
+			try {
+				const r = await resizeImage(Buffer.from(block.data, 'base64'), block.mimeType, preset);
+				if (!r) return block;
+				changed = true;
+				return { ...block, data: r.data, mimeType: r.mimeType };
+			} catch {
+				return block;
+			}
+		}));
+		return changed ? { content } : undefined;
+	});
+
 	pi.on("input", async (event: any) => {
 		const images: InputImage[] | undefined = event.images;
 		if (!images || images.length === 0 || event.source === "extension") {
@@ -260,17 +297,37 @@ export default function (pi: any) {
 			mkdirSync(dir, { recursive: true });
 			const stamp = Date.now();
 			const paths: string[] = [];
+			const previews: InputImage[] = [];
 			for (const [i, img] of images.entries()) {
 				const ext = img.mimeType.split("/")[1]?.replace("jpeg", "jpg") || "png";
 				const file = join(dir, `upload-${stamp}-${i + 1}.${ext}`);
 				writeFileSync(file, Buffer.from(img.data, "base64"));
 				paths.push(file);
+				if (!sendPreviews || preset === 'full') { previews.push(img); continue; }
+				try {
+					const r = await resizeImage(Buffer.from(img.data, "base64"), img.mimeType, preset);
+					previews.push(r ? { type: "image" as const, mimeType: r.mimeType, data: r.data } : img);
+				} catch (err: any) {
+					console.error("[pi-filetools] preview resize failed:", err?.message || err);
+					previews.push(img);
+				}
+				// Publish under the hist-* name autere's /api/images route serves
+				// and announce it, so the attachment renders in the dashboard even
+				// though its base64 is stripped from the LLM context below.
+				const name = `hist-${createHash("sha1").update(img.data).digest("hex").slice(0, 16)}.${ext}`;
+				const histFile = join(dir, name);
+				if (!existsSync(histFile)) writeFileSync(histFile, Buffer.from(img.data, "base64"));
+				pi.appendEntry("image_saved", { name, mimeType: img.mimeType, path: file });
 			}
 			const note =
 				`\n\n[Attached file${paths.length > 1 ? "s" : ""} saved to:\n` +
 				paths.join("\n") +
-				"\nUse these paths directly with tools (read, bash, edit_image, …) instead of searching for the attachment.]";
-			return { action: "transform", text: (event.text || "") + note, images };
+				(sendPreviews
+					? "\nFull-resolution originals are at these paths — use them with tools (read, bash, edit_image, …). The image(s) shown to you here are downscaled previews.]"
+					: "\nUse these paths directly with tools (read, bash, edit_image, …) instead of searching for the attachment. Images are not shown inline.]");
+			// Model sees only the downscaled previews (or nothing when previews
+			// are disabled); full base64 must never enter the LLM context.
+			return { action: "transform", text: (event.text || "") + note, images: sendPreviews ? previews : [] };
 		} catch (err: any) {
 			console.error("[pi-filetools] Failed to save attached images:", err?.message || err);
 			return { action: "continue" };
