@@ -21,7 +21,6 @@ interface AgentCardProps {
  * sub-blocks separated by hairlines (see .agent-card styles).
  */
 export const AgentCard: React.FC<AgentCardProps> = ({
-  models, activeModelId, onModelsFetched,
   messageCount, requestCount, stats,
   extensions,
 }) => {

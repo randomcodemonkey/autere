@@ -436,7 +436,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
               <div className="sched-log-section">
                 <div className="sched-log-label">Log</div>
                 <pre className="sched-log-pre sched-log-lines">
-                  {viewLog.log.map((entry, i) => `${formatTime(entry.t)}  ${entry.line}`).join('\n')}
+                  {viewLog.log.map((entry) => `${formatTime(entry.t)}  ${entry.line}`).join('\n')}
                 </pre>
               </div>
             </div>

@@ -4,6 +4,7 @@ import { Header, ViewId } from '../components/Header';
 import { StatusCard } from '../components/StatusCard';
 import { SettingsCard } from '../components/SettingsCard';
 import { ScheduledTasksCard } from '../components/ScheduledTasksCard';
+import { ChangesPage } from '../components/ChangesPage';
 import { StreamCard } from '../components/StreamCard';
 import { Modal } from '../components/Modal';
 import { SessionModal } from '../components/SessionModal';
@@ -71,7 +72,7 @@ export function DashboardPage({
   // View switching (chat / status / settings). On desktop the status card is
   // always visible on the left and the selection swaps the right pane; on
   // mobile each view is a full-screen card (CSS).
-  const activeView: ViewId = view === 'settings' ? 'settings' : view === 'status' ? 'status' : view === 'tasks' ? 'tasks' : 'chat';
+  const activeView: ViewId = view === 'settings' ? 'settings' : view === 'status' ? 'status' : view === 'tasks' ? 'tasks' : view === 'edits' ? 'edits' : 'chat';
   const handleSetView = useCallback((v: ViewId) => {
     if (!urlSessionId) return;
     navigate(v === 'chat' ? `/session/${urlSessionId}` : `/session/${urlSessionId}/${v}`);
@@ -100,11 +101,11 @@ export function DashboardPage({
   // Optimistic user messages: shown immediately after a successful send,
   // removed once the backend broadcast carries the same text.
   const [pendingUser, setPendingUser] = useState<StreamMessage[]>([]);
-  const [activeTools, setActiveTools] = useState<ActiveTool[]>([]);
-  const [recentTools, setRecentTools] = useState<RecentTool[]>([]);
+  const [, setActiveTools] = useState<ActiveTool[]>([]);
+  const [, setRecentTools] = useState<RecentTool[]>([]);
   const [extensions, setExtensions] = useState<ExtensionInfo[]>([]);
   const [models, setModels] = useState<AvailableModel[]>([]);
-  const [availableSessions, setAvailableSessions] = useState<SessionInfo[]>([]);
+  const [, setAvailableSessions] = useState<SessionInfo[]>([]);
   // UI state
   const [restartingBackend, setRestartingBackend] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
@@ -130,6 +131,16 @@ export function DashboardPage({
   const STREAM_DELTA_FLUSH_MS = 10;
   const pendingDeltaRef = useRef<{ role: 'assistant' | 'thinking'; text: string } | null>(null);
   const deltaFlushTimerRef = useRef<number | null>(null);
+  // Clear per-session UI state (used when entering a fresh session)
+  const resetSessionUI = useCallback(() => {
+    pendingDeltaRef.current = null; // drop stale delta from the previous session
+    setStreamHistory([]);
+    setPendingUser([]);
+    setStats(EMPTY_STATS);
+    setActiveTools([]);
+    setRecentTools([]);
+  }, []);
+
   const flushPendingDelta = useCallback(() => {
     deltaFlushTimerRef.current = null;
     const delta = pendingDeltaRef.current;
@@ -335,7 +346,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         setExtensions(msg.data || []);
         break;
     }
-  }, [navigate, urlSessionId]);
+  }, [navigate, flushPendingDelta, resetSessionUI]);
 
   // Register our handler with the parent's useSSE via the ref.
   // Set synchronously during render so no messages are missed.
@@ -536,17 +547,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
     }).catch(() => {
       setSwitchingSession(false);
     });
-  }, [authenticated, sseConnected, urlSessionId, sessionState.sessionId, creatingSession]);
-
-  // Clear per-session UI state (used when entering a fresh session)
-  const resetSessionUI = useCallback(() => {
-    pendingDeltaRef.current = null; // drop stale delta from the previous session
-    setStreamHistory([]);
-    setPendingUser([]);
-    setStats(EMPTY_STATS);
-    setActiveTools([]);
-    setRecentTools([]);
-  }, []);
+  }, [authenticated, sseConnected, urlSessionId, sessionState.sessionId, creatingSession, applyBootstrap, navigate]);
 
   // Cancel a queued (steer/follow-up) message: optimistic UI removal; the
   // backend prunes pi's queue and broadcasts history_remove for the
@@ -657,7 +658,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         setCreatingSession(false);
         setSessionError('Failed to create session');
       });
-  }, []);
+  }, [navigate, resetSessionUI]);
 
   const handleSwitchSession = useCallback((sessionId: string) => {
     setSessionError(null);
@@ -732,13 +733,18 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         </div>
         <div className={`chat-wrapper${sessionState.externalActivity ? ' chat-external-activity' : ''}`}>
           {activeView === 'chat' && (
-            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text, type) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} />
+            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} />
           )}
           {activeView === 'settings' && (
             <SettingsCard sseConnected={sseConnected} />
           )}
           {activeView === 'tasks' && (
             <ScheduledTasksCard sseConnected={sseConnected} />
+          )}
+          {activeView === 'edits' && (
+            <div className="card edits-card">
+              <ChangesPage sessionId={urlSessionId || sessionState.sessionId} />
+            </div>
           )}
         </div>
       </div>

@@ -39,6 +39,13 @@ export { TEST_PORT };
 
 let backendProcess: ChildProcess | null = null;
 
+/** Isolated env dir for this run — exposed so run-e2e can pass it to the
+ *  cypress process (tests use it to locate/seed per-env data). */
+export function getTestEnvsDir(): string {
+  if (!testEnvsDir) throw new Error('test envs dir not initialized — call startBackend first');
+  return testEnvsDir;
+}
+
 /**
  * Recursively collect all descendant PIDs of the given PID via the /proc/ps
  * parent-child tree. Must be called BEFORE killing the parent — once the

@@ -33,7 +33,7 @@ export function sendJSON(res: ServerResponse, data: any, status = 200) {
 
 export function getDashboardHTML(basePath: string = ''): string {
   const distPath = join(__dirname, '..', '..', 'dist', 'index.html');
-  let html = '';
+  let html: string;
   if (existsSync(distPath)) {
     html = readFileSync(distPath, 'utf-8');
   } else {

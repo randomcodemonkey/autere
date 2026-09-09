@@ -11,7 +11,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
-import type { ExtensionInfo, ExtensionHandler } from './types.js';
+import type { ExtensionInfo } from './types.js';
 import { PI_DIR, NPM_EXTENSIONS_DIR, EXTENSIONS_DIR } from './constants.js';
 import { extensionsState } from './state.js';
 import { getExtensionHandler } from './extension-handlers.js';
@@ -125,7 +125,7 @@ function discoverLocalExtensions(): DiscoveredExtension[] {
  */
 function formatDisplayName(id: string): string {
   // Remove common prefixes
-  let name = id
+  const name = id
     .replace(/^pi-/, '')
     .replace(/-ext$/, '')
     .replace(/-pi$/, '');

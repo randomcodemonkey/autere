@@ -68,6 +68,15 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
     }
   }, [settings]);
 
+  // Shared shell for the plain label+description field variants
+  const FieldShell: React.FC<{ field: SettingField; children: React.ReactNode }> = ({ field, children }) => (
+    <div className="settings-field">
+      <label className="settings-label">{field.label}</label>
+      {field.description && <div className="settings-description">{field.description}</div>}
+      {children}
+    </div>
+  );
+
   const renderField = (field: SettingField) => {
     const value = settings[field.key] ?? '';
 
@@ -114,9 +123,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
         handleChange(field.key, on ? [...enabled, pkg] : enabled.filter((p) => p !== pkg));
       };
       return (
-        <div key={field.key} className="settings-field">
-          <label className="settings-label">{field.label}</label>
-          {field.description && <div className="settings-description">{field.description}</div>}
+        <FieldShell key={field.key} field={field}>
           <div className="settings-packages">
             {availablePackages.length === 0 && custom.length === 0 && (
               <div className="settings-description">No extensions installed in the master pi environment</div>
@@ -138,30 +145,26 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
               </label>
             ))}
           </div>
-        </div>
+        </FieldShell>
       );
     }
 
     if (field.type === 'list') {
       return (
-        <div key={field.key} className="settings-field">
-          <label className="settings-label">{field.label}</label>
-          {field.description && <div className="settings-description">{field.description}</div>}
+        <FieldShell key={field.key} field={field}>
           <SortableList
             items={Array.isArray(value) ? value : []}
             onChange={(items) => handleChange(field.key, items)}
             placeholder={field.listPlaceholder}
             addLabel={field.listAddLabel}
           />
-        </div>
+        </FieldShell>
       );
     }
 
     if (field.type === 'textarea') {
       return (
-        <div key={field.key} className="settings-field">
-          <label className="settings-label">{field.label}</label>
-          {field.description && <div className="settings-description">{field.description}</div>}
+        <FieldShell key={field.key} field={field}>
           <textarea
             className="settings-input"
             rows={5}
@@ -170,14 +173,12 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
             spellCheck={false}
             onChange={(e) => handleChange(field.key, e.target.value)}
           />
-        </div>
+        </FieldShell>
       );
     }
 
     return (
-      <div key={field.key} className="settings-field">
-        <label className="settings-label">{field.label}</label>
-        {field.description && <div className="settings-description">{field.description}</div>}
+      <FieldShell key={field.key} field={field}>
         <input
           type={field.type}
           className="settings-input"
@@ -189,7 +190,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
           autoComplete={field.type === 'password' ? 'new-password' : undefined}
           onChange={(e) => handleChange(field.key, e.target.value)}
         />
-      </div>
+      </FieldShell>
     );
   };
 

@@ -7,7 +7,7 @@ interface UseSSEOptions {
   autoConnect?: boolean;
 }
 
-const HEARTBEAT_INTERVAL = 3000; // backend sends heartbeat every 3s
+const _HEARTBEAT_INTERVAL = 3000; // backend sends heartbeat every 3s
 const HEARTBEAT_TIMEOUT = 20000; // consider dead if no heartbeat within 20s — mobile browsers suspend JS timers when backgrounded, so short timeouts cause false "disconnected" on return
 const MAX_SILENT_ATTEMPTS = 4;   // reconnect attempts before showing Disconnected (≈2+4+6+8s ≈ 20s)
 

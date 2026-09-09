@@ -9,12 +9,17 @@
  * 3. Bash edit detection: diffs files changed by bash commands (command
  *    write-targets + cwd sweep) into file_change entries, rendered as edit
  *    cards. Folders in EDIT_IGNORE_PATHS (colon-separated, default /tmp)
- *    are skipped.
+ *    are skipped; .git folders are always skipped at any depth. Chat cards
+ *    cap at 10 per command with a summary line; the JSONL records all.
+ * 4. Edit/write tracking: hooks edit and write tool results to compute
+ *    diffs and write them to a per-session JSONL file in the pi-env
+ *    (<env>/file-changes/<session-id>.jsonl) for the autere changes tab.
  */
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resizeImage } from "@earendil-works/pi-coding-agent";
-import { basename, extname, join, relative } from "node:path";
+import { basename as pathBasename, extname, join, relative } from "node:path";
 import { Type } from "typebox";
 import { createTwoFilesPatch } from "diff";
 
@@ -24,7 +29,15 @@ interface InputImage {
 	mimeType: string;
 }
 
-function piAgentDir(): string {
+interface FileChangeEntry {
+	ts: number;
+	path: string;
+	tool: string;
+	change: string;
+	diff: string;
+}
+
+function agentDir(): string {
 	return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 }
 
@@ -40,6 +53,36 @@ const MIME_BY_EXT: Record<string, string> = {
 };
 
 export default function (pi: any) {
+	// ── File-changes tracking (per-session JSONL for autere) ──
+	let fileChangesPath: string | null = null;
+	let fileChangesCount = 0;
+	const MAX_FILE_CHANGES = 10000;
+
+	const ensureFileChangesDir = (envDir: string): string => {
+		const dir = join(envDir, "file-changes");
+		try { mkdirSync(dir, { recursive: true }); } catch {}
+		return dir;
+	};
+
+	const writeChange = (entry: FileChangeEntry): void => {
+		if (!fileChangesPath || fileChangesCount >= MAX_FILE_CHANGES) return;
+		try {
+			appendFileSync(fileChangesPath, JSON.stringify(entry) + "\n");
+			fileChangesCount++;
+		} catch {}
+	};
+
+	pi.on("session_start", (_event: any, ctx: any) => {
+		try {
+			const sf = ctx.sessionManager?.getSessionFile();
+			if (sf) {
+				const dir = ensureFileChangesDir(agentDir());
+				fileChangesPath = join(dir, `${pathBasename(sf, ".jsonl")}.jsonl`);
+				fileChangesCount = 0;
+			}
+		} catch {}
+	});
+
 	// Bash-driven file edits: snapshot the workspace (path -> mtime/size,
 	// plus cached content) before/after each bash call and emit changed
 	// files as unified-diff edit entries — so shell one-liner edits show up
@@ -55,6 +98,16 @@ export default function (pi: any) {
 	const contentCache = new Map<string, { mtimeMs: number; size: number; content: string }>();
 	let cacheBytes = 0;
 	const bashSnapshots = new Map<string, { stats: Map<string, { mtimeMs: number; size: number }>; candidates: Map<string, string | null> }>();
+	// Pre-content snapshots for edit/write: the cwd cache skips dot-dirs, so
+	// without this every edit outside the tree (e.g. ~/.pi) misclassifies as
+	// "created". Keyed by toolCallId, consumed in tool_result on success AND
+	// failure; size-capped at insert so lost result events can't leak.
+	const pendingToolSnapshots = new Map<string, { old: string | null; existed: boolean }>();
+	const SNAPSHOT_CAP = 32;
+	const putSnapshot = (map: Map<string, any>, id: string, value: any): void => {
+		while (map.size >= SNAPSHOT_CAP) map.delete(map.keys().next().value);
+		map.set(id, value);
+	};
 
 	// Extract explicit write targets from the command text (redirects, tee,
 	// sed -i — heredoc bodies are part of the command, so writes like
@@ -108,52 +161,77 @@ export default function (pi: any) {
 	// Context-limited unified diff (like pi's edit tool: 2 lines around each
 	// hunk) instead of a whole-file diff. Header (===/---/+++) stripped —
 	// renderEditDiff renders its own.
-	const diffToLines = (oldText: string, newText: string): string => {
+	const diffToLines = (oldText: string, newText: string, limit: number = MAX_DIFF_LINES): string => {
 		const patch = createTwoFilesPatch("a", "b", oldText, newText, "", "", { context: 2 });
 		const idx = patch.indexOf("\n@@");
 		if (idx < 0) return "";
 		const lines = patch.slice(idx + 1).split("\n").filter((l) => l.trim() !== "\\ No newline at end of file");
-		if (lines.length >= MAX_DIFF_LINES) return lines.slice(0, MAX_DIFF_LINES).join("\n") + "\n... (diff truncated)";
+		if (lines.length >= limit) return lines.slice(0, limit).join("\n") + "\n... (diff truncated)";
 		return lines.join("\n");
 	};
 
 	const IGNORED = (process.env.EDIT_IGNORE_PATHS || "/tmp")
 		.split(":").map((p) => p.trim().replace(/\/+$/, "")).filter(Boolean);
-	const isIgnored = (path: string): boolean => IGNORED.some((dir) => path === dir || path.startsWith(dir + "/"));
+	// .git is always ignored at any depth (*/.git) — git internals must never
+	// surface as edit cards, even via explicit write-targets or tool edits
+	const isIgnored = (path: string): boolean =>
+		path.split("/").includes(".git") || IGNORED.some((dir) => path === dir || path.startsWith(dir + "/"));
 
-	const emitOne = (path: string, oldContent: string | undefined, newContent: string | null, existed: boolean): boolean => {
-		if (isIgnored(path)) return false;
-		const rel = path.startsWith(process.cwd()) ? relative(process.cwd(), path) : path;
-		if (newContent === null && oldContent === undefined) return false;
-		if (newContent !== null && oldContent === newContent) return false;
-		const change = newContent === null ? "deleted" : !existed ? "created" : "modified";
-		const body = diffToLines(oldContent ?? "", newContent ?? "");
-		// Pure additions (no removed lines) = a write, matching pi's write tool
+	const classify = (newContent: string | null, existed: boolean): string =>
+		newContent === null ? "deleted" : !existed ? "created" : "modified";
+
+	// Edit-card header verb: pure additions = Write, matching pi's write tool
+	const diffHeader = (change: string, existed: boolean, body: string, rel: string): string => {
 		const removals = /^-./m.test(body);
-		const header = `${change === "deleted" ? "Delete" : !removals && existed ? "Write" : change === "created" ? "Create" : "Modified"} ${rel}`;
-		if (newContent !== null && oldContent !== undefined && body.replace(/^[+\- ]/gm, "").trim() === "") return false;
-		pi.appendEntry("file_change", { path: rel, change, diff: `${header}\n\n${body}` });
-		// Update the persistent cache to the new state
+		return `${change === "deleted" ? "Delete" : !removals && existed ? "Write" : change === "created" ? "Create" : "Modified"} ${rel}`;
+	};
+
+	// Keep the content cache in sync after an emitted change
+	const updateCache = (path: string, newContent: string | null): void => {
 		if (newContent !== null) {
 			if (!contentCache.has(path)) cacheBytes += newContent.length;
 			else cacheBytes += newContent.length - (contentCache.get(path)?.content.length || 0);
-			const st = statSync(path);
-			contentCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, content: newContent });
+			try {
+				const st = statSync(path);
+				contentCache.set(path, { mtimeMs: st.mtimeMs, size: st.size, content: newContent });
+			} catch {}
 		} else {
 			const c = contentCache.get(path);
 			if (c) { cacheBytes -= c.content.length; contentCache.delete(path); }
 		}
-		return true;
 	};
 
+	// Chat edit cards cap per bash command (a git pull can change hundreds of
+	// files); the file-changes JSONL (autere edits tab) always records all
 	const emitFileChanges = (snap: { stats: Map<string, { mtimeMs: number; size: number }>; candidates: Map<string, string | null> }): void => {
 		// 1) Explicit write targets from the command text (anywhere on disk)
-		let emitted = 0;
+		let changed = 0;
+		let chatShown = 0;
+		const emit = (path: string, oldContent: string | undefined, newContent: string | null, existed: boolean, tool: string): void => {
+			if (isIgnored(path)) return;
+			const rel = path.startsWith(process.cwd()) ? relative(process.cwd(), path) : path;
+			if (newContent === null && oldContent === undefined) return;
+			if (newContent !== null && oldContent === newContent) return;
+			const change = classify(newContent, existed);
+			const fullBody = diffToLines(oldContent ?? "", newContent ?? "", Infinity);
+			const header = diffHeader(change, existed, fullBody, rel);
+			if (newContent !== null && oldContent !== undefined && fullBody.replace(/^[+\- ]/gm, "").trim() === "") return;
+			changed++;
+			writeChange({ ts: Date.now(), path: rel, tool, change, diff: `${header}\n\n${fullBody}` });
+			if (chatShown < MAX_CHANGED) {
+				// Session file gets truncated diff, file-changes JSONL gets full diff
+				const sessionDiff = fullBody.length > MAX_DIFF_LINES * 60
+					? fullBody.split("\n").slice(0, MAX_DIFF_LINES).join("\n") + "\n... (diff truncated)"
+					: fullBody;
+				pi.appendEntry("file_change", { path: rel, change, diff: `${header}\n\n${sessionDiff}` });
+				chatShown++;
+			}
+			updateCache(path, newContent);
+		};
 		for (const [path, oldContent] of snap.candidates) {
-			if (emitted >= MAX_CHANGED) break;
 			let newContent: string | null = null;
 			try { newContent = readText(path, statSync(path).size); } catch {}
-			if (emitOne(path, oldContent ?? contentCache.get(path)?.content, newContent, oldContent !== undefined || contentCache.has(path))) emitted++;
+			emit(path, oldContent ?? contentCache.get(path)?.content, newContent, oldContent !== undefined || contentCache.has(path), "bash");
 		}
 		// 2) Sweep the cwd tree for changes the command text didn't reveal
 		const before = snap.stats;
@@ -161,21 +239,33 @@ export default function (pi: any) {
 		walk(process.cwd(), after);
 		const paths = new Set<string>([...before.keys(), ...after.keys()]);
 		for (const path of paths) {
-			if (emitted >= MAX_CHANGED) break;
 			const b = before.get(path);
 			const a = after.get(path);
 			if (b && a && b.mtimeMs === a.mtimeMs && b.size === a.size) continue;
 			let newContent: string | null = null;
 			if (a) { newContent = readText(path, a.size); if (newContent === null) { contentCache.delete(path); continue; } }
-			if (emitOne(path, contentCache.get(path)?.content, newContent, !!b)) emitted++;
+			emit(path, contentCache.get(path)?.content, newContent, !!b, "bash");
+		}
+		if (changed > MAX_CHANGED) {
+			pi.appendEntry("file_change", { path: "", change: "summary", diff: `${changed} files modified at once, omitting edit messages` });
 		}
 		// Cache pressure: drop contents wholesale (stat info stays useful)
 		if (cacheBytes > MAX_CACHE_BYTES) {
-			for (const [k, v] of contentCache) { cacheBytes -= v.content.length; v.content = ""; }
+			for (const [, v] of contentCache) { cacheBytes -= v.content.length; v.content = ""; }
 		}
 	};
 
 	pi.on("tool_execution_start", (event: any) => {
+		if ((event.toolName === "edit" || event.toolName === "write") && event.toolCallId) {
+			const p = event.args?.path;
+			if (p && typeof p === "string") {
+				const abs = p.startsWith("/") ? p : join(process.cwd(), p);
+				let old: string | null = null;
+				let existed = false;
+				try { statSync(abs); existed = true; old = readText(abs, statSync(abs).size); } catch {}
+				putSnapshot(pendingToolSnapshots, event.toolCallId, { old, existed });
+			}
+		}
 		if (event.toolName === "bash" && event.toolCallId) {
 			// Seed the cache on the first call, then keep stats fresh per call
 			const stats = new Map<string, { mtimeMs: number; size: number }>();
@@ -196,7 +286,7 @@ export default function (pi: any) {
 			for (const p of candidatePaths(String(event.args?.command || ""))) {
 				try { candidates.set(p, readText(p, statSync(p).size)); } catch { candidates.set(p, null); }
 			}
-			bashSnapshots.set(event.toolCallId, { stats, candidates });
+			putSnapshot(bashSnapshots, event.toolCallId, { stats, candidates });
 		}
 	});
 	pi.on("tool_execution_end", (event: any) => {
@@ -205,6 +295,33 @@ export default function (pi: any) {
 		bashSnapshots.delete(event.toolCallId);
 		if (snap) emitFileChanges(snap);
 	});
+
+	// ── Edit/write tool tracking: diff against cached content ──
+	const trackToolChange = (toolName: string, input: any, snap?: { old: string | null; existed: boolean }): void => {
+		if (!fileChangesPath || !input) return;
+		try {
+			const filePath = input.path;
+			if (!filePath || typeof filePath !== "string") return;
+			const abs = filePath.startsWith("/") ? filePath : join(process.cwd(), filePath);
+			if (isIgnored(abs)) return;
+			const oldContent = snap ? snap.old : (contentCache.get(abs)?.content ?? null);
+			let newContent: string | null = null;
+			try {
+				const st = statSync(abs);
+				newContent = readText(abs, st.size);
+			} catch {}
+			if (newContent === null && oldContent === null) return;
+			if (newContent === oldContent) return;
+			const existed = snap ? snap.existed : oldContent !== null || contentCache.has(abs);
+			const rel = abs.startsWith(process.cwd()) ? relative(process.cwd(), abs) : abs;
+			const change = classify(newContent, existed);
+			const body = diffToLines(oldContent ?? "", newContent ?? "", Infinity);
+			if (!body.trim()) return;
+			const header = diffHeader(change, existed, body, rel);
+			writeChange({ ts: Date.now(), path: rel, tool: toolName, change, diff: `${header}\n\n${body}` });
+			updateCache(abs, newContent);
+		} catch {}
+	};
 
 	// Explicit file acquisition: the model writes a file anywhere on disk,
 	// then calls save_file to hand it to the user. The file is copied into
@@ -228,13 +345,13 @@ export default function (pi: any) {
 				const src = params.path;
 				const size = statSync(src).size;
 				if (size > MAX_BYTES) {
-					return { content: [{ type: "text", text: `Error: ${basename(src)} is ${(size / 1048576).toFixed(1)}MB, over the 100MB limit.` }], details: {} };
+					return { content: [{ type: "text", text: `Error: ${pathBasename(src)} is ${(size / 1048576).toFixed(1)}MB, over the 100MB limit.` }], details: {} };
 				}
-				const dir = join(piAgentDir(), "uploads");
+				const dir = join(agentDir(), "uploads");
 				mkdirSync(dir, { recursive: true });
 				const buf = readFileSync(src);
 				const hash = createHash("sha1").update(buf).digest("hex").slice(0, 16);
-				const orig = basename(src);
+				const orig = pathBasename(src);
 				const sanitized = orig.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) || "file";
 				const savedName = `file-${hash}-${sanitized}`;
 				copyFileSync(src, join(dir, savedName));
@@ -267,6 +384,15 @@ export default function (pi: any) {
 	} catch {}
 
 	pi.on("tool_result", async (event: any) => {
+		// Consume edit/write snapshots on success AND failure — a failed or
+		// aborted call must still release its pre-content snapshot. The cap in
+		// putSnapshot bounds growth if a result event is lost entirely.
+		if ((event.toolName === "edit" || event.toolName === "write") && event.toolCallId) {
+			const snap = pendingToolSnapshots.get(event.toolCallId);
+			pendingToolSnapshots.delete(event.toolCallId);
+			if (!event.isError) trackToolChange(event.toolName, event.input, snap);
+		}
+
 		// Cap image blocks in tool results (e.g. built-in read returns up to
 		// 2000px / 4.5MB base64 which balloons context). Resize to the user's
 		// preview-quality preset; 'full' keeps originals.
@@ -293,7 +419,7 @@ export default function (pi: any) {
 		}
 
 		try {
-			const dir = join(piAgentDir(), "uploads");
+			const dir = join(agentDir(), "uploads");
 			mkdirSync(dir, { recursive: true });
 			const stamp = Date.now();
 			const paths: string[] = [];

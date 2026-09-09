@@ -169,7 +169,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
     } finally {
       setSending(false);
     }
-  }, [value, images, sending, onNewSession, onCompact, onError, onSent, isActive]);
+  }, [value, images, onNewSession, onCompact, onError, onSent, isActive]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

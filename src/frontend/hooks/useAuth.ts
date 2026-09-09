@@ -1,11 +1,6 @@
 import { useState, useCallback } from 'react';
 import { url } from '../base-path';
 
-interface AuthStatus {
-  authEnabled: boolean;
-  authenticated: boolean;
-}
-
 export function useAuth() {
   const [authenticated, setAuthenticated] = useState(false);
   const [authEnabled, setAuthEnabled] = useState(false);

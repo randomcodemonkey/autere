@@ -7,7 +7,6 @@
 
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import type { ExtensionHandler, ExtensionInfo, ExtensionSection } from './types.js';
 import { PI_DIR } from './constants.js';
 import { PI_ENVS_DIR } from './pi-env.js';
@@ -19,22 +18,26 @@ import { log } from './logger.js';
 
 const NINE_ROUTER_CONFIG_PATH = join(PI_DIR, '9router-config.json');
 
+/** fetch with a hard abort timeout (default 5s) — shared by all 9router calls */
+async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = 5000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function checkNineRouterStatus(baseUrl: string, apiKey?: string): Promise<{ ok: boolean; error?: string }> {
   try {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    try {
-      const res = await fetch(`${baseUrl}/v1/models`, { method: 'GET', headers, signal: controller.signal });
-      if (res.ok) return { ok: true };
-      const text = await res.text().catch(() => '');
-      return { ok: false, error: `HTTP ${res.status}: ${text || res.statusText}` };
-    } finally {
-      clearTimeout(timeout);
-    }
+    const res = await fetchWithTimeout(`${baseUrl}/v1/models`, { method: 'GET', headers });
+    if (res.ok) return { ok: true };
+    const text = await res.text().catch(() => '');
+    return { ok: false, error: `HTTP ${res.status}: ${text || res.statusText}` };
   } catch (err: any) {
     return { ok: false, error: err?.name === 'AbortError' ? 'Connection timeout' : (err?.message || String(err)) };
   }
@@ -46,24 +49,16 @@ async function checkNineRouterStatus(baseUrl: string, apiKey?: string): Promise<
  */
 async function loginNineRouter(baseUrl: string, password: string): Promise<string | null> {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    try {
-      const res = await fetch(`${baseUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ password }),
-        signal: controller.signal,
-      });
-      if (!res.ok) return null;
-      // Extract auth_token from set-cookie header
-      const setCookie = res.headers.get('set-cookie') || '';
-      const match = setCookie.match(/auth_token=([^;]+)/);
-      return match ? match[1] : null;
-    } finally {
-      clearTimeout(timeout);
-    }
+    const res = await fetchWithTimeout(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (!res.ok) return null;
+    // Extract auth_token from set-cookie header
+    const setCookie = res.headers.get('set-cookie') || '';
+    const match = setCookie.match(/auth_token=([^;]+)/);
+    return match ? match[1] : null;
   } catch (err: any) {
     log.extHandlers.error('9router: failed to login:', err?.message || err);
     return null;
@@ -93,21 +88,13 @@ async function fetchRecentRequests(baseUrl: string, password: string): Promise<N
       return [];
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-
-    try {
-      const res = await fetch(`${baseUrl}/api/usage/stats?period=today`, {
-        method: 'GET',
-        headers: { Accept: 'application/json', Cookie: `auth_token=${token}` },
-        signal: controller.signal,
-      });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return Array.isArray(data.recentRequests) ? data.recentRequests : [];
-    } finally {
-      clearTimeout(timeout);
-    }
+    const res = await fetchWithTimeout(`${baseUrl}/api/usage/stats?period=today`, {
+      method: 'GET',
+      headers: { Accept: 'application/json', Cookie: `auth_token=${token}` },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.recentRequests) ? data.recentRequests : [];
   } catch (err: any) {
     log.extHandlers.warn('9router: fetchRecentRequests failed:', err?.message || err);
     return [];

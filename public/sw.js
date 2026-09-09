@@ -63,7 +63,7 @@ self.addEventListener('fetch', (event) => {
       const cache = await caches.open(CACHE);
       cache.put(req, fresh.clone()).catch(() => {});
       return fresh;
-    } catch (err) {
+    } catch (_err) {
       const cached = await caches.match(req);
       if (cached) return cached;
       return new Response('Offline', { status: 503, statusText: 'Offline' });

@@ -695,7 +695,8 @@ body {
 
   #main-app.view-chat .chat-wrapper,
   #main-app.view-settings .chat-wrapper,
-  #main-app.view-tasks .chat-wrapper {
+  #main-app.view-tasks .chat-wrapper,
+  #main-app.view-edits .chat-wrapper {
     display: flex;
   }
 
@@ -733,6 +734,12 @@ body {
     border-color: transparent;
   }
 
+  #main-app.view-edits .chat-wrapper > .card {
+    border-radius: 0 0 0.75rem 0.75rem;
+    border-color: transparent;
+    padding: 0;
+  }
+
   // Smaller chat font on mobile
   .stream-box {
     font-size: 0.7rem;
@@ -751,6 +758,16 @@ body {
     font-size: 0.7rem;
     padding: 0.5rem 0.6rem;
   }
+}
+
+// Changes card: fill available space, no padding
+.edits-card {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  flex-shrink: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 // -- Stats ----------------------------------------------------------------------
@@ -3208,4 +3225,222 @@ textarea.settings-input {
   &.sched-log-lines {
     max-height: 16rem;
   }
+}
+
+// -- Changes Page ----------------------------------------------------------
+
+.changes-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.changes-files {
+  flex-shrink: 0;
+  max-height: 35vh;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid #333;
+}
+
+.changes-files-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+
+.changes-files-bar .changes-search {
+  flex: 1;
+  margin: 0;
+}
+
+.changes-files-bar .changes-count {
+  border: none;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.changes-files-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.changes-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: #bbb;
+  transition: background 0.1s;
+}
+
+.changes-file:hover {
+  background: #252525;
+}
+
+.changes-file.selected {
+  background: #1e3a5f;
+  color: #e0e0e0;
+}
+
+.changes-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+  font-size: 0.72rem;
+}
+
+.changes-file-count {
+  background: #333;
+  color: #888;
+  font-size: 0.6rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.5rem;
+  flex-shrink: 0;
+  margin-left: 0.4rem;
+}
+
+.changes-count {
+  font-size: 0.65rem;
+  color: #666;
+  flex-shrink: 0;
+}
+
+.changes-search {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 0.35rem;
+  color: #e0e0e0;
+  font-size: 0.75rem;
+  padding: 0.35rem 0.5rem;
+  outline: none;
+}
+
+.changes-search:focus {
+  border-color: #555;
+}
+
+.changes-search::placeholder {
+  color: #666;
+}
+
+.changes-mods {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.changes-mod {
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.changes-mod-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+}
+
+.changes-mod-header:hover {
+  background: #252525;
+}
+
+.changes-mod-tool {
+  font-size: 0.62rem;
+  color: #888;
+  background: #252525;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.2rem;
+}
+
+.changes-mod-time {
+  font-size: 0.62rem;
+  color: #666;
+  margin-left: auto;
+}
+
+.changes-mod-chevron {
+  color: #666;
+  font-size: 0.7rem;
+  flex-shrink: 0;
+  width: 1rem;
+  text-align: center;
+}
+
+.changes-mod-diff {
+  padding: 0 0.6rem 0.5rem;
+  font-size: 0.7rem;
+}
+
+.changes-badge {
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.2rem;
+  flex-shrink: 0;
+}
+
+.changes-badge-modified {
+  background: #1e3a5f;
+  color: #60a5fa;
+}
+
+.changes-badge-created {
+  background: #14532d;
+  color: #4ade80;
+}
+
+.changes-badge-deleted {
+  background: #450a0a;
+  color: #f87171;
+}
+
+.changes-empty {
+  padding: 2rem;
+  text-align: center;
+  color: #666;
+  font-size: 0.8rem;
+}
+
+.changes-empty-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.changes-empty-icon {
+  font-size: 2rem;
+}
+
+.changes-empty-sm {
+  padding: 0.6rem;
+  text-align: center;
+  color: #555;
+  font-size: 0.72rem;
+}
+
+.changes-loading,
+.changes-error {
+  padding: 0.6rem;
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.changes-error {
+  color: #f87171;
 }

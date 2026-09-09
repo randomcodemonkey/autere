@@ -32,6 +32,12 @@ describe('autere E2E', () => {
   
 // Open the sessions modal, retrying when the freshly-opened modal closes
 // itself (rare headless-browser race). Fails for real if it never opens.
+// Scope to the Models section — the settings page has TWO sortable lists
+// (Models + Edit Ignore Paths); global selectors would match both.
+function modelsSection() {
+  return cy.get('.settings-section:has(.settings-section-title:contains("Models"))');
+}
+
 function openSessionsModal() {
   cy.get('body').then(($body) => {
     const modalVisible = $body.find('.modal-session.open, .modal-overlay.open .modal-session').length > 0
@@ -568,7 +574,7 @@ describe('Dashboard Loading', () => {
     it('shows Models section with sortable list', () => {
       openSettings();
       cy.get('.settings-section-title').contains('Models').should('exist');
-      cy.get('.sortable-list').should('exist');
+      modelsSection().find('.sortable-list').should('exist');
     });
 
     it('shows 9Router section if extension is enabled', () => {
@@ -578,69 +584,69 @@ describe('Dashboard Loading', () => {
 
     it('shows enabled models in sortable list', () => {
       openSettings();
-      cy.get('.sortable-list-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
+      modelsSection().find('.sortable-list-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
     });
 
     it('add model input is visible on its own row', () => {
       openSettings();
-      cy.get('.sortable-list-add').should('exist');
-      cy.get('.sortable-list-add .sortable-list-input').should('be.visible');
-      cy.get('.sortable-list-add-btn').should('contain', 'Add Model');
+      modelsSection().find('.sortable-list-add').should('exist');
+      modelsSection().find('.sortable-list-add .sortable-list-input').should('be.visible');
+      modelsSection().find('.sortable-list-add-btn').should('contain', 'Add Model');
     });
 
     it('add model button is disabled when input is empty', () => {
       openSettings();
-      cy.get('.sortable-list-add .sortable-list-input').should('have.value', '');
-      cy.get('.sortable-list-add-btn').should('be.disabled');
+      modelsSection().find('.sortable-list-add .sortable-list-input').should('have.value', '');
+      modelsSection().find('.sortable-list-add-btn').should('be.disabled');
     });
 
     it('add model button enables when input has text', () => {
       openSettings();
-      cy.get('.sortable-list-add .sortable-list-input').type('test/model-v1');
-      cy.get('.sortable-list-add-btn').should('not.be.disabled');
+      modelsSection().find('.sortable-list-add .sortable-list-input').type('test/model-v1');
+      modelsSection().find('.sortable-list-add-btn').should('not.be.disabled');
     });
 
     it('can add a model to the list', () => {
       openSettings();
 
       // Get initial count
-      cy.get('.sortable-list-item').then(($items) => {
+      modelsSection().find('.sortable-list-item').then(($items) => {
         const initialCount = $items.length;
 
         // Type a new model name
-        cy.get('.sortable-list-add .sortable-list-input').type('test/newly-added-model');
-        cy.get('.sortable-list-add-btn').click();
+        modelsSection().find('.sortable-list-add .sortable-list-input').type('test/newly-added-model');
+        modelsSection().find('.sortable-list-add-btn').click();
 
         // Should have one more item
-        cy.get('.sortable-list-item').should('have.length', initialCount + 1);
+        modelsSection().find('.sortable-list-item').should('have.length', initialCount + 1);
 
         // New item's input should contain the model name
-        cy.get('.sortable-list-item').last().find('.sortable-list-input').should('have.value', 'test/newly-added-model');
+        modelsSection().find('.sortable-list-item').last().find('.sortable-list-input').should('have.value', 'test/newly-added-model');
 
         // Input should be cleared
-        cy.get('.sortable-list-add .sortable-list-input').should('have.value', '');
+        modelsSection().find('.sortable-list-add .sortable-list-input').should('have.value', '');
       });
     });
 
     it('can add multiple models sequentially', () => {
       openSettings();
 
-      cy.get('.sortable-list-item').then(($items) => {
+      modelsSection().find('.sortable-list-item').then(($items) => {
         const initialCount = $items.length;
 
         // Add first model
-        cy.get('.sortable-list-add .sortable-list-input').type('test/first-model');
-        cy.get('.sortable-list-add-btn').click();
-        cy.get('.sortable-list-item').should('have.length', initialCount + 1);
+        modelsSection().find('.sortable-list-add .sortable-list-input').type('test/first-model');
+        modelsSection().find('.sortable-list-add-btn').click();
+        modelsSection().find('.sortable-list-item').should('have.length', initialCount + 1);
 
         // Add second model
-        cy.get('.sortable-list-add .sortable-list-input').type('test/second-model');
-        cy.get('.sortable-list-add-btn').click();
-        cy.get('.sortable-list-item').should('have.length', initialCount + 2);
+        modelsSection().find('.sortable-list-add .sortable-list-input').type('test/second-model');
+        modelsSection().find('.sortable-list-add-btn').click();
+        modelsSection().find('.sortable-list-item').should('have.length', initialCount + 2);
 
         // Both should be present as input values
-        cy.get('.sortable-list-item').eq(initialCount).find('.sortable-list-input').should('have.value', 'test/first-model');
-        cy.get('.sortable-list-item').eq(initialCount + 1).find('.sortable-list-input').should('have.value', 'test/second-model');
+        modelsSection().find('.sortable-list-item').eq(initialCount).find('.sortable-list-input').should('have.value', 'test/first-model');
+        modelsSection().find('.sortable-list-item').eq(initialCount + 1).find('.sortable-list-input').should('have.value', 'test/second-model');
       });
     });
 
@@ -673,17 +679,19 @@ describe('Dashboard Loading', () => {
     it('prevents adding duplicate models', () => {
       openSettings();
 
-      cy.get('.sortable-list-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
+      modelsSection().find('.sortable-list-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
 
       // Get the first model name and initial count, then try adding duplicate
-      cy.get('.sortable-list-item').first().find('.sortable-list-input').invoke('val').then((existingName) => {
-        cy.get('.sortable-list-item').its('length').then((initialCount) => {
-          // Try to add the same name
-          cy.get('.sortable-list-add .sortable-list-input').type(String(existingName));
-          cy.get('.sortable-list-add-btn').click();
+      modelsSection().find('.sortable-list-item').first().find('.sortable-list-input').invoke('val').then((existingName) => {
+        modelsSection().find('.sortable-list-item').its('length').then((initialCount) => {
+          // Try to add the same name (wait for the button to enable — a
+          // transient SSE-driven remount can clear the input mid-type)
+          modelsSection().find('.sortable-list-add .sortable-list-input').type(String(existingName));
+          modelsSection().find('.sortable-list-add-btn').should('not.be.disabled');
+          modelsSection().find('.sortable-list-add-btn').click();
 
           // Should NOT add a duplicate — count stays the same
-          cy.get('.sortable-list-item').should('have.length', initialCount);
+          modelsSection().find('.sortable-list-item').should('have.length', initialCount);
         });
       });
     });

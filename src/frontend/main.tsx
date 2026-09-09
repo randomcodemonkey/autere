@@ -6,7 +6,7 @@ import { basePath, url } from './base-path';
 import './styles.scss';
 
 declare const __BUILD_ID__: string;
-// eslint-disable-next-line no-console
+ 
 console.log(`[autere] UI build ${__BUILD_ID__}`);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

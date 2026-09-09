@@ -481,7 +481,7 @@ export class Scheduler {
         addLog(`Sending prompt (${prompt.length} chars)`);
         await rpc.prompt(prompt);
         addLog('Prompt sent — waiting for agent to finish');
-        let agentResult = await agentResultP;
+        const agentResult = await agentResultP;
         if (agentResult.startsWith('__AGENT_ERROR__:')) {
           throw new Error(agentResult.slice('__AGENT_ERROR__:'.length));
         }

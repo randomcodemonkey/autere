@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { url } from '../base-path';
 
-export type ViewId = 'status' | 'chat' | 'settings' | 'tasks';
+export type ViewId = 'status' | 'chat' | 'settings' | 'tasks' | 'edits';
 
 const VIEW_LABELS: Record<ViewId, string> = {
   status: 'Status',
   chat: 'Chat',
   settings: 'Settings',
   tasks: 'Tasks',
+  edits: 'Edits',
 };
 
 // Mobile (hamburger) menu labels — overrides for views whose desktop
@@ -38,7 +39,6 @@ export const Header: React.FC<HeaderProps> = ({
   onViewChange,
   onStatusClick,
   workingExternal,
-  isActive,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const displayName = sessionName
@@ -46,7 +46,7 @@ export const Header: React.FC<HeaderProps> = ({
     : (sessionId ? sessionId.slice(0, 6) + '…' : 'session');
   const dotClass = statusType === 'connected' ? 'green' : statusType === 'streaming' ? 'yellow' : statusType === 'disconnected' ? 'red' : 'gray';
 
-  const viewIds: ViewId[] = ['status', 'chat', 'settings', 'tasks'];
+  const viewIds: ViewId[] = ['status', 'chat', 'edits', 'settings', 'tasks'];
 
   return (
     <div className={`header${statusType === 'disconnected' ? ' header-disconnected' : ''}${workingExternal ? ' header-external' : ''}`}>

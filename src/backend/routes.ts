@@ -13,6 +13,7 @@ import { ProcessManager } from './process-manager.js';
 import { getUser, getUserRole, hasRole, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getAuthPassword, getTokenFromRequest, setLastSession, isRegisteredUser } from './auth.js';
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filterScopedModels, autoSessionName } from './utils.js';
+import { getPiEnvDir } from './pi-env.js';
 import { extensionsState } from './state.js';
 import { getTokenPricing, getRatesForModel, computeTokenCost } from './user-settings.js';
 import { log } from './logger.js';
@@ -547,6 +548,30 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         data: readSessionHistory(sess.sessionFile, Math.min(limit, 100)),
         activeTools: isActive ? activeToolsSnapshot(session) : [],
       });
+      return;
+    }
+
+    const fileChangesMatch = url.pathname.match(/^\/api\/sessions\/([\w-]+)\/file-changes$/);
+    if (fileChangesMatch && req.method === 'GET') {
+      const sessionId = fileChangesMatch[1];
+      const user = getUser(req);
+      if (!user) { sendJSON(res, { success: false, error: 'Unauthorized' }, 401); return; }
+      // Use the same findSession logic as /history to resolve id drift
+      const sess = findSession(sessionId, session.state.availableSessions);
+      if (!sess) { sendJSON(res, { success: true, data: [] }); return; }
+      // file-changes JSONL is named after the session filename
+      const baseName = basename(sess.sessionFile, '.jsonl');
+      const filePath = join(getPiEnvDir(user), 'file-changes', `${baseName}.jsonl`);
+      if (!existsSync(filePath)) { sendJSON(res, { success: true, data: [] }); return; }
+      try {
+        const content = readFileSync(filePath, 'utf-8');
+        const entries = content.split('\n').filter(Boolean).map((line) => {
+          try { return JSON.parse(line); } catch { return null; }
+        }).filter(Boolean);
+        sendJSON(res, { success: true, data: entries });
+      } catch (err: any) {
+        sendJSON(res, { success: false, error: err.message }, 500);
+      }
       return;
     }
 

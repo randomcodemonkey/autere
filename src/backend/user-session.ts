@@ -12,8 +12,8 @@ import type { ServerResponse } from 'http';
 import { MonitorRpcClient } from './rpc-client.js';
 import { filterScopedModels, autoSessionName, readSessionUsage } from './utils.js';
 import { log, userLog } from './logger.js';
-import { getLastSession, setLastSession } from './auth.js';
-import { ensurePiEnv, getPiEnvDir } from './pi-env.js';
+import { getLastSession } from './auth.js';
+import { ensurePiEnv } from './pi-env.js';
 import { readSessions } from './sessions.js';
 import type { SessionInfo } from './types.js';
 import { getEditIgnorePaths, getHistoryLimit, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost } from './user-settings.js';
@@ -797,7 +797,7 @@ export class UserSession {
     });
   }
 
-  private handleSessionStart(event: any): void {
+  private handleSessionStart(_event: any): void {
     const s = this.state;
     const rpc = this.rpc;
 

@@ -1,7 +1,7 @@
 /**
  * Run e2e tests: start backend, run cypress, stop backend.
  */
-import { startBackend, stopBackend, TEST_PORT } from './start-backend';
+import { startBackend, stopBackend, TEST_PORT, getTestEnvsDir } from './start-backend';
 import { execSync } from 'child_process';
 
 async function main() {
@@ -17,7 +17,13 @@ async function main() {
     console.log(`[run-e2e] Starting backend on port ${TEST_PORT}...`);
     await startBackend();
     console.log(`[run-e2e] Running cypress e2e tests against port ${TEST_PORT}...`);
-    execSync(`npx cypress run --e2e --config baseUrl=http://localhost:${TEST_PORT}`, { cwd: process.cwd(), stdio: 'inherit' });
+    const envsDir = getTestEnvsDir();
+    execSync(`npx cypress run --e2e --config baseUrl=http://localhost:${TEST_PORT}`, {
+      cwd: process.cwd(),
+      stdio: 'inherit',
+      // Tests read this to locate the isolated pi env (seed/reset data files)
+      env: { ...process.env, AUTERE_E2E_ENVS_DIR: envsDir },
+    });
     console.log('[run-e2e] Tests complete.');
   } catch (err: any) {
     console.error('[run-e2e] Error:', err.message);

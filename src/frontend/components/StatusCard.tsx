@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AgentCard } from './AgentCard';
 import { useCardState } from '../hooks/useCardState';
 import { url } from '../base-path';
@@ -60,7 +60,7 @@ function formatUptime(startedAt: number | null, now: number): string {
 
 
 export const StatusCard: React.FC<StatusCardProps> = ({
-  statusType,
+
   messageCount,
   requestCount,
   stats,

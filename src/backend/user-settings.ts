@@ -15,7 +15,6 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from 'fs';
 import { join, dirname } from 'path';
-import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { USER_SETTINGS_DIR, PI_DIR } from './constants.js';
 import { getPiEnvDir, ensurePiEnv } from './pi-env.js';
@@ -161,6 +160,19 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
     if ('enabledModels' in settings) {
       piSettings.enabledModels = settings.enabledModels;
       piSettingsChanged = true;
+      // Keep pi's session-start default in sync with the ordered list —
+      // otherwise a stale settings.json defaultModel (e.g. mimo-v2.5-all)
+      // wins in findInitialModel and new sessions ignore the user's order.
+      const first = settings.enabledModels?.[0];
+      if (first) {
+        const slash = first.indexOf('/');
+        if (slash > 0) {
+          piSettings.defaultProvider = first.slice(0, slash);
+          piSettings.defaultModel = first.slice(slash + 1);
+        } else {
+          piSettings.defaultModel = first;
+        }
+      }
     }
     if ('packages' in settings) {
       piSettings.packages = settings.packages;

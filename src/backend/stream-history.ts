@@ -40,7 +40,7 @@ export function formatToolResult(
   rmSnapshots?: Record<string, string>,
   toolCall?: ToolCallInfo,
 ): { role: string; text: string; streaming: boolean; timestamp?: number; isError?: boolean; images?: StreamImage[]; toolCall?: ToolCallInfo } | null {
-  let text = '';
+  let text: string;
   let role: string;
 
   if (toolName === 'edit') {

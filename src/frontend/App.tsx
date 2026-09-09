@@ -6,15 +6,13 @@ import { RootRedirect } from './pages/RootRedirect';
 import { NotFound } from './pages/NotFound';
 import { useSSE } from './hooks/useSSE';
 import { useAuth } from './hooks/useAuth';
-import { url } from './base-path';
 import type { SSEMessage } from './types';
 
 function App() {
   // Auth
-  const { authenticated, authEnabled, loginError, userRole, username, checkAuthStatus, login, logout } = useAuth();
+  const { authenticated, loginError, userRole, username, checkAuthStatus, login, logout } = useAuth();
   const [authChecked, setAuthChecked] = useState(false);
   const [restarting, setRestarting] = useState(false);
-  const [restartingBackend, setRestartingBackend] = useState(false);
 
   const restartingRef = useRef(restarting);
   restartingRef.current = restarting;
@@ -58,7 +56,7 @@ function App() {
     : 'Idle';
 
   useEffect(() => {
-    checkAuthStatus().then((ok) => {
+    checkAuthStatus().then(() => {
       setAuthChecked(true);
     });
   }, [checkAuthStatus]);
