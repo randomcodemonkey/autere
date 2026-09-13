@@ -17,7 +17,8 @@ const agentDir = join(work, "agent");
 mkdirSync(join(agentDir, "file-changes"), { recursive: true });
 process.env.PI_CODING_AGENT_DIR = agentDir;
 // workdir lives under /tmp — override the default ignore so test files count
-process.env.EDIT_IGNORE_PATHS = join(agentDir, "nothing");
+// (pg/pgdata exercise the segment matcher; neither appears in the tmpdir name)
+process.env.EDIT_IGNORE_PATHS = join(agentDir, "nothing") + ":pg:pgdata:/home/slop/pgdata";
 process.chdir(work);
 
 // Import the extension (TypeScript); fall back to esbuild when this node
@@ -88,3 +89,19 @@ const jsonl2 = readFileSync(join(agentDir, "file-changes", "session-test.jsonl")
 assert(jsonl2.length === 17, `expected 17 JSONL lines total, got ${jsonl2.length}`);
 
 console.log("smoke-test OK: 15-change batch → 10 chat cards + summary, 15 JSONL rows; .git ignored; small batch uncapped");
+
+// ── Case 3: ignore entries match path segments anywhere in the path ──
+entries.length = 0;
+fireBash("c3", "write into ignored folders", () => {
+  mkdirSync(join(work, "pg", "lib"), { recursive: true });
+  writeFileSync(join(work, "pg", "lib", "x.ts"), "a\n");            // 'pg' bare segment
+  mkdirSync(join(work, "deep", "pgdata", "y"), { recursive: true });
+  writeFileSync(join(work, "deep", "pgdata", "y", "b.ts"), "b\n");   // 'pgdata' at depth
+  mkdirSync(join(work, "keep", "pgdatav2"), { recursive: true });
+  writeFileSync(join(work, "keep", "pgdatav2", "c.ts"), "c\n");      // pgdatav2 ≠ pgdata → kept
+});
+const jsonl3 = readFileSync(join(agentDir, "file-changes", "session-test.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+assert(!jsonl3.some((e) => e.path.split("/").includes("pg")), "'pg' segment not ignored");
+assert(!jsonl3.some((e) => e.path.split("/").includes("pgdata")), "'pgdata' segment not ignored");
+assert(jsonl3.some((e) => e.path.endsWith(join("keep", "pgdatav2", "c.ts"))), "pgdatav2 wrongly ignored (substring match)");
+console.log("smoke-test OK: segment-based ignore matching (bare name at depth, no substring matches)");

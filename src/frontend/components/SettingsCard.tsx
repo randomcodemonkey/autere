@@ -7,6 +7,18 @@ interface SettingsCardProps {
   sseConnected: boolean;
 }
 
+// Module-level ON PURPOSE: a component type defined inside the render
+// function is a NEW type every render, so React remounts the whole subtree —
+// every wrapped input lost focus on any re-render (SSE events included),
+// making text fields unusable. Hoisted = stable type = DOM preserved.
+const FieldShell: React.FC<{ field: SettingField; children: React.ReactNode }> = ({ field, children }) => (
+  <div className="settings-field">
+    <label className="settings-label">{field.label}</label>
+    {field.description && <div className="settings-description">{field.description}</div>}
+    {children}
+  </div>
+);
+
 export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   const [schema, setSchema] = useState<SettingSection[]>([]);
   const [settings, setSettings] = useState<Record<string, any>>({});
@@ -69,13 +81,6 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   }, [settings]);
 
   // Shared shell for the plain label+description field variants
-  const FieldShell: React.FC<{ field: SettingField; children: React.ReactNode }> = ({ field, children }) => (
-    <div className="settings-field">
-      <label className="settings-label">{field.label}</label>
-      {field.description && <div className="settings-description">{field.description}</div>}
-      {children}
-    </div>
-  );
 
   const renderField = (field: SettingField) => {
     const value = settings[field.key] ?? '';

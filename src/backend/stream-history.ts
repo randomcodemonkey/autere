@@ -229,12 +229,15 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
       if (role === 'assistant' && Array.isArray(msg.content)) {
         const out: any[] = [];
         // Standalone toolCall entries for calls whose result is missing
-        // (aborted mid-turn, empty result, etc.)
+        // (aborted mid-turn, empty result, etc.) — emitted AFTER
+        // thinking/text so reload order matches the live stream order
+        // (thinking streamed first, then text, then the tool calls ran).
+        const standaloneCalls: any[] = [];
         for (const block of msg.content) {
           if (block.type === 'toolCall' && block.id && !matchedCallIds.has(block.id)) {
             const info = toolCallInfo(block.id);
             if (!info) continue;
-            out.push({
+            standaloneCalls.push({
               role: 'toolCall',
               text: info.cmd,
               streaming: false,
@@ -265,6 +268,7 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
             ...(images.length > 0 ? { images } : {}),
           });
         }
+        out.push(...standaloneCalls);
         return out;
       }
 

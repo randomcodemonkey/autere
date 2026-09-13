@@ -263,7 +263,20 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         null;
       const historySessionId = target?.id ?? sessionState.sessionId;
       let streamHistory: ReturnType<typeof readSessionHistory> = [];
-      if (target?.sessionFile && existsSync(target.sessionFile)) {
+      // Prefer the LIVE in-memory history buffer when viewing the session
+      // this backend is driving: mid-turn the buffer holds the streaming
+      // entry (streaming:true, current text, live id) that the session file
+      // lacks — serving file content made the streaming message vanish after
+      // a reload (client had no streaming entry, so every stream_delta was
+      // dropped and live upserts appended duplicates instead of replacing,
+      // since a second tagEntry pass never matches the buffer's ids).
+      // File read stays the fallback for other sessions and for a
+      // not-yet-loaded buffer (e.g. backend restart race).
+      if (historySessionId && historySessionId === sessionState.sessionId) {
+        const liveBuf = session.historyFor(historySessionId);
+        if (liveBuf.length > 0) streamHistory = liveBuf.slice(-session.historyLimit);
+      }
+      if (streamHistory.length === 0 && target?.sessionFile && existsSync(target.sessionFile)) {
         try { streamHistory = session.withStableIds(readSessionHistory(target.sessionFile, session.historyLimit)); } catch (err) {
           log.http.error('bootstrap: failed to read session history:', err);
         }
@@ -1097,6 +1110,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           sendJSON(res, { success: true });
         }
       } catch (err) {
+        log.http.error('Failed to send message:', err);
         sendJSON(res, { success: false, error: `Failed to send message: ${err}` }, 400);
       }
       return;

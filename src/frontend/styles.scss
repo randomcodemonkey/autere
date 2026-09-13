@@ -844,6 +844,9 @@ body {
     font-size: 0.8rem;
     text-decoration: none;
     white-space: nowrap;
+    // No inherited color here means the browser-default dark blue link
+    // color lands on the dark card — unreadable.
+    color: var(--c-info);
 
     &:hover { background: rgba(255, 255, 255, 0.1); }
   }
@@ -3243,6 +3246,14 @@ textarea.settings-input {
   display: flex;
   flex-direction: column;
   border-bottom: 1px solid #333;
+}
+
+/* No file selected: the mods pane is hidden — the file list takes the full
+   available height instead of its 35vh cap. */
+.changes-page.no-selection .changes-files {
+  max-height: none;
+  flex: 1;
+  border-bottom: none;
 }
 
 .changes-files-bar {

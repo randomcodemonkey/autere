@@ -236,9 +236,12 @@ export function getEditIgnorePaths(user: string): string[] {
 }
 
 export function getHistoryLimit(user: string): number {
-  const raw = getUserSetting(user, 'historyLimit', 50);
+  // 200 (not 50): a single agent turn can easily emit 50+ tool/thinking/
+  // edit entries — at 50 the trailing window could not even hold one turn
+  // plus the user message that triggered it.
+  const raw = getUserSetting(user, 'historyLimit', 200);
   const n = typeof raw === 'number' ? raw : parseInt(raw, 10);
-  if (!Number.isFinite(n)) return 50;
+  if (!Number.isFinite(n)) return 200;
   return Math.min(500, Math.max(10, Math.floor(n)));
 }
 

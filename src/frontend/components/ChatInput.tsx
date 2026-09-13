@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { url } from '../base-path';
 
 interface AttachedImage {
@@ -19,6 +19,8 @@ interface ChatInputProps {
   isActive?: boolean; // true when streaming or compacting — blocks /new command
   steerPending?: number; // queued steer messages (from pi's queue_update)
   followUpPending?: number; // queued follow-up messages
+  /** Active session id — keys the persisted input draft (survives tab navigation + reloads) */
+  sessionId?: string | null;
 }
 
 // Detect touch devices: on mobile, the virtual keyboard's Return key should
@@ -35,8 +37,40 @@ const SLASH_COMMANDS: { cmd: string; description: string }[] = [
   { cmd: '/help', description: 'Show available commands.' },
 ];
 
-export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, onError, onSent, disabled, isStreaming, isActive, steerPending, followUpPending }) => {
-  const [value, setValue] = useState('');
+export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, onError, onSent, disabled, isStreaming, isActive, steerPending, followUpPending, sessionId }) => {
+  // Draft persistence: the chat view unmounts on tab navigation (edits,
+  // settings, ...) and the input text would be lost. Keep it in localStorage
+  // keyed by session so each session remembers its own draft. ponytail:
+  // attached images are NOT persisted (8 MB base64 each would blow the
+  // localStorage quota) — switch to IndexedDB if image-drafts are wanted.
+  const draftKey = `autere:draft:${sessionId ?? ''}`;
+  const [value, setValue] = useState(() => {
+    try {
+      return localStorage.getItem(draftKey) ?? '';
+    } catch {
+      return '';
+    }
+  });
+  // Reload when the session changes without a remount (tab switch back,
+  // session switch while chat view stays mounted).
+  useEffect(() => {
+    try {
+      setValue(localStorage.getItem(draftKey) ?? '');
+    } catch {
+      /* ignore */
+    }
+  }, [draftKey]);
+  const updateValue = useCallback(
+    (v: string) => {
+      setValue(v);
+      try {
+        localStorage.setItem(draftKey, v);
+      } catch {
+        /* quota/private mode — in-memory value still works */
+      }
+    },
+    [draftKey],
+  );
   const [sending, setSending] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -98,7 +132,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
     // Slash commands are frontend-only — they never reach the backend/LLM.
     if (text.startsWith('/')) {
       const [cmd] = text.split(/\s+/);
-      setValue('');
+      updateValue('');
       if (textareaRef.current) textareaRef.current.style.height = '';
 
       switch (cmd) {
@@ -150,7 +184,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
       }
       const data = await res.json();
       if (data.success) {
-        setValue('');
+        updateValue('');
         setImages([]);
         onSent?.(text, type);
         // Collapse the expanded input and release focus so the UI returns to
@@ -169,7 +203,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
     } finally {
       setSending(false);
     }
-  }, [value, images, onNewSession, onCompact, onError, onSent, isActive]);
+  }, [value, images, onNewSession, onCompact, onError, onSent, isActive, updateValue]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -225,7 +259,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
           placeholder={isStreaming ? 'Steer the agent...' : 'Type a message... (/help for commands)'}
           rows={expanded ? 4 : 1}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => updateValue(e.target.value)}
           onKeyDown={handleKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => {

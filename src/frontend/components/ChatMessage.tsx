@@ -150,8 +150,10 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   // url() adds the reverse-proxy base path — raw /api/... 404s behind it.
   const imageSrc = (img: StreamImage) => (img.url ? url(img.url) : `data:${img.mimeType};base64,${img.data ?? ''}`);
 
-  // Save a stream image via Web Share (iOS) or a Blob-URL download anchor.
-  const saveImage = async (mimeType: string, src: string) => {
+  // Save a stream image (or any file) via Web Share (iOS) or a Blob-URL
+  // download anchor. Never navigates — safe in standalone PWAs where
+  // target=_blank is unreliable (iOS opens the preview over the app).
+  const saveImage = async (mimeType: string, src: string, filename?: string) => {
     let blob: Blob;
     if (src.startsWith('data:')) {
       const data = src.slice(src.indexOf(',') + 1);
@@ -161,7 +163,7 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
       blob = await resp.blob();
     }
     const ext = mimeType.split('/')[1] || 'png';
-    const file = new File([blob], `image-${Date.now()}.${ext}`, { type: mimeType });
+    const file = new File([blob], filename || `image-${Date.now()}.${ext}`, { type: mimeType });
     if (typeof navigator.share === 'function' && navigator.canShare?.({ files: [file] })) {
       try { await navigator.share({ files: [file] }); return; } catch (err) {
         // User cancelled the share sheet — not an error
@@ -220,7 +222,20 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
                 {msg.file.size >= 1048576 ? `${(msg.file.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(msg.file.size / 1024))} KB`}
               </div>
             </div>
-            <a className="file-dl" href={url(`/api/files/${encodeURIComponent(msg.file.savedName)}`)} download={msg.file.name}>
+            <a
+              className="file-dl"
+              href={url(`/api/files/${encodeURIComponent(msg.file.savedName)}`)}
+              download={msg.file.name}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                // Route through Web Share / Blob download — never navigate
+                // (iOS PWA preview otherwise covers the app, no way back).
+                e.preventDefault();
+                void saveImage(msg.file!.mimeType || 'application/octet-stream', url(`/api/files/${encodeURIComponent(msg.file!.savedName)}`), msg.file!.name)
+                  .catch((err) => console.error('File download failed:', err));
+              }}
+            >
               Download
             </a>
           </div>

@@ -45,6 +45,8 @@ const MIME_BY_EXT: Record<string, string> = {
 	".pdf": "application/pdf", ".csv": "text/csv", ".txt": "text/plain",
 	".md": "text/markdown", ".json": "application/json", ".xml": "application/xml",
 	".zip": "application/zip", ".gz": "application/gzip", ".tar": "application/x-tar",
+	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+	".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
 	".doc": "application/msword", ".xls": "application/vnd.ms-excel",
 	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -172,10 +174,31 @@ export default function (pi: any) {
 
 	const IGNORED = (process.env.EDIT_IGNORE_PATHS || "/tmp")
 		.split(":").map((p) => p.trim().replace(/\/+$/, "")).filter(Boolean);
-	// .git is always ignored at any depth (*/.git) — git internals must never
-	// surface as edit cards, even via explicit write-targets or tool edits
-	const isIgnored = (path: string): boolean =>
-		path.split("/").includes(".git") || IGNORED.some((dir) => path === dir || path.startsWith(dir + "/"));
+	// ponytail: segment matcher duplicated from src/shared/edit-ignore.ts —
+	// this extension deploys STANDALONE (copied/symlinked into pi-env
+	// extensions dirs) and must not import outside its package. Keep in sync;
+	// add shared-import back only if deployment ever loads from the repo.
+	// Semantics: .git always ignored at any depth; entries match path
+	// segments — relative entries ('pgdata') at any depth, absolute entries
+	// ('/home/slop/pgdata') anchored at the root, never substring matches.
+	const isIgnored = (path: string): boolean => {
+		const segs = path.split("/").filter(Boolean);
+		if (segs.includes(".git")) return true;
+		return IGNORED.some((dir) => {
+			const parts = dir.split("/").filter(Boolean);
+			if (parts.length === 0 || parts.length > segs.length) return false;
+			const start = dir.startsWith("/") ? 0 : -1;
+			const last = start === 0 ? 1 : segs.length - parts.length + 1;
+			for (let i = start; i < last; i++) {
+				let ok = true;
+				for (let j = 0; j < parts.length; j++) {
+					if (segs[i + j] !== parts[j]) { ok = false; break; }
+				}
+				if (ok) return true;
+			}
+			return false;
+		});
+	};
 
 	const classify = (newContent: string | null, existed: boolean): string =>
 		newContent === null ? "deleted" : !existed ? "created" : "modified";

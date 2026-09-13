@@ -194,3 +194,24 @@ describe('ChatInput first-click send (expanded state regression)', () => {
     cy.get('@send.all').should('have.length', 1);
   });
 });
+
+describe('ChatInput draft persistence', () => {
+  it('restores the draft after remount (tab navigation) and clears on send', () => {
+    cy.mount(<ChatInput onNewSession={cy.stub()} sessionId="s1" />);
+    cy.get('.chat-input').type('remember me');
+    // Remount = what happens when the user navigates away and back.
+    cy.mount(<ChatInput onNewSession={cy.stub()} sessionId="s1" />);
+    cy.get('.chat-input').should('have.value', 'remember me');
+
+    // Drafts are per-session: another session starts empty.
+    cy.mount(<ChatInput onNewSession={cy.stub()} sessionId="s2" />);
+    cy.get('.chat-input').should('have.value', '');
+
+    // Sending clears the draft.
+    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.get('.chat-input').type('hi{enter}');
+    cy.wait('@send');
+    cy.mount(<ChatInput onNewSession={cy.stub()} sessionId="s2" />);
+    cy.get('.chat-input').should('have.value', '');
+  });
+});

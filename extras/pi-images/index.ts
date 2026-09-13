@@ -58,11 +58,21 @@ const sseEnc = new TextEncoder();
 function sseFromJson(j: any): Uint8Array {
 	const choice = j.choices?.[0] ?? {};
 	const msg = choice.message ?? {};
+	const chunk = (d: any, fr: any, usage: any) =>
+		`data: ${JSON.stringify({ id: j.id, object: "chat.completion.chunk", created: j.created, model: j.model, choices: [{ index: 0, delta: d, finish_reason: fr }], usage })}\n\n`;
+	// Reasoning MUST be emitted BEFORE content: downstream consumers render
+	// thinking before the assistant text and follow arrival order — a single
+	// combined delta made live streams appear as [assistant, thinking].
+	let out = "";
+	const reasoning: any = { role: "assistant" };
+	for (const f of ["reasoning", "reasoning_content", "reasoning_text"]) {
+		if (msg[f]) reasoning[f] = msg[f];
+	}
+	if (Object.keys(reasoning).length > 1) {
+		out += chunk(reasoning, null, undefined);
+	}
 	const delta: any = { role: "assistant" };
 	if (msg.content) delta.content = msg.content;
-	for (const f of ["reasoning", "reasoning_content", "reasoning_text"]) {
-		if (msg[f]) delta[f] = msg[f];
-	}
 	if (msg.tool_calls) {
 		delta.tool_calls = msg.tool_calls.map((tc: any, i: number) => ({
 			index: i,
@@ -71,12 +81,8 @@ function sseFromJson(j: any): Uint8Array {
 			function: { name: tc.function?.name, arguments: tc.function?.arguments },
 		}));
 	}
-	const chunk = (d: any, fr: any, usage: any) =>
-		`data: ${JSON.stringify({ id: j.id, object: "chat.completion.chunk", created: j.created, model: j.model, choices: [{ index: 0, delta: d, finish_reason: fr }], usage })}\n\n`;
-	const out =
-		chunk(delta, null, undefined) +
-		chunk({}, choice.finish_reason ?? (msg.tool_calls ? "tool_calls" : "stop"), j.usage) +
-		"data: [DONE]\n\n";
+	out += chunk(delta, choice.finish_reason ?? (msg.tool_calls ? "tool_calls" : "stop"), j.usage);
+	out += "data: [DONE]\n\n";
 	return sseEnc.encode(out);
 }
 
@@ -85,8 +91,64 @@ const scrubFetch: typeof globalThis.fetch = async (url, init) => {
 	try {
 		if (typeof init?.body === "string" && init.body.includes('"messages"')) {
 			const body = JSON.parse(init.body);
-			if (body.reasoning_effort === "none") delete body.reasoning_effort;
-			if (init.body.includes('"image_url"') && body.stream) {
+			let mutated = false;
+			if (body.reasoning_effort === "none") {
+				delete body.reasoning_effort;
+				mutated = true;
+			}
+			// Evict consumed images from the context. Images enter it only via
+			// the model's own tool calls (read on an image file); once the model
+			// has seen them, their base64 is dead weight re-sent on every request
+			// (~30k tokens each) and forces the non-streaming workaround on every
+			// call. Policy: an image block survives only while its tool result is
+			// part of the NEWEST tool-result batch (messages after the last
+			// assistant message - i.e. the exchange where the model consumes it);
+			// older blocks become a text note. Files stay on disk and their paths
+			// remain in the surrounding text, so the model can re-view on demand
+			// with one tool call. User-attached images are kept for their turn
+			// (evicted when the next user message arrives).
+			const msgs: any[] = body.messages ?? [];
+			let lastAssistant = -1;
+			let lastUser = -1;
+			msgs.forEach((m: any, i: number) => {
+				if (m?.role === "assistant") lastAssistant = i;
+				if (m?.role === "user") lastUser = i;
+			});
+			// Structural detection during the walk only - never string-match the
+			// serialized body for "image_url": text messages may legitimately
+			// contain that literal (e.g. source code in context) and would force
+			// bogus non-streaming.
+			let freshImage = false;
+			for (let i = 0; i < msgs.length; i++) {
+				const m = msgs[i];
+				if (!Array.isArray(m?.content)) continue;
+				// pi-ai serializes tool-result images as a synthesized user
+				// message ("Attached image(s) from tool result:") - those are
+				// model-consumed views, not real user turns: evict them under
+				// the tool-result rule, not the keep-for-the-turn user rule.
+				const isImageCarrier =
+					m.role === "user" &&
+					m.content.some(
+						(p: any) => p.type === "text" && p.text === "Attached image(s) from tool result:"
+					);
+				const consumed =
+					m.role === "user" && !isImageCarrier ? i < lastUser : i < lastAssistant;
+				if (!consumed) {
+					if (m.content.some((p: any) => p?.type === "image_url")) freshImage = true;
+					continue;
+				}
+				for (const p of m.content) {
+					if (p?.type === "image_url") {
+						p.type = "text";
+						p.text = "[image removed from context - file is saved on disk, see its path above]";
+						delete p.image_url;
+						mutated = true;
+					}
+				}
+			}
+			// Only a fresh (un-evicted) image demotes this single request to
+			// non-streaming; evicted history streams normally.
+			if (freshImage && body.stream) {
 				body.stream = false;
 				delete body.stream_options;
 				const headers: Record<string, string> = {};
@@ -115,13 +177,18 @@ const scrubFetch: typeof globalThis.fetch = async (url, init) => {
 				}
 				return resp;
 			}
-			return fetch(url, { ...init, body: JSON.stringify(body) });
+			// Untouched request: pass the original string through - no
+			// re-serialization cost for the (common) image-free case.
+			return mutated ? fetch(url, { ...init, body: JSON.stringify(body) }) : fetch(url, init);
 		}
 	} catch {
 		/* fall through to plain fetch */
 	}
 	return fetch(url, init);
 };
+
+// Named re-export so smoke-test.mjs can exercise the wrapper directly.
+export { scrubFetch };
 
 interface RouterConfig {
 	baseUrl: string;
@@ -345,7 +412,10 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"Generate an image from a text prompt using an image-generation model " +
 			"(via 9router). Use when the user asks to draw, create, or generate a " +
-			"picture. Write a detailed, descriptive prompt for best results.",
+			"picture. Write a detailed, descriptive prompt for best results. " +
+			"The generated image is rendered to the user automatically in autere — " +
+			"do NOT also save_file it (that shows it twice). save_file only when the " +
+			"user asks for it at a specific path.",
 		parameters: Type.Object({
 			prompt: Type.String({ description: "Detailed description of the image to generate" }),
 		}),
@@ -422,7 +492,9 @@ export default function (pi: ExtensionAPI) {
 			"model (via 9router). Provide 1-4 image file paths (absolute, or relative " +
 			"to the current working directory) and describe the change, e.g. 'make the " +
 			"sky sunset orange' or 'remove the person on the left'. Use for edits to " +
-			"generated or uploaded images; use generate_image for purely new images.",
+			"generated or uploaded images; use generate_image for purely new images. " +
+			"The edited image is rendered to the user automatically in autere — " +
+			"do NOT also save_file it (that shows it twice).",
 		parameters: Type.Object({
 			paths: Type.Array(Type.String(), {
 				description: "Paths of the image file(s) to edit (1-4 images)",

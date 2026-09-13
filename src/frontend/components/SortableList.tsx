@@ -138,7 +138,11 @@ export function SortableList({
     <div className={`sortable-list${touchDragging ? ' touch-active' : ''}`}>
       {items.map((item, index) => (
         <div
-          key={`${item}-${index}`}
+          // Index keys: inputs are fully controlled, so values stay correct
+          // through edits and reorders. Keying by content (key={`${item}-${index}`})
+          // remounted the row's input on the first keystroke — focus died
+          // mid-word and editing was impossible.
+          key={index}
           className={getItemClass(index)}
           draggable={!disabled}
           onDragStart={(e) => handleDragStart(e, index)}

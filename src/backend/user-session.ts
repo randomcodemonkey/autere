@@ -100,6 +100,13 @@ export class UserSession {
   readonly state: UserSessionState;
   readonly sseClients: Map<ServerResponse, string | null> = new Map(); // client -> sessionId they're viewing
   private clientIdMap: Map<string, ServerResponse> = new Map(); // clientId -> SSE response
+  // Stream-health tracking: a turn whose provider stream hangs (upstream stall,
+  // invalid JSON, dead socket) never emits message_end/turn_end/agent_end, so
+  // the only trace would be a truncated message in the UI. The stall watchdog
+  // below turns that silence into a WARN in autere's logs.
+  private lastRpcEventAt: number = 0;
+  private stallWarned: boolean = false;
+  private stallTimer: ReturnType<typeof setInterval> | null = null;
   // Stream history buffers, one per session. A single shared buffer would mix
   // messages from different sessions when clients view or switch sessions.
   private historyBuffers: Map<string, any[]> = new Map();
@@ -234,6 +241,7 @@ export class UserSession {
     if (this.cleanupTimer) clearTimeout(this.cleanupTimer);
     this.cleanupTimer = setTimeout(() => {
       userLog(this.user).info('Idle timeout, terminating pi process');
+      if (this.stallTimer) { clearInterval(this.stallTimer); this.stallTimer = null; }
       this._onIdle?.();
     }, this._idleTimeoutMs);
   }
@@ -246,7 +254,10 @@ export class UserSession {
   broadcast(data: any) {
     const msg = `data: ${JSON.stringify(data)}\n\n`;
     for (const [client] of this.sseClients) {
-      try { client.write(msg); } catch {}
+      try { client.write(msg); } catch (err) {
+        log.userSession.warn(`SSE write failed, dropping client: ${err}`);
+        this.sseClients.delete(client);
+      }
     }
   }
 
@@ -440,6 +451,17 @@ export class UserSession {
   /** Content event types forwarded to the user's other devices in real time */
   private static readonly FORWARDED_EVENT_TYPES = new Set(['stream_history', 'history_upsert', 'history_remove', 'stream_delta', 'stats', 'tool_start', 'tool_end']);
 
+  /** Streaming with no RPC events for this long triggers the stall WARN */
+  private static readonly STALL_WARN_MS = 120_000;
+
+  /** Event types known to be benign — anything else hits the default WARN */
+  private static readonly KNOWN_EVENT_TYPES = new Set([
+    'session_start', 'session_info_changed', 'agent_start', 'agent_end', 'agent_settled',
+    'queue_update', 'message_start', 'message_update', 'message_end', 'tool_execution_start',
+    'tool_execution_end', 'model_select', 'entry_appended', 'compaction_start', 'compaction_end',
+    'turn_start', 'extension_ui_request', 'extension_error', 'auto_retry_start', 'auto_retry_end',
+  ]);
+
   /**
    * Broadcast an SSE event only to clients viewing a specific session.
    * Content events (history/stats/tools) are ALSO forwarded to this user's
@@ -469,12 +491,23 @@ export class UserSession {
 
   /** Cap the buffer, telling clients which entries were dropped */
   private trimHistory(sessionId: string | null, buf: any[]): void {
-    if (buf.length > this.historyLimit) {
-      const removedIds = buf.slice(0, buf.length - this.historyLimit).map((e) => e.id).filter(Boolean);
-      buf.splice(0, buf.length - this.historyLimit);
-      if (removedIds.length > 0) {
-        this.broadcastToSession(sessionId, { type: 'history_remove', sessionId, data: removedIds });
-      }
+    if (buf.length <= this.historyLimit) return;
+    // Trim from the front, but NEVER drop user entries: a single turn can
+    // produce 50+ tool/thinking/edit entries, and evicting the user's own
+    // messages from the trailing window makes the dashboard lose the
+    // conversation (the agent_end snapshot then confirms the loss).
+    const excess = buf.length - this.historyLimit;
+    const removedIds: any[] = [];
+    let removed = 0;
+    let i = 0;
+    while (i < buf.length && removed < excess) {
+      if (buf[i].role === 'user') { i++; continue; }
+      if (buf[i].id) removedIds.push(buf[i].id);
+      buf.splice(i, 1);
+      removed++;
+    }
+    if (removedIds.length > 0) {
+      this.broadcastToSession(sessionId, { type: 'history_remove', sessionId, data: removedIds });
     }
   }
 
@@ -483,7 +516,10 @@ export class UserSession {
     const msg = `data: ${JSON.stringify(data)}\n\n`;
     for (const [client, clientSessionId] of this.sseClients) {
       if (this.clientViewsSession(clientSessionId, sessionId)) {
-        try { client.write(msg); } catch {}
+        try { client.write(msg); } catch (err) {
+          log.userSession.warn(`SSE write failed, dropping client: ${err}`);
+          this.sseClients.delete(client);
+        }
       }
     }
   }
@@ -669,6 +705,8 @@ export class UserSession {
     const rpc = this.rpc;
 
     rpc.onEvent((event: any) => {
+      this.lastRpcEventAt = Date.now();
+      this.stallWarned = false;
       if (event.type !== 'message_update') {
         log.userSession.forSession(s.sessionState.sessionId).debug(`RPC event: ${event.type}`);
       }
@@ -684,6 +722,17 @@ export class UserSession {
           this.handleSessionInfoChanged(event);
           break;
         case 'agent_start':
+          // Overlap detection: a new run starting while the previous one never
+          // emitted agent_end means the previous stream was aborted or hung —
+          // usually an upstream/provider failure. Without this the orphaned
+          // run is invisible in the logs (only DEBUG lines, no end).
+          if (s.sessionState.isStreaming) {
+            log.userSession.forSession(s.sessionState.sessionId).warn(
+              'agent_start while previous run never ended — previous stream was aborted or hung (truncated message likely shown)');
+          }
+          // Fresh run — tool entries from a previous run are dead (their
+          // tool_execution_end never arrived) and must not pollute cmd lookups.
+          s.activeTools.clear();
           s.sessionState.isStreaming = true;
           this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
           // Idle → active: tell the user's other devices immediately
@@ -722,6 +771,12 @@ export class UserSession {
           break;
         case 'tool_execution_start':
           this.handleToolStart(event);
+          break;
+        case 'tool_execution_update':
+          // Partial tool results (e.g. streaming bash output) — deliberately
+          // not rendered: the final result arrives via tool_execution_end, and
+          // these events still feed the stall watchdog (lastRpcEventAt).
+          // Implement partial-output streaming here if the UI ever wants it.
           break;
         case 'tool_execution_end':
           this.handleToolEnd(event);
@@ -791,10 +846,47 @@ export class UserSession {
           this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
           this.notifyPeersSessionActivity(true);
           break;
+        case 'extension_error':
+          log.userSession.forSession(s.sessionState.sessionId).warn(
+            `extension error in ${event.extensionPath || 'unknown extension'}: ${event.error || JSON.stringify(event.event)}`);
+          break;
+        case 'auto_retry_start':
+          log.userSession.forSession(s.sessionState.sessionId).warn(
+            `auto retry ${event.attempt}/${event.maxAttempts} scheduled in ${event.delayMs}ms`);
+          break;
+        case 'auto_retry_end':
+          if (!event.success) {
+            log.userSession.forSession(s.sessionState.sessionId).warn(
+              `auto retry failed after ${event.attempt} attempt(s): ${event.finalError || 'unknown error'}`);
+          }
+          break;
+        default:
+          // Unknown event types must not vanish silently — pi may add error-
+          // bearing events (extension_error, retries, provider aborts) that
+          // diagnostics depend on. KNOWN_EVENT_TYPES filters out the benign
+          // ones we deliberately ignore.
+          if (!UserSession.KNOWN_EVENT_TYPES.has(event.type)) {
+            log.userSession.forSession(s.sessionState.sessionId).warn(
+              `unhandled RPC event type: ${event.type}`);
+          }
+          break;
       }
 
       this.touch();
     });
+
+    // Stall watchdog: while a turn is streaming, WARN if no RPC events have
+    // arrived for STALL_WARN_MS. Covers the "assistant message frozen/truncated"
+    // case where the upstream stream stalls without ever erroring.
+    this.lastRpcEventAt = Date.now();
+    this.stallTimer = setInterval(() => {
+      if (s.sessionState.isStreaming && !this.stallWarned
+          && Date.now() - this.lastRpcEventAt > UserSession.STALL_WARN_MS) {
+        this.stallWarned = true;
+        log.userSession.forSession(s.sessionState.sessionId).warn(
+          `turn stalled: no RPC events for ${Math.round((Date.now() - this.lastRpcEventAt) / 1000)}s while streaming — provider stream may have hung`);
+      }
+    }, 30_000);
   }
 
   private handleSessionStart(_event: any): void {
@@ -954,8 +1046,13 @@ export class UserSession {
     const msgImages = extractImages(event.message.content);
 
     if (rawRole === 'assistant') {
+      const stop = event.message.stopReason;
       log.userSession.forSession(s.sessionState.sessionId).debug(
-        `assistant message_end: text_len=${text.length}, content_types=[${(event.message.content || []).map((c: any) => c.type).join(',')}]`);
+        `assistant message_end: text_len=${text.length}, stop=${stop}, content_types=[${(event.message.content || []).map((c: any) => c.type).join(',')}]`);
+      if (stop === 'error' || stop === 'aborted') {
+        log.userSession.forSession(s.sessionState.sessionId).warn(
+          `assistant stream ended with stop=${stop}: ${event.message.errorMessage || '(no error message)'}`);
+      }
     }
 
     // Skip toolResult, thinking, and user messages — they are handled by
@@ -1068,14 +1165,11 @@ export class UserSession {
     const s = this.state;
     const cmd = formatToolArgs(event.toolName, event.args);
 
-    // Close any previously active tool (it terminated without sending tool_end)
-    for (const [id, tool] of s.activeTools) {
-      s.recentTools.unshift({ name: tool.name, isError: false, timestamp: Date.now(), args: tool.args });
-      if (s.recentTools.length > 5) s.recentTools.length = 5;
-      this.broadcastToSession(s.sessionState.sessionId, { type: 'tool_end', data: { id, name: tool.name, isError: false, cmd: tool.cmd, recentTools: s.recentTools } });
-    }
-    s.activeTools.clear();
-
+    // Parallel tool calls are normal (pi executes them concurrently) — every
+    // start registers its own entry and every end resolves by its own
+    // toolCallId. Stale entries from dead runs are cleared on agent_start;
+    // clearing them here would break the cmd lookup for the FIRST call of a
+    // parallel pair (its card would render without the command line).
     const toolEntry: any = { name: event.toolName, args: event.args, cmd, startTime: Date.now() };
 
     // For rm commands, snapshot file content before deletion

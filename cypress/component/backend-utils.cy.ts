@@ -6,6 +6,7 @@
 import { parseCookies, extractFullText, formatToolArgs, dedupHistory, extractImages } from '../../src/shared/format';
 import { findSession, type SessionRef } from '../../src/shared/find-session';
 import { isRmCommand, extractRmPaths, accumulateUsage, sanitizeUserName, filterModelsByPatterns, sessionLocaleStamp, autoSessionName } from '../../src/shared/format';
+import { pathIsIgnored } from '../../src/shared/edit-ignore';
 
 describe('Backend Utilities (real implementations)', () => {
   describe('parseCookies', () => {
@@ -368,6 +369,37 @@ describe('Session auto-naming helpers', () => {
       const d = new Date(Date.UTC(2026, 8, 5, 12, 7, 9));
       expect(autoSessionName('[ui]', { locale: 'en-US' }, d)).to.match(/^\[ui\] - Sep 5, 2026/);
       expect(autoSessionName('[task]', { locale: 'en-US' }, d)).to.match(/^\[task\] - Sep 5, 2026/);
+    });
+  });
+
+  describe('pathIsIgnored', () => {
+    const entries = ['pg', 'pgdata', '/home/slop/pgdata', '/tmp'];
+
+    it('ignores a bare folder name as any path segment, any depth', () => {
+      expect(pathIsIgnored('/home/slop/pgdata/x/y.ts', entries)).to.eq(true);
+      expect(pathIsIgnored('pgdata/x.ts', entries)).to.eq(true);
+      expect(pathIsIgnored('/repo/pg/lib/a.ts', entries)).to.eq(true);
+    });
+
+    it('requires all parts of an absolute entry, in order', () => {
+      const abs = ['/home/slop/pgdata'];
+      expect(pathIsIgnored('/home/slop/pgdata/x.ts', abs)).to.eq(true);
+      // Not under that location — and no bare-name entry to match at depth.
+      expect(pathIsIgnored('/var/home/slop/pgdata/x.ts', abs)).to.eq(false);
+    });
+
+    it('matches segments exactly — no substring hits', () => {
+      expect(pathIsIgnored('/repo/pgdatav2/x.ts', entries)).to.eq(false);
+      expect(pathIsIgnored('/tmpdir/x.ts', entries)).to.eq(false);
+    });
+
+    it('ignores .git at any depth without an entry', () => {
+      expect(pathIsIgnored('/repo/.git/config', [''])).to.eq(true);
+      expect(pathIsIgnored('/repo/x/.git/hooks/f', entries)).to.eq(true);
+    });
+
+    it('tolerates trailing slashes and empty entries', () => {
+      expect(pathIsIgnored('/tmp/f.txt', ['/tmp/', ''])).to.eq(true);
     });
   });
 });

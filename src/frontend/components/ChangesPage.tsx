@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { url } from '../base-path';
 import { renderEditDiff } from './ChatMessage';
 
@@ -21,6 +21,14 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
   const [search, setSearch] = useState('');
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [expandedChange, setExpandedChange] = useState<number | null>(null);
+  const modsRef = useRef<HTMLDivElement>(null);
+
+  // Switching files swaps the diff content under the (persistent) scroll
+  // container — a long diff scrolled down left a short diff scrolled out of
+  // view. Reset to the top on every selection change.
+  useEffect(() => {
+    modsRef.current?.scrollTo(0, 0);
+  }, [selectedFile]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -95,7 +103,7 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
   }
 
   return (
-    <div className="changes-page">
+    <div className={`changes-page${selectedFile ? '' : ' no-selection'}`}>
       {/* File browser — capped height, scrollable */}
       <div className="changes-files">
         <div className="changes-files-bar">
@@ -122,7 +130,7 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
               <div
                 key={path}
                 className={`changes-file${selectedFile === path ? ' selected' : ''}`}
-                onClick={() => setSelectedFile(path)}
+                onClick={() => setSelectedFile(selectedFile === path ? null : path)}
               >
                 <span className="changes-file-name">{path}</span>
                 {count > 1 && <span className="changes-file-count">{count}</span>}
@@ -132,8 +140,10 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
         </div>
       </div>
 
-      {/* Modifications — fills remaining height, scrollable */}
-      <div className="changes-mods">
+      {/* Modifications — fills remaining height, scrollable. Hidden entirely
+          when no file is selected: the list then uses the full height. */}
+      {selectedFile && (
+      <div ref={modsRef} className="changes-mods">
         {selectedFile ? (
           fileChanges.length > 0 ? (
             fileChanges.map((c, i) => {
@@ -160,10 +170,11 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
         ) : (
           <div className="changes-empty changes-empty-detail">
             <div className="changes-empty-icon">📝</div>
-            <div>Select a file to view its changes</div>
+            <div>No changes for this file</div>
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };

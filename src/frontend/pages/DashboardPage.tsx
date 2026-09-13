@@ -733,7 +733,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         </div>
         <div className={`chat-wrapper${sessionState.externalActivity ? ' chat-external-activity' : ''}`}>
           {activeView === 'chat' && (
-            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} />
+            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={sessionState.sessionId} />
           )}
           {activeView === 'settings' && (
             <SettingsCard sseConnected={sseConnected} />
