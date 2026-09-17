@@ -618,7 +618,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
     }
   }, []);
 
-  const handleNewSession = useCallback(() => {
+  const handleNewSession = useCallback((personaId?: string | null) => {
     setCreatingSession(true);
     setSessionError(null);
     fetch(url('/api/new-session'), {
@@ -629,6 +629,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         sessionName: uiSessionName(),
         locale: navigator.language,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        ...(personaId ? { personaId } : {}),
       }),
     })
       .then(res => res.json())
@@ -729,6 +730,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
             onRestart={handleRestart}
             onRestartBackend={handleRestartBackend}
             onLogout={handleLogout}
+            persona={sessionState.persona}
           />
         </div>
         <div className={`chat-wrapper${sessionState.externalActivity ? ' chat-external-activity' : ''}`}>
@@ -793,7 +795,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         <div className="modal-body">
           <div style={{ color: '#f44336' }}>{sessionError}</div>
           <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
-            <button className="btn btn-primary" onClick={handleNewSession}>Try Again</button>
+            <button className="btn btn-primary" onClick={() => handleNewSession(null)}>Try Again</button>
             <button className="btn" onClick={() => setSessionError(null)}>Close</button>
           </div>
         </div>

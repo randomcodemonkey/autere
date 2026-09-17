@@ -217,6 +217,10 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
       renameSync(tmp, configPath);
       invalidateCache(configPath);
     }
+    // Reserve-context policy file for the pi-token-reserve extension
+    if ('reserveTokensPercent' in settings) {
+      writeReserveTokensConfig(user);
+    }
   } catch (err) {
     log.settings.error(`Failed to apply settings to pi env for user "${user}":`, err);
   }
@@ -243,6 +247,49 @@ export function getHistoryLimit(user: string): number {
   const n = typeof raw === 'number' ? raw : parseInt(raw, 10);
   if (!Number.isFinite(n)) return 200;
   return Math.min(500, Math.max(10, Math.floor(n)));
+}
+
+// ── Reserve context (compaction reserveTokens as % of the model's context
+//    window, consumed by the generic pi-token-reserve pi extension — see
+//    extras/pi-token-reserve. 0 = pi default of 16384 tokens.) ──
+
+export function getReserveTokensPercent(user: string): number {
+  const raw = getUserSetting(user, 'reserveTokensPercent', 0);
+  const n = typeof raw === 'number' ? raw : parseInt(raw, 10);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(90, Math.max(0, Math.floor(n)));
+}
+
+/**
+ * pi contextUsage annotated with the effective context window (total minus
+ * the reserve-% policy applied by the pi-token-reserve extension), so the
+ * UI can show usage against the usable context: "330K / 200K (1.0M)".
+ * Shared by every path that copies pi stats to the frontend (user-session
+ * fetch/broadcast sites + the routes.ts session-switch path).
+ */
+export function annotateContextUsage(user: string, cu: { tokens: number; contextWindow: number; percent: number }) {
+  const pct = getReserveTokensPercent(user);
+  const effectiveWindow = cu.contextWindow > 0 && pct > 0
+    ? cu.contextWindow - Math.floor((cu.contextWindow * pct) / 100)
+    : cu.contextWindow;
+  return { ...cu, effectiveWindow };
+}
+
+/**
+ * Write the reserve percent into the user's pi env for the pi-token-reserve
+ * extension to read. Called on every pi spawn and settings save; the
+ * extension mtime-caches the file, so rewriting it updates running pi
+ * processes without a restart.
+ */
+export function writeReserveTokensConfig(user: string): void {
+  try {
+    const envDir = ensurePiEnv(user);
+    const tmp = join(envDir, `.pi-token-reserve-config-tmp-${randomUUID()}`);
+    writeFileSync(tmp, JSON.stringify({ percent: getReserveTokensPercent(user) }), 'utf-8');
+    renameSync(tmp, join(envDir, 'pi-token-reserve-config.json'));
+  } catch (err) {
+    log.settings.error(`Failed to write pi-token-reserve-config.json for user "${user}":`, err);
+  }
 }
 
 // ── Image preview (what the chat model sees for attached images) ──
@@ -419,6 +466,8 @@ function getUserSettingsDefaults(user: string): UserSettings {
   defaults.sendImagesToChatModel = true;
   defaults.imageStreamFix = true;
 
+  defaults.reserveTokensPercent = 0;
+
   // Pi settings defaults
   defaults.enabledModels = readJsonCached(join(PI_DIR, 'settings.json'))?.enabledModels || [];
   defaults.packages = getEnabledPackages(user);
@@ -545,6 +594,12 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
         label: 'Chat history length',
         type: 'number',
         description: 'Messages kept in the chat view and replayed on connect (10-500). Applies after a backend restart.',
+      },
+      {
+        key: 'reserveTokensPercent',
+        label: 'Reserved context (%)',
+        type: 'number',
+        description: "This percentage of the current model's context window cannot be used (0-90; 0 = pi default of 16384 tokens) — usable context shrinks accordingly, so automatic compaction triggers earlier. Recalculated per model; applies to the running session without a pi restart.",
       },
       {
         key: 'editIgnorePaths',

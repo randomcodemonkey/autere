@@ -72,7 +72,8 @@ src/frontend/
     ChatMessage.tsx     # Message rendering: markdown, diffs, images, lightbox
     ZoomableImage.tsx   # Pinch-to-zoom/pan lightbox image (pointer events)
     Modal.tsx, Header.tsx, StatusCard.tsx, UsageCard.tsx, ExtensionsCard.tsx,
-    SessionModal.tsx, SettingsCard.tsx, ScheduledTasksCard.tsx, SortableList.tsx
+    SessionModal.tsx, SettingsCard.tsx, ScheduledTasksCard.tsx, SortableList.tsx,
+    Personas.tsx        # PersonaSection (Agent card) + PersonasSettingsSection
   hooks/useSSE.ts, useAuth.ts, useCardState.ts
   styles.scss          # Single global stylesheet (~3100 lines)
   types/index.ts       # Shared frontend types incl. SSEEventType
@@ -82,6 +83,16 @@ cypress/
   e2e/                 # Full-app tests (own isolated backend)
 extras/pi-images/      # pi extension: generate_image tool via 9router (symlinked
                        # from ~/.pi/agent/extensions/pi-images)
+extras/pi-token-reserve/ # pi extension: compaction reserveTokens as % of the model's
+                       # context window, applied live (symlinked into
+                       # ~/.pi/agent/extensions/pi-token-reserve; config written
+                       # per user env as pi-token-reserve-config.json)
+extras/pi-personas/    # pi extension: injects the session's bound persona into the
+                       # LLM context on every call (extras/ symlinked into
+                       # ~/.pi/agent/extensions/pi-personas; bindings written per
+                       # user env as persona-active.json, keyed by session file
+                       # name — covers session start, persona changes and
+                       # post-compaction; personas.ts stores the library)
 SKILL.md               # This file — canonical, in-repo
 ```
 

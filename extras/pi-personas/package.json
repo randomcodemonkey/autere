@@ -1,0 +1,12 @@
+{
+	"name": "pi-personas",
+	"version": "1.0.0",
+	"description": "Injects the session's bound agent persona into the LLM context",
+	"type": "module",
+	"main": "./index.ts",
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	}
+}

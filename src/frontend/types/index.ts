@@ -12,6 +12,8 @@ export interface SessionState {
   startTime: number;
   externalActivity: boolean;
   compacting: boolean;
+  /** Persona bound to the current session — null/undefined when none */
+  persona?: { id: string; name: string } | null;
   steerPending?: number;
   followUpPending?: number;
 }
@@ -27,6 +29,8 @@ export interface ContextUsage {
   tokens: number;
   contextWindow: number;
   percent: number;
+  /** Total minus the reserve-% policy (backend-computed); omitted when no reserve is set. */
+  effectiveWindow?: number;
 }
 
 export interface SessionStats {
@@ -117,6 +121,13 @@ export interface SettingSection {
   id: string;
   label: string;
   fields: SettingField[];
+}
+
+export interface Persona {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
 }
 
 export interface SessionSearchResult extends SessionInfo {

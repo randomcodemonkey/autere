@@ -708,7 +708,9 @@ describe('Dashboard Loading', () => {
 
     it('save button is visible', () => {
       openSettings();
-      cy.get('.settings-actions .btn-primary').should('contain', 'Save Settings');
+      // Floating save action only appears while there are unsaved changes
+      cy.get('input.settings-input').first().click().type('x');
+      cy.get('.settings-save-float .btn-primary').should('contain', 'Save Settings');
     });
 
     it('session badge opens the sessions modal', () => {

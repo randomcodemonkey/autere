@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Modal } from './Modal';
 import { url } from '../base-path';
-import type { SessionSearchResult } from '../types';
+import type { SessionSearchResult, Persona } from '../types';
 
 interface SessionModalProps {
   open: boolean;
@@ -14,7 +14,8 @@ interface SessionModalProps {
   isActive: boolean;
   onAbort: () => void;
   onAbortCompaction: () => void;
-  onNewSession: () => void;
+  /** Accepts the persona id chosen for the new session (null = none) */
+  onNewSession: (personaId: string | null) => void;
   onCompact: () => void;
   onSwitchSession: (sessionId: string) => void;
   /** True while a switch request is in flight — blocks further actions */
@@ -58,6 +59,8 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   const [nameInput, setNameInput] = useState(sessionName || '');
   const [nameSaving, setNameSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [personaId, setPersonaId] = useState('');
   const searchSeq = useRef(0);
 
   // Reset per open
@@ -65,7 +68,13 @@ export const SessionModal: React.FC<SessionModalProps> = ({
     if (open) {
       setQuery('');
       setNameInput(sessionName || '');
+      setPersonaId('');
       setLoaded(false);
+      // Persona choices for new sessions — only needed while the modal is open
+      fetch(url('/api/personas'))
+        .then((res) => res.json())
+        .then((data) => { if (data.success) setPersonas(data.data || []); })
+        .catch(() => {});
     }
   }, [open, sessionName]);
 
@@ -173,9 +182,26 @@ export const SessionModal: React.FC<SessionModalProps> = ({
           <button className="btn btn-compact" onClick={onCompact} disabled={compactLoading || compacting || statusType !== 'connected'}>
             {compacting ? '⏳ Compacting…' : compactLoading ? '⏳ Starting…' : '🗜 Compact Context'}
           </button>
-          <button className="btn btn-primary" onClick={onNewSession} disabled={switching || statusType === 'disconnected' || isActive}>
+          <button className="btn btn-primary" onClick={() => onNewSession(personaId || null)} disabled={switching || statusType === 'disconnected' || isActive}>
             ✨ New Session
           </button>
+
+          {personas.length > 0 && (
+            <div className="session-persona-row">
+              <label className="settings-label" htmlFor="session-persona-select">Persona for new session</label>
+              <select
+                id="session-persona-select"
+                className="settings-input"
+                value={personaId}
+                onChange={(e) => setPersonaId(e.target.value)}
+              >
+                <option value="">No persona</option>
+                {personas.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <input

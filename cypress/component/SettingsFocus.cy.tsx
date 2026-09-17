@@ -83,4 +83,29 @@ describe('SettingsCard focus retention', () => {
     cy.focused().should('have.class', 'sortable-list-input');
     cy.get('.sortable-list-item input').first().should('have.value', 'onex');
   });
+
+  it('shows the save button only while dirty, hides it after save', () => {
+    cy.mount(<Harness />);
+    cy.get('.settings-input').first().should('exist');
+    // Clean: no save button anywhere.
+    cy.get('.settings-save-float').should('not.exist');
+    // Any change: fixed save action appears.
+    cy.get('.settings-input').first().click().type('hello');
+    cy.get('.settings-save-float').should('exist');
+    // Saving clears the dirty state — button disappears again.
+    cy.intercept('POST', '**/api/settings', { success: true }).as('save');
+    cy.get('.settings-save-float button').click();
+    cy.wait('@save');
+    cy.get('.settings-save-float').should('not.exist');
+    cy.get('.settings-saved').should('contain', 'Restarting');
+  });
+
+  it('tells the user when the restart is deferred to turn end', () => {
+    cy.mount(<Harness />);
+    cy.get('.settings-input').first().should('exist').click().type('hello');
+    cy.intercept('POST', '**/api/settings', { success: true, deferred: true }).as('save');
+    cy.get('.settings-save-float button').click();
+    cy.wait('@save');
+    cy.get('.settings-saved').should('contain', 'restarts when the current turn ends');
+  });
 });

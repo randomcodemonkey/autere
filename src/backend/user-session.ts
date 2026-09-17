@@ -16,8 +16,9 @@ import { getLastSession } from './auth.js';
 import { ensurePiEnv } from './pi-env.js';
 import { readSessions } from './sessions.js';
 import type { SessionInfo } from './types.js';
-import { getEditIgnorePaths, getHistoryLimit, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost } from './user-settings.js';
+import { getEditIgnorePaths, getHistoryLimit, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost, writeReserveTokensConfig, annotateContextUsage } from './user-settings.js';
 import { registerSessionPeer, isSessionActiveElsewhere, deliverToPeers } from './session-peers.js';
+import { getActivePersona } from './personas.js';
 import {
   isRmCommand,
   extractRmPaths,
@@ -63,6 +64,8 @@ function createInitialState(): UserSessionState {
       connected: false,
       startTime: Date.now(),
       compacting: false,
+      /** Persona bound to the current session ({ id, name }) — null when none */
+      persona: null,
       // Set by /api/abort-compaction, consumed by the late compact()
       // rejection: user-initiated aborts surface as a chat notice, not an
       // error popup (shared per-session, so every client is covered).
@@ -182,6 +185,9 @@ export class UserSession {
     // extension state) seeded from the global ~/.pi/agent as defaults.
     const piEnvDir = ensurePiEnv(envUser || user);
     this.piEnvDir = piEnvDir;
+    // Reserve-context policy file for the pi-token-reserve extension — kept
+    // current on every spawn so the extension always matches the setting.
+    writeReserveTokensConfig(envUser || user);
     // Resume this token's last session if known (unless disabled, e.g. e2e tests)
     const args = [...(rpcOptions.args || [])];
     // Track whether this process resumes an existing session — if not, pi
@@ -230,6 +236,10 @@ export class UserSession {
   onIdle(cb: () => void) {
     this._onIdle = cb;
   }
+
+  /** Settable by ProcessManager: fired when a turn ends (agent_end/
+   * agent_settled) — used for deferred settings restarts. */
+  onTurnEnd: (() => void) | null = null;
 
   /** Mark activity and reset idle timer */
   touch() {
@@ -650,6 +660,7 @@ export class UserSession {
       const state = await this.rpc.getState();
       if (state.sessionId) this.state.sessionState.sessionId = state.sessionId;
       if (state.sessionFile) this.state.sessionState.sessionFile = state.sessionFile;
+      this.state.sessionState.persona = getActivePersona(this.user, state.sessionFile);
       this.state.sessionState.sessionName = state.sessionName || null;
       this.state.sessionState.isStreaming = state.isStreaming;
       this.state.sessionState.compacting = state.isCompacting;
@@ -669,7 +680,7 @@ export class UserSession {
         // Seed the cumulative cost from pi (covers pi-catalog-priced history);
         // new messages accumulate on top (see handleMessageEnd/handleToolEnd).
         this.setCostTotal(stats.cost || 0);
-        if (stats.contextUsage) this.state.sessionStats.contextUsage = stats.contextUsage;
+        if (stats.contextUsage) this.state.sessionStats.contextUsage = annotateContextUsage(this.user, stats.contextUsage);
       } catch (err) {
         log.userSession.error('fetchInitialState: failed to get session stats:', err);
       }
@@ -755,6 +766,9 @@ export class UserSession {
             if (e.streaming) e.streaming = false;
           }
           this.broadcastToSession(s.sessionState.sessionId, { type: 'stream_history', sessionId: s.sessionState.sessionId, data: this.historyFor(s.sessionState.sessionId).slice(-this.historyLimit) });
+          // Turn is over — a deferred settings restart (queued while this
+          // turn was running) may now safely replace the pi process.
+          this.onTurnEnd?.();
           break;
         case 'queue_update':
           // pi reports its actual steering/follow-up queues — the
@@ -837,7 +851,7 @@ export class UserSession {
           // Context shrank — refresh usage stats immediately (pi updates them
           // at compaction, we otherwise only re-fetch on message_end).
           this.rpc.getSessionStats().then(stats => {
-            if (stats.contextUsage) s.sessionStats.contextUsage = stats.contextUsage;
+            if (stats.contextUsage) s.sessionStats.contextUsage = annotateContextUsage(this.user, stats.contextUsage);
             this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
           }).catch(() => {});
           break;
@@ -1156,7 +1170,7 @@ export class UserSession {
     this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
 
     this.rpc.getSessionStats().then(stats => {
-      if (stats.contextUsage) s.sessionStats.contextUsage = stats.contextUsage;
+      if (stats.contextUsage) s.sessionStats.contextUsage = annotateContextUsage(this.user, stats.contextUsage);
       this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
     }).catch((err) => { log.userSession.forSession(s.sessionState.sessionId).error('handleMessageEnd: failed to get session stats:', err); });
   }

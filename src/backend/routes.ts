@@ -14,8 +14,11 @@ import { getUser, getUserRole, hasRole, checkAuth, requireAuth, parseCookies, ge
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filterScopedModels, autoSessionName } from './utils.js';
 import { getPiEnvDir } from './pi-env.js';
+import { listPersonas, savePersonas, validatePersona, getActivePersona, setActivePersona } from './personas.js';
+import { getRouterConfig } from './image-models.js';
 import { extensionsState } from './state.js';
 import { getTokenPricing, getRatesForModel, computeTokenCost } from './user-settings.js';
+import { pathIsIgnored } from '../shared/edit-ignore.js';
 import { log } from './logger.js';
 import type { SessionInfo } from './types.js';
 
@@ -32,7 +35,7 @@ function activeToolsSnapshot(session: { state: { activeTools: Map<string, any> }
 }
 
 import { findSession } from './sessions.js';
-import { getUserSetting, getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality } from './user-settings.js';
+import { getUserSetting, getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths, annotateContextUsage } from './user-settings.js';
 import {
   Scheduler,
   listTasks, getTask, saveTask, deleteTask, validateTaskInput,
@@ -581,7 +584,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         const entries = content.split('\n').filter(Boolean).map((line) => {
           try { return JSON.parse(line); } catch { return null; }
         }).filter(Boolean);
-        sendJSON(res, { success: true, data: entries });
+        // Retroactive ignore filtering: rows written before an entry was
+        // added (or before segment matching was fixed) must not resurface.
+        const ignores = getEditIgnorePaths(user);
+        sendJSON(res, { success: true, data: entries.filter((e: any) => !e?.path || !pathIsIgnored(e.path, ignores)) });
       } catch (err: any) {
         sendJSON(res, { success: false, error: err.message }, 500);
       }
@@ -652,6 +658,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           sessionState.sessionId = sess.id;
           sessionState.sessionFile = sess.sessionFile;
           sessionState.sessionName = sess.sessionName;
+          // The persona binding is keyed by session file — resolve it for the
+          // session being viewed (null when none is bound).
+          sessionState.persona = getActivePersona(user, sess.sessionFile);
           // Pending queue counts (and compacting) live in pi for the active
           // session — zeroing them when the switch is a no-op (alreadyActive,
           // e.g. the reload race that re-switches to the same session) would
@@ -684,7 +693,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           // Fetch stats AFTER switch so contextUsage reflects the new session
           try {
             const rpcStats = await rpc.getSessionStats();
-            if (rpcStats.contextUsage) sessionStats.contextUsage = rpcStats.contextUsage;
+            if (rpcStats.contextUsage) sessionStats.contextUsage = annotateContextUsage(user, rpcStats.contextUsage);
             if (rpcStats.cost) session.setCostTotal(rpcStats.cost);
             if (!sessionStats.cost) {
               const pricing = getTokenPricing(user);
@@ -715,6 +724,23 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
 
     if (url.pathname === '/api/new-session' && req.method === 'POST') {
       try {
+        // Body is optional (tests may post without JSON). Read ONCE — a
+        // second readBody on a consumed stream would hang forever.
+        let body: any = {};
+        try { body = await readBody(req); } catch {}
+
+        // Persona for the new session — validated BEFORE creating anything,
+        // so an invalid id fails cleanly without leaving a stray session.
+        const personaId = typeof body?.personaId === 'string' && body.personaId ? body.personaId : '';
+        let persona: import('./personas.js').Persona | null = null;
+        if (personaId) {
+          persona = listPersonas(user).find((p) => p.id === personaId) || null;
+          if (!persona) {
+            sendJSON(res, { success: false, error: `Unknown persona: ${personaId}` }, 400);
+            return;
+          }
+        }
+
         session.state.newSessionCreating = true;
 
         // If pi is mid-turn, new_session gets CANCELLED by pi (it refuses to
@@ -747,7 +773,6 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         if (!state.sessionName) {
           let sessionName: string | undefined;
           try {
-            const body = await readBody(req);
             if (body && typeof body.sessionName === 'string' && body.sessionName.trim()) {
               sessionName = body.sessionName.trim();
             }
@@ -798,6 +823,11 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           sessionState.model = { provider: state.model.provider, id: state.model.id, name: state.model.name || state.model.id };
         }
         setLastSession(user, token, state.sessionFile);
+
+        // Bind the chosen persona (if any) to the new session — the
+        // pi-personas extension injects it into the LLM context on every call.
+        setActivePersona(user, state.sessionFile, persona);
+        sessionState.persona = persona ? { id: persona.id, name: persona.name } : null;
 
         // 4. Inject the new session into availableSessions so switch-by-id can find it.
         //    The session file doesn't exist on disk yet — pi only writes it on first message.
@@ -874,6 +904,156 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       return;
     }
 
+    if (url.pathname === '/api/set-persona' && req.method === 'POST') {
+      try {
+        const { personaId } = await readBody(req);
+        let persona: import('./personas.js').Persona | null = null;
+        if (personaId) {
+          persona = listPersonas(user).find((p) => p.id === personaId) || null;
+          if (!persona) {
+            sendJSON(res, { success: false, error: 'Unknown persona' }, 400);
+            return;
+          }
+        }
+        if (!sessionState.sessionFile) {
+          sendJSON(res, { success: false, error: 'No active session' }, 400);
+          return;
+        }
+        setActivePersona(user, sessionState.sessionFile, persona);
+        sessionState.persona = persona ? { id: persona.id, name: persona.name } : null;
+        session.broadcastToSession(sessionState.sessionId, { type: 'status', data: { ...sessionState } });
+        sendJSON(res, { success: true, data: { persona: sessionState.persona } });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to set persona: ${err}` }, 500);
+      }
+      return;
+    }
+
+    // ── Personas (library CRUD + LLM-assisted prompt generation) ──
+
+    if (url.pathname === '/api/personas' && req.method === 'GET') {
+      sendJSON(res, { success: true, data: listPersonas(user) });
+      return;
+    }
+
+    if (url.pathname === '/api/personas' && req.method === 'POST') {
+      try {
+        const input = await readBody(req);
+        const validationError = validatePersona(input);
+        if (validationError) {
+          sendJSON(res, { success: false, error: validationError }, 400);
+          return;
+        }
+        const personas = listPersonas(user);
+        const saved: import('./personas.js').Persona = {
+          id: typeof input.id === 'string' && input.id ? input.id : randomUUID(),
+          name: input.name.trim(),
+          description: typeof input.description === 'string' ? input.description.trim() : '',
+          prompt: input.prompt.trim(),
+        };
+        const idx = personas.findIndex((p) => p.id === saved.id);
+        if (idx >= 0) personas[idx] = saved; else personas.push(saved);
+        savePersonas(user, personas);
+        sendJSON(res, { success: true, data: saved });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to save persona: ${err}` }, 500);
+      }
+      return;
+    }
+
+    if (url.pathname === '/api/personas/delete' && req.method === 'POST') {
+      try {
+        const { id } = await readBody(req);
+        const personas = listPersonas(user);
+        const next = personas.filter((p) => p.id !== id);
+        if (next.length === personas.length) {
+          sendJSON(res, { success: false, error: 'Persona not found' }, 404);
+          return;
+        }
+        savePersonas(user, next);
+        sendJSON(res, { success: true });
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to delete persona: ${err}` }, 500);
+      }
+      return;
+    }
+
+    // Generate a persona prompt from the user's notes using the CURRENT
+    // session's model via 9router (OpenAI-compatible chat completions).
+    if (url.pathname === '/api/personas/generate' && req.method === 'POST') {
+      try {
+        const { text } = await readBody(req);
+        if (!text || typeof text !== 'string' || !text.trim()) {
+          sendJSON(res, { success: false, error: 'text is required' }, 400);
+          return;
+        }
+        const model = sessionState.model?.id;
+        if (!model) {
+          sendJSON(res, { success: false, error: 'No model selected' }, 400);
+          return;
+        }
+        // Per-user env config first (the settings UI writes there), master as fallback
+        let routerConfig = getRouterConfig();
+        try {
+          const envConfig = JSON.parse(readFileSync(join(getPiEnvDir(user), '9router-config.json'), 'utf-8'));
+          if (envConfig?.baseUrl) {
+            routerConfig = { baseUrl: String(envConfig.baseUrl).replace(/\/+$/, ''), apiKey: String(envConfig.apiKey || '') };
+          }
+        } catch {}
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 120_000);
+        try {
+          const llmRes = await fetch(`${routerConfig.baseUrl}/v1/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(routerConfig.apiKey ? { Authorization: `Bearer ${routerConfig.apiKey}` } : {}),
+            },
+            body: JSON.stringify({
+              model,
+              messages: [{
+                role: 'user',
+                content: `Turn the notes below into a persona system prompt for an AI coding agent: a clear, self-contained, imperative description of the agent's role, tone and behavior. Output ONLY the persona prompt text — no commentary, no markdown fences.\n\nNotes:\n${text.trim()}`,
+              }],
+            }),
+            signal: controller.signal,
+          });
+          if (!llmRes.ok) throw new Error(`HTTP ${llmRes.status}`);
+          // 9router may return SSE-flavored bodies even without stream:true —
+          // a plain JSON object followed by "data: [DONE]", padding whitespace,
+          // or real SSE data chunks. Parse leniently: exact JSON, then SSE
+          // chunks, then the largest {...} region.
+          const raw = await llmRes.text();
+          const contentFrom = (obj: any) => obj?.choices?.[0]?.delta?.content ?? obj?.choices?.[0]?.message?.content;
+          let content: any = null;
+          try {
+            content = contentFrom(JSON.parse(raw.trim()));
+          } catch {
+            for (const line of raw.split('\n')) {
+              const t = line.trim();
+              if (!t.startsWith('data:') || t === 'data: [DONE]') continue;
+              try {
+                const piece = contentFrom(JSON.parse(t.slice(5).trim()));
+                if (typeof piece === 'string') content = (content || '') + piece;
+              } catch { /* skip unparseable chunk */ }
+            }
+            if (!content) {
+              const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
+              if (s >= 0 && e > s) content = contentFrom(JSON.parse(raw.slice(s, e + 1)));
+            }
+          }
+          const prompt = typeof content === 'string' ? content.trim() : '';
+          if (!prompt) throw new Error('Empty response from model');
+          sendJSON(res, { success: true, data: { prompt } });
+        } finally {
+          clearTimeout(timeout);
+        }
+      } catch (err) {
+        sendJSON(res, { success: false, error: `Failed to generate persona prompt: ${err}` }, 500);
+      }
+      return;
+    }
+
     if (url.pathname === '/api/settings/schema' && req.method === 'GET') {
       const schema = await getUserSettingsSchema(user);
       sendJSON(res, { success: true, data: schema });
@@ -895,11 +1075,27 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
             return;
           }
           // Save user settings
+          const prev = getAllUserSettings(user);
           saveUserSettings(user, settings);
-          // Restart the pi process for this auth session
-          await pm.terminate(token);
-          session = await pm.getOrCreate(token, user);
-          sendJSON(res, { success: true });
+          // Reserve % is applied live by the pi-token-reserve extension (per
+          // model, no restart needed) — skip the restart when it's the only
+          // change, so the running session is not interrupted.
+          const onlyReservePercent = Object.keys(settings).every(
+            (k) => k === 'reserveTokensPercent' || prev[k] === (settings as any)[k]
+          );
+          // Restart the pi process so it picks the settings up — but never
+          // kill an active turn: while streaming/compacting, queue a deferred
+          // restart that ProcessManager applies at the next turn end.
+          if (onlyReservePercent) {
+            sendJSON(res, { success: true });
+          } else if (session.state.sessionState.isStreaming || session.state.sessionState.compacting) {
+            pm.queueRestart(token);
+            sendJSON(res, { success: true, deferred: true });
+          } else {
+            await pm.terminate(token);
+            session = await pm.getOrCreate(token, user);
+            sendJSON(res, { success: true });
+          }
         }
       } catch (err) {
         sendJSON(res, { success: false, error: `Failed to save settings: ${err}` }, 500);

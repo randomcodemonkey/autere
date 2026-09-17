@@ -92,6 +92,8 @@ export interface SessionStats {
     tokens: number;
     contextWindow: number;
     percent: number;
+    /** Total minus the reserve-% policy (pi-token-reserve extension); omitted when no reserve is set. */
+    effectiveWindow?: number;
   } | null;
 }
 

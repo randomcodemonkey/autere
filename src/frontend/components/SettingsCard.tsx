@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SortableList } from './SortableList';
+import { PersonasSettingsSection } from './Personas';
 import { url } from '../base-path';
 import type { SettingSection, SettingField } from '../types';
 
@@ -25,14 +26,17 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState<true | 'deferred' | null>(null);
   const [availablePackages, setAvailablePackages] = useState<string[]>([]);
   const prevSseConnectedRef = useRef(sseConnected);
+  // Settings as loaded / last saved — the baseline the floating Save button
+  // compares against (shown only while something actually differs).
+  const baselineRef = useRef('{}');
 
   // Reset saved state when SSE reconnects after backend restart
   useEffect(() => {
     if (saved && !prevSseConnectedRef.current && sseConnected) {
-      setSaved(false);
+      setSaved(null);
     }
     prevSseConnectedRef.current = sseConnected;
   }, [sseConnected, saved]);
@@ -45,7 +49,10 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
     ]).then(([schemaRes, settingsRes, pkgsRes]) => {
       if (pkgsRes?.success) setAvailablePackages(pkgsRes.data.available || []);
       if (schemaRes.success) setSchema(schemaRes.data);
-      if (settingsRes.success) setSettings(settingsRes.data);
+      if (settingsRes.success) {
+        setSettings(settingsRes.data);
+        baselineRef.current = JSON.stringify(settingsRes.data);
+      }
       setLoading(false);
     }).catch(() => {
       setError('Failed to load settings');
@@ -55,7 +62,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
 
   const handleChange = useCallback((key: string, value: any) => {
     setSettings(prev => ({ ...prev, [key]: value }));
-    setSaved(false);
+    setSaved(null);
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -69,7 +76,8 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       });
       const data = await res.json();
       if (data.success) {
-        setSaved(true);
+        baselineRef.current = JSON.stringify(settings);
+        setSaved(data.deferred ? 'deferred' : true);
       } else {
         setError(data.error || 'Failed to save settings');
       }
@@ -199,6 +207,8 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
     );
   };
 
+  const dirty = JSON.stringify(settings) !== baselineRef.current;
+
   return (
     <div className="card settings-card">
       <div className="card-header">
@@ -206,7 +216,13 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       </div>
 
       {error && <div className="settings-error">{error}</div>}
-      {saved && <div className="settings-saved">Settings saved. Restarting…</div>}
+      {saved && (
+        <div className="settings-saved">
+          {saved === 'deferred'
+            ? 'Settings saved — the pi process restarts when the current turn ends.'
+            : 'Settings saved. Restarting…'}
+        </div>
+      )}
 
       {loading ? (
         <div className="settings-loading">Loading settings…</div>
@@ -223,13 +239,19 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
                 </div>
               </div>
             ))}
+            <PersonasSettingsSection />
           </div>
 
-          <div className="settings-actions">
-            <button className="btn btn-primary" onClick={handleSave} disabled={saving || saved}>
-              {saving ? 'Saving…' : saved ? 'Saved' : 'Save Settings'}
-            </button>
-          </div>
+          {/* Floating save action: only while there are unsaved changes —
+              fixed position keeps it visible no matter how far the page is
+              scrolled (the in-flow button at the page end was easy to miss). */}
+          {dirty && !loading && (
+            <div className="settings-save-float">
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving…' : 'Save Settings'}
+              </button>
+            </div>
+          )}
         </>
       )}
     </div>

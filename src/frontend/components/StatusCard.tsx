@@ -18,6 +18,8 @@ interface StatusCardProps {
   models: AvailableModel[];
   activeModelId: string | null;
   onModelsFetched: (models: AvailableModel[]) => void;
+  /** Persona bound to the active session */
+  persona: { id: string; name: string } | null | undefined;
   // System / user
   username: string | null;
   userRole: string | null;
@@ -68,6 +70,7 @@ export const StatusCard: React.FC<StatusCardProps> = ({
   models,
   activeModelId,
   onModelsFetched,
+  persona,
   username,
   userRole,
   restarting,
@@ -117,6 +120,7 @@ export const StatusCard: React.FC<StatusCardProps> = ({
         requestCount={requestCount}
         stats={stats}
         extensions={extensions}
+        persona={persona}
       />
 
       {/* User / System */}

@@ -21,6 +21,15 @@ export class ProcessManager {
   private sessions = new Map<string, UserSession>();
   private options: ProcessManagerOptions;
   private defaultIdleTimeoutMs: number;
+  // Tokens with a deferred pi restart (settings saved while a turn was
+  // running). Lives here — not on the UserSession — so it survives the
+  // session object swap the restart itself performs.
+  private pendingRestarts = new Set<string>();
+
+  /** Queue a pi restart for a token; applied when its current turn ends. */
+  queueRestart(token: string): void {
+    this.pendingRestarts.add(token);
+  }
 
   constructor(options: ProcessManagerOptions = {}) {
     this.options = options;
@@ -52,6 +61,17 @@ export class ProcessManager {
       log.processMgr.info(`Terminating idle session for token "${token.slice(0, 8)}…"`);
       this.terminate(token);
     });
+
+    // Deferred settings restart: applied when the current turn ends —
+    // restarting mid-turn would kill an active session. Fires on the first
+    // turn end after queueing, BEFORE any new turn can start.
+    session.onTurnEnd = () => {
+      if (!this.pendingRestarts.delete(token)) return;
+      log.processMgr.info(`Applying deferred settings restart for token "${token.slice(0, 8)}…"`);
+      this.terminate(token)
+        .then(() => this.getOrCreate(token, user))
+        .catch((err) => log.processMgr.error(`Deferred settings restart failed: ${err}`));
+    };
 
     this.sessions.set(token, session);
 

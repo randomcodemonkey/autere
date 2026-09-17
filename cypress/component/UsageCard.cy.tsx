@@ -86,3 +86,33 @@ describe('UsageCard', () => {
     cy.get('.card').should('have.class', 'collapsed');
   });
 });
+
+describe('UsageCard reserve-% effective window', () => {
+  const stats: SessionStats = {
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    cost: 0,
+    contextUsage: { tokens: 330000, contextWindow: 1000000, percent: 33, effectiveWindow: 200000 },
+  };
+
+  it('shows context as effective (total) and % against the effective window', () => {
+    cy.mount(<UsageCard messageCount={0} requestCount={0} stats={stats} />);
+    cy.contains('Context').parent().should('contain', '330.0K / 200.0K (1.0M)');
+    // 330k of the 200k usable window = full bar (capped at 100%)
+    cy.get('.progress-fill').then(($el) => {
+      const w = parseFloat($el.css('width'));
+      const max = $el.parent().width() || 1;
+      expect(w / max).to.be.closeTo(1, 0.01);
+    });
+  });
+
+  it('falls back to plain display without effectiveWindow', () => {
+    const plain: SessionStats = {
+      tokens: { input: 1000, output: 500, cacheRead: 200, cacheWrite: 100 },
+      cost: 0.0234,
+      contextUsage: { tokens: 15000, contextWindow: 200000, percent: 7.5 },
+    };
+    cy.mount(<UsageCard messageCount={0} requestCount={0} stats={plain} />);
+    cy.contains('Context').parent().should('contain', '15.0K / 200.0K');
+    cy.contains('Context').parent().should('not.contain', '(');
+  });
+});

@@ -1,5 +1,6 @@
 import React from 'react';
 import { useCardState } from '../hooks/useCardState';
+import { PersonaSection } from './Personas';
 import { ExtensionsCard } from './ExtensionsCard';
 import { UsageCard } from './UsageCard';
 import type { AvailableModel, ExtensionInfo, SessionStats } from '../types';
@@ -12,6 +13,8 @@ interface AgentCardProps {
   requestCount: number;
   stats: SessionStats;
   extensions: ExtensionInfo[];
+  /** Persona bound to the active session */
+  persona: { id: string; name: string } | null | undefined;
 }
 
 /**
@@ -23,6 +26,7 @@ interface AgentCardProps {
 export const AgentCard: React.FC<AgentCardProps> = ({
   messageCount, requestCount, stats,
   extensions,
+  persona,
 }) => {
   const { collapsed, toggle } = useCardState('agent');
 
@@ -35,6 +39,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         </button>
       </div>
 
+      <PersonaSection persona={persona} />
       <ExtensionsCard extensions={extensions} />
       <UsageCard messageCount={messageCount} requestCount={requestCount} stats={stats} />
     </div>

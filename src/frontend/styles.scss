@@ -2484,6 +2484,21 @@ body {
   justify-content: flex-end;
 }
 
+// Floating save action: fixed to the viewport bottom while the form is
+// dirty — visible without scrolling to the page end.
+.settings-save-float {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 0.5rem 0.75rem;
+  background: rgba(26, 26, 26, 0.95);
+  border: 1px solid #333;
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+}
+
 // -- Sortable List ----------------------------------------------------------
 
 .sortable-list {
@@ -3249,10 +3264,13 @@ textarea.settings-input {
 }
 
 /* No file selected: the mods pane is hidden — the file list takes the full
-   available height instead of its 35vh cap. */
+   available height instead of its 35vh cap. min-height: 0 lets the pane be
+   CAPPED at that height (instead of growing to content height, which made
+   the inner list unable to scroll — the page just clipped the overflow). */
 .changes-page.no-selection .changes-files {
   max-height: none;
   flex: 1;
+  min-height: 0;
   border-bottom: none;
 }
 
@@ -3454,4 +3472,91 @@ textarea.settings-input {
 
 .changes-error {
   color: #f87171;
+}
+
+// ── Personas ────────────────────────────────────────────────────────────────
+
+.persona-agent-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.persona-new-btn {
+  width: auto;
+  padding: 0.4rem 0.9rem;
+  margin-bottom: 0.75rem;
+}
+
+.persona-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+
+.persona-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #333;
+  border-radius: 0.4rem;
+  font-size: 0.8125rem;
+}
+
+.persona-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.persona-name {
+  font-weight: 600;
+  color: #ddd;
+}
+
+.persona-description {
+  font-size: 0.7rem;
+  color: #888;
+  overflow-wrap: anywhere;
+}
+
+.persona-item-btn {
+  width: auto;
+  padding: 0.4rem 0.9rem;
+  flex-shrink: 0;
+}
+
+.persona-generate-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.5rem 0;
+
+  .btn {
+    width: auto;
+    white-space: nowrap;
+  }
+}
+
+.persona-details-description {
+  margin-bottom: 0.6rem;
+}
+
+.persona-details-prompt {
+  width: 100%;
+  margin-bottom: 0.6rem;
+}
+
+.session-persona-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.modal-persona {
+  max-width: 560px;
 }

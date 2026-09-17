@@ -1,0 +1,12 @@
+{
+	"name": "pi-token-reserve",
+	"version": "1.0.0",
+	"description": "Percentage-based compaction context reserve for pi",
+	"type": "module",
+	"main": "./index.ts",
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	}
+}

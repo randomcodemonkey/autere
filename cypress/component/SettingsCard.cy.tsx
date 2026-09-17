@@ -44,3 +44,61 @@ describe('SettingsCard select fields', () => {
     cy.get('select.settings-input').should('have.value', 'model-b');
   });
 });
+
+describe('SettingsCard number fields', () => {
+  const numberSchema = [
+    {
+      id: 'chat',
+      label: 'Chat',
+      fields: [
+        { key: 'reserveTokensPercent', label: 'Reserved context (%)', type: 'number' as const,
+          description: 'Compaction reserve as % of context window (0-90)' },
+      ],
+    },
+  ];
+
+  function stubFetchWithSave(settings: Record<string, any>, schemaData: any) {
+    cy.window({ log: false }).then((win) => {
+      win.fetch = (input: any, init: any) => {
+        const u = String(input);
+        let data: any = { success: true };
+        if (u.includes('/api/settings/schema')) data = { success: true, data: schemaData };
+        else if (u.includes('/api/settings') && init?.method === 'POST') data = { success: true };
+        else if (u.includes('/api/settings')) data = { success: true, data: settings };
+        else if (u.includes('/api/extensions/packages')) data = { success: true, data: { available: [] } };
+        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
+      };
+    });
+  }
+
+  it('renders a number input with the stored value', () => {
+    stubFetchWithSave({ reserveTokensPercent: 25 }, numberSchema);
+    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.get('input[type="number"].settings-input').should('have.value', '25');
+  });
+
+  it('saves the edited percentage', () => {
+    stubFetchWithSave({ reserveTokensPercent: 0 }, numberSchema);
+    let savedBody: any = null;
+    cy.window({ log: false }).then((win) => {
+      win.fetch = (input: any, init: any) => {
+        const u = String(input);
+        let data: any = { success: true };
+        if (u.includes('/api/settings/schema')) data = { success: true, data: numberSchema };
+        else if (u.includes('/api/settings') && init?.method === 'POST') {
+          savedBody = JSON.parse(init.body);
+          data = { success: true };
+        }
+        else if (u.includes('/api/settings')) data = { success: true, data: { reserveTokensPercent: 0 } };
+        else if (u.includes('/api/extensions/packages')) data = { success: true, data: { available: [] } };
+        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
+      };
+    });
+    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.get('input[type="number"].settings-input').clear().type('30');
+    cy.contains('button', 'Save').click();
+    cy.wrap(null).should(() => {
+      expect(savedBody).to.deep.equal({ reserveTokensPercent: '30' });
+    });
+  });
+});

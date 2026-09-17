@@ -19,8 +19,13 @@ export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount
   const [showCostInfo, setShowCostInfo] = useState(false);
 
   const ctxTokens = stats.contextUsage?.tokens || 0;
-  const ctxWindow = stats.contextUsage?.contextWindow || 0;
-  const ctxPct = stats.contextUsage?.percent || 0;
+  const ctxTotal = stats.contextUsage?.contextWindow || 0;
+  // With a reserve-% policy the usable window is smaller than the model's —
+  // usage and percentages are shown against the effective window.
+  const ctxWindow = stats.contextUsage?.effectiveWindow || ctxTotal;
+  const ctxPct = ctxTotal > 0 && ctxWindow !== ctxTotal
+    ? Math.min(100, (ctxTokens / ctxWindow) * 100)
+    : (stats.contextUsage?.percent || 0);
 
   return (
     <div className={`card${collapsed ? ' collapsed' : ''}`}>
@@ -79,7 +84,9 @@ export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount
         <div>
           <div className="stat-label">Context</div>
           <div className="context-info">
-            {ctxWindow > 0 ? `${formatNumber(ctxTokens)} / ${formatNumber(ctxWindow)}` : '-'}
+            {ctxTotal > 0
+              ? `${formatNumber(ctxTokens)} / ${formatNumber(ctxWindow)}${ctxWindow !== ctxTotal ? ` (${formatNumber(ctxTotal)})` : ''}`
+              : '-'}
           </div>
         </div>
       </div>
