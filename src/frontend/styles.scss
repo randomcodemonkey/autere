@@ -1391,8 +1391,11 @@ body {
   border-bottom: 1px solid #333;
 }
 
+/* spans the scroll width (widest line or container, whichever is larger) so
+   row backgrounds always reach the end of the scrollable area */
 .edit-diff-content {
-  /* Container for the diff lines */
+  width: max-content;
+  min-width: 100%;
 }
 
 .edit-diff.stream-error {
@@ -3555,6 +3558,7 @@ textarea.settings-input {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  margin-top: 0.5rem;
 }
 
 .modal-persona {

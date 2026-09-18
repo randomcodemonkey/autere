@@ -87,12 +87,23 @@ extras/pi-token-reserve/ # pi extension: compaction reserveTokens as % of the mo
                        # context window, applied live (symlinked into
                        # ~/.pi/agent/extensions/pi-token-reserve; config written
                        # per user env as pi-token-reserve-config.json)
-extras/pi-personas/    # pi extension: injects the session's bound persona into the
-                       # LLM context on every call (extras/ symlinked into
-                       # ~/.pi/agent/extensions/pi-personas; bindings written per
-                       # user env as persona-active.json, keyed by session file
-                       # name — covers session start, persona changes and
-                       # post-compaction; personas.ts stores the library)
+extras/pi-personas/    # pi extension: puts the session's bound persona into the SYSTEM
+                       # PROMPT every turn (before_agent_start) — no fake user
+                       # messages, immune to process restarts; emits a visible
+                       # marker on transitions (new session / changed from X /
+                       # re-applied after compaction / removed) (extras/
+                       # symlinked into ~/.pi/agent/extensions/pi-personas;
+                       # bindings written per user env as persona-active.json,
+                       # keyed by session file name; personas.ts stores the
+                       # library)
+extras/pi-dedup/       # pi extension: elides exact-duplicate tool results
+                       # (tool_result patch → pointer to the in-context first
+                       # occurrence; append-time only so prompt caching keeps
+                       # working; session_compact resets anchors). Savings
+                       # approx 4 chars/token written per session to
+                       # dedup-stats.json in the pi env; backend handler in
+                       # extension-handlers.ts aggregates them into the
+                       # extension's details in the dashboard.
 SKILL.md               # This file — canonical, in-repo
 ```
 

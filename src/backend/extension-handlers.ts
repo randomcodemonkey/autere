@@ -5,7 +5,7 @@
  * Handlers are registered by name and matched against discovered extensions.
  */
 
-import { existsSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import type { ExtensionHandler, ExtensionInfo, ExtensionSection } from './types.js';
 import { PI_DIR } from './constants.js';
@@ -336,6 +336,60 @@ function register(handler: ExtensionHandler) {
 register(nineRouterHandler);
 register(memoryHandler);
 register(piImagesHandler);
+
+// ── pi-dedup handler ──
+
+/** Aggregate dedup-stats.json from the master agent dir and every pi env. */
+function dedupStats(): { sessions: number; blocks: number; chars: number; tokens: number } {
+	const candidates = [join(PI_DIR, 'dedup-stats.json')];
+	try {
+		for (const user of readdirSync(PI_ENVS_DIR)) {
+			candidates.push(join(PI_ENVS_DIR, user, 'dedup-stats.json'));
+		}
+	} catch {
+		// no envs dir
+	}
+	const totals = { sessions: 0, blocks: 0, chars: 0, tokens: 0 };
+	for (const path of candidates) {
+		try {
+			const data = JSON.parse(readFileSync(path, 'utf-8'));
+			for (const s of Object.values<any>(data)) {
+				totals.sessions += 1;
+				totals.blocks += s.elidedBlocks || 0;
+				totals.chars += s.charsSaved || 0;
+				totals.tokens += s.tokensSaved || 0;
+			}
+		} catch {
+			// missing/unreadable file for this env — skip
+		}
+	}
+	return totals;
+}
+
+const piDedupHandler: ExtensionHandler = {
+	name: 'pi-dedup',
+	displayName: 'Dedup',
+
+	enrich(info: ExtensionInfo): ExtensionInfo {
+		const { sessions, blocks, chars, tokens } = dedupStats();
+		info.sections = [{
+			header: 'Savings',
+			items: [{
+				'Sessions with savings': sessions,
+				'Blocks elided': blocks,
+				'Chars saved': chars,
+				'Approx tokens saved': tokens,
+			}],
+		}];
+		if (blocks > 0) {
+			info.status = 'ok';
+			info.statusText = 'Active';
+		}
+		return info;
+	},
+};
+
+register(piDedupHandler);
 
 /**
  * Get a handler for the given extension name, if one exists.

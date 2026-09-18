@@ -1,0 +1,12 @@
+{
+	"name": "pi-dedup",
+	"version": "1.0.0",
+	"description": "Elides exact-duplicate tool results from the LLM context and records the savings",
+	"type": "module",
+	"main": "./index.ts",
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	}
+}
