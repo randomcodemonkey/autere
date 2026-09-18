@@ -5,8 +5,8 @@
  * Bindings: <pi-env>/persona-active.json — { [sessionFileName]: Persona }
  *
  * The bindings file is shared with the pi-personas extension (extras/),
- * which injects the bound persona into the LLM context on every call —
- * covering session start, mid-session changes and post-compaction.
+ * which puts the bound persona into the system prompt every turn and emits
+ * visible transition markers (see extras/pi-personas/index.ts).
  */
 
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'fs';

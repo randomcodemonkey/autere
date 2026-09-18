@@ -60,7 +60,11 @@ src/backend/
   auth.ts               # Token auth, users, roles, last-session tracking
   state.ts              # Global mutable state (extensions, sessions)
   sessions.ts           # Session file listing
-  extension-handlers.ts # Named extension handlers (9router status etc.)
+  personas.ts           # Persona library + per-session bindings (JSON files)
+  scheduler.ts          # Scheduled tasks (cron-style pi prompts)
+  session-peers.ts      # Peer sessions view
+  user-settings.ts      # Per-user settings (schema-driven, admin UI)
+  extension-handlers.ts # Named extension handlers (9router status, memory, dedup)
   stream-history.ts     # StreamMessage building, extractImages (shared)
   shared/format.ts      # Formatting shared with frontend
   image-models.ts       # Image-capable model discovery (9router)
@@ -74,15 +78,17 @@ src/frontend/
     Modal.tsx, Header.tsx, StatusCard.tsx, UsageCard.tsx, ExtensionsCard.tsx,
     SessionModal.tsx, SettingsCard.tsx, ScheduledTasksCard.tsx, SortableList.tsx,
     Personas.tsx        # PersonaSection (Agent card) + PersonasSettingsSection
+    ChangesPage.tsx, LoginScreen.tsx
   hooks/useSSE.ts, useAuth.ts, useCardState.ts
-  styles.scss          # Single global stylesheet (~3100 lines)
+  styles.scss          # Single global stylesheet (~3600 lines)
   types/index.ts       # Shared frontend types incl. SSEEventType
 dist/                  # Built frontend, served by backend
 cypress/
-  component/           # Component tests (~230; no server needed, Vite dev server)
+  component/           # Component tests (~256; no server needed, Vite dev server)
   e2e/                 # Full-app tests (own isolated backend)
 extras/pi-images/      # pi extension: generate_image tool via 9router (symlinked
                        # from ~/.pi/agent/extensions/pi-images)
+extras/pi-filetools/   # pi extension: file tooling with content cache + edit-ignore
 extras/pi-token-reserve/ # pi extension: compaction reserveTokens as % of the model's
                        # context window, applied live (symlinked into
                        # ~/.pi/agent/extensions/pi-token-reserve; config written
@@ -101,9 +107,10 @@ extras/pi-dedup/       # pi extension: elides exact-duplicate tool results
                        # occurrence; append-time only so prompt caching keeps
                        # working; session_compact resets anchors). Savings
                        # approx 4 chars/token written per session to
-                       # dedup-stats.json in the pi env; backend handler in
-                       # extension-handlers.ts aggregates them into the
-                       # extension's details in the dashboard.
+                       # dedup-stats.json in the user's OWN pi env; the
+                       # dashboard injects the requesting user's stats per
+                       # request (withDedupSections) — global state stays
+                       # user-agnostic, no cross-user exposure.
 SKILL.md               # This file — canonical, in-repo
 ```
 
@@ -168,13 +175,31 @@ npx tsx src/backend/index.ts \
   --provider 9router --model <model-id> --idle-timeout 30 -- [pi args]
 ```
 
-Env: `PI_MONITOR_PASSWORD`, `PI_MONITOR_AUTH`, `PI_IMAGES_MODEL`.
+Env: `PI_MONITOR_PASSWORD`, `PI_MONITOR_AUTH`, `PI_IMAGES_MODEL`,
+`AUTERE_ADMIN_USER` (default `admin`), `AUTERE_ADMIN_PASSWORD` (default
+`admin`).
+
+**Roles** (hierarchy: chat < control < admin, enforced per API call in
+`requiredRole()` / `hasRole()` in auth.ts):
+
+- **chat** — converse and view: send/abort/compact, sessions, models, state
+- **control** — everything except restarting autere itself: settings save,
+  personas library, scheduled tasks, session deletion
+- **admin** — everything, including `/api/restart-backend` (the only admin
+  route; the frontend hides the button for non-admins)
+
+The admin account comes from `AUTERE_ADMIN_USER`/`AUTERE_ADMIN_PASSWORD`
+(falling back to the monitor password, then `admin`/`admin`). The legacy
+shared `user` account (monitor password) has the `control` role and only
+exists when a monitor password is configured.
 
 Logs (supervisord instance): `~/log/autere.out.log` / `~/log/autere.err.log`
 (err log includes EVENT LOOP LAG warnings — useful for diagnosing load).
 
-Data: `~/.autere/sessions/` (JSONL sessions), `~/.autere/deleted-sessions/`,
-`~/.pi/agent/monitor-auth-tokens.json`, `~/.pi/agent/monitor-last-session.json`.
+Data: per-user pi envs in `~/.autere/pi-envs/<user>/` (sessions/, settings.json,
+personas.json, persona-active.json, persona-markers.json, dedup-stats.json),
+`~/.autere/deleted-sessions/`, `~/.autere/monitor-auth-tokens.json`,
+`~/.autere/monitor-last-session.json`.
 
 ## Conventions
 

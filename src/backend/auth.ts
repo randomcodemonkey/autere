@@ -1,7 +1,16 @@
 /**
- * Auth module — manages tokens, users, and passwords.
+ * Auth module — manages tokens, users, passwords, and role-based access.
  *
- * Each token maps to a user. For now only "admin" is supported.
+ * Roles form a hierarchy: chat < control < admin.
+ * - chat: converse and view (send/abort/compact/switch sessions, read state)
+ * - control: everything except restarting autere itself (settings, personas
+ *   library, scheduled tasks, session deletion)
+ * - admin: everything, including /api/restart-backend
+ *
+ * The admin account is bootstrapped from AUTERE_ADMIN_USER /
+ * AUTERE_ADMIN_PASSWORD (defaults "admin"/"admin"); the legacy shared
+ * "user" account (monitor password) maps to "control" and only exists when
+ * a monitor password is configured.
  */
 
 import { IncomingMessage, ServerResponse } from 'http';
@@ -22,16 +31,17 @@ interface TokenEntry {
   user: string;
 }
 
+export type Role = 'chat' | 'control' | 'admin';
+
+const ROLE_LEVEL: Record<Role, number> = { chat: 1, control: 2, admin: 3 };
+
 interface UserEntry {
   password: string;
-  role: string;
+  role: Role;
 }
 
-// User registry — for now only admin is supported
-const users: Record<string, UserEntry> = {
-  admin: { password: '', role: 'admin' }, // password set at init
-  user: { password: '', role: 'user' },   // normal (non-admin) user, same password
-};
+// User registry — populated by resolveAuth() from env/flags
+const users: Record<string, UserEntry> = {};
 
 let authTokens: Map<string, TokenEntry> = new Map();
 let authEnabled = true;
@@ -143,13 +153,45 @@ export function isRegisteredUser(user: string): boolean {
 }
 
 /** Get the role for a user */
-export function getUserRole(user: string): string {
-  return users[user]?.role || 'user';
+export function getUserRole(user: string): Role {
+  return users[user]?.role ?? 'chat';
 }
 
-/** Check if a user has a specific role */
-export function hasRole(user: string, role: string): boolean {
-  return getUserRole(user) === role;
+/** Whether the user's role satisfies the required level (chat < control < admin) */
+export function hasRole(user: string, role: Role): boolean {
+  return (ROLE_LEVEL[getUserRole(user)] ?? 0) >= (ROLE_LEVEL[role] ?? 99);
+}
+
+/** Verify a login attempt against the user registry */
+export function verifyCredentials(user: string, password: string): boolean {
+  const entry = users[user];
+  return !!entry && entry.password === password;
+}
+
+/**
+ * Minimum role required for an API call. Everything not listed is chat-level
+ * (conversing and viewing); global/config mutations need control, restarting
+ * autere itself needs admin.
+ */
+const CONTROL_ROUTES = new Set([
+  'POST /api/settings',
+  'POST /api/personas',
+  'POST /api/personas/delete',
+  'POST /api/personas/generate',
+  'POST /api/scheduler/tasks',
+  'DELETE /api/scheduler/tasks', // prefix: task ids follow in the path
+  'POST /api/sessions/delete',
+  'POST /api/extensions/packages',
+]);
+
+const ADMIN_ROUTES = new Set(['POST /api/restart-backend']);
+
+export function requiredRole(method: string, pathname: string): Role {
+  const key = `${method} ${pathname}`;
+  if (ADMIN_ROUTES.has(key)) return 'admin';
+  if (CONTROL_ROUTES.has(key)) return 'control';
+  if (pathname.startsWith('/api/scheduler/tasks/') && method === 'DELETE') return 'control';
+  return 'chat';
 }
 
 export function requireAuth(req: IncomingMessage, res: ServerResponse): boolean {
@@ -165,11 +207,19 @@ export function requireAuth(req: IncomingMessage, res: ServerResponse): boolean 
 export function resolveAuth(pi: { getFlag: (name: string) => any }) {
   authEnabled = pi.getFlag('monitor-auth') as boolean;
   authPassword = (pi.getFlag('monitor-password') as string) || process.env.PI_MONITOR_PASSWORD || '';
-  if (authEnabled && !authPassword) {
-    throw new Error('[autere] Authentication is enabled but no password was provided. Set --monitor-password or PI_MONITOR_PASSWORD environment variable, or disable with --monitor-auth false');
+
+  // Admin account: AUTERE_ADMIN_* overrides, then the monitor password for
+  // back-compat with existing deployments, then the documented default.
+  const adminName = process.env.AUTERE_ADMIN_USER || 'admin';
+  const adminPassword = process.env.AUTERE_ADMIN_PASSWORD || authPassword || 'admin';
+  users[adminName] = { password: adminPassword, role: 'admin' };
+  if (authPassword) users['user'] = { password: authPassword, role: 'control' };
+  if (authEnabled) {
+    if (!process.env.AUTERE_ADMIN_PASSWORD && !authPassword) {
+      log.auth.warn('No AUTERE_ADMIN_PASSWORD / monitor password configured — admin password defaults to "admin"');
+    }
+    log.auth.info(`Registered users: ${Object.keys(users).join(', ')}`);
   }
-  // Set passwords (all accounts share the configured password for now)
-  for (const u of Object.values(users)) u.password = authPassword;
   loadAuthTokens();
   if (!authEnabled) {
     log.auth.info('Authentication disabled (--monitor-auth false)');
@@ -198,7 +248,6 @@ export function getAuthTokenExpiry(): number {
 export function getAuthPassword(): string {
   return authPassword;
 }
-
 // ── Last session per user+token (each login session tracks its own) ──
 // Stored INSIDE the user's pi environment so it is automatically scoped:
 // another user (or an isolated e2e env) can never see, resume, or corrupt

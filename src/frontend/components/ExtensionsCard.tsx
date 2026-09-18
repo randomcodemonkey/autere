@@ -15,7 +15,7 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
 
   // Extensions with a known runtime status — surfaced as counts in the
   // card title (matching the Tools card's badge style).
-  const availableCount = extensions.filter((e) => e.status === 'available').length;
+  const availableCount = extensions.filter((e) => e.status === 'ok').length;
   const errorCount = extensions.filter((e) => e.status === 'error').length;
 
   const openModal = (idx: number) => {
@@ -50,7 +50,7 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
           <div className="card-title">
             Extensions
             {collapsed && availableCount > 0 && (
-              <span className="badge success" title={`${availableCount} available`}>${availableCount}</span>
+              <span className="badge success" title={`${availableCount} available`}>{availableCount}</span>
             )}
             {collapsed && errorCount > 0 && (
               <span className="badge danger" title={`${errorCount} in error`}>{errorCount}</span>

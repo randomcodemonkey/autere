@@ -1,7 +1,6 @@
 import { ServerResponse } from 'http';
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
-import { dirname } from 'path';
+import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { StreamEntry, SessionUsageResult } from './types.js';
 import { getUserSetting } from './user-settings.js';

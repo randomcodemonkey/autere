@@ -339,31 +339,81 @@ register(piImagesHandler);
 
 // ── pi-dedup handler ──
 
-/** Aggregate dedup-stats.json from the master agent dir and every pi env. */
-function dedupStats(): { sessions: number; blocks: number; chars: number; tokens: number } {
-	const candidates = [join(PI_DIR, 'dedup-stats.json')];
+interface DedupSessionStat {
+	name: string;
+	blocks: number;
+	chars: number;
+	tokens: number;
+	last: string;
+}
+
+/**
+ * Per-session dedup savings for ONE user's pi env. Each pi process writes
+ * dedup-stats.json into its OWN env (PI_CODING_AGENT_DIR); this reads only
+ * the requesting user's file — never another env's.
+ */
+function dedupStatsFor(user: string): DedupSessionStat[] {
+	let data: any;
 	try {
-		for (const user of readdirSync(PI_ENVS_DIR)) {
-			candidates.push(join(PI_ENVS_DIR, user, 'dedup-stats.json'));
-		}
+		data = JSON.parse(readFileSync(join(PI_ENVS_DIR, sanitizeUserName(user), 'dedup-stats.json'), 'utf-8'));
 	} catch {
-		// no envs dir
+		return [];
 	}
-	const totals = { sessions: 0, blocks: 0, chars: 0, tokens: 0 };
-	for (const path of candidates) {
-		try {
-			const data = JSON.parse(readFileSync(path, 'utf-8'));
-			for (const s of Object.values<any>(data)) {
-				totals.sessions += 1;
-				totals.blocks += s.elidedBlocks || 0;
-				totals.chars += s.charsSaved || 0;
-				totals.tokens += s.tokensSaved || 0;
-			}
-		} catch {
-			// missing/unreadable file for this env — skip
-		}
-	}
-	return totals;
+	if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+	return Object.entries<any>(data)
+		.map(([file, s]) => ({
+			name: file.replace(/\.jsonl$/, ''),
+			blocks: s?.elidedBlocks || 0,
+			chars: s?.charsSaved || 0,
+			tokens: s?.tokensSaved || 0,
+			last: String(s?.lastElision ?? ''),
+		}))
+		.filter((s) => s.blocks > 0)
+		.sort((a, b) => b.last.localeCompare(a.last));
+}
+
+/**
+ * Zero-placeholder sections for the shared global state — no user data.
+ * Keeps the extension row clickable; real numbers are injected per request
+ * by withDedupSections().
+ */
+const DEDUP_PLACEHOLDER: ExtensionSection[] = [{
+	header: 'Savings',
+	items: [{
+		'Blocks elided': 0,
+		'Chars saved': 0,
+		'Approx tokens saved': 0,
+	}],
+}];
+
+/**
+ * Returns a copy of the extension info with the GIVEN USER's own dedup
+ * stats as sections. Called per /api/extensions request; the shared global
+ * state is never mutated.
+ */
+export function withDedupSections(info: ExtensionInfo, user: string): ExtensionInfo {
+	const sessions = dedupStatsFor(user);
+	const blocks = sessions.reduce((n, s) => n + s.blocks, 0);
+	const chars = sessions.reduce((n, s) => n + s.chars, 0);
+	const tokens = sessions.reduce((n, s) => n + s.tokens, 0);
+	const sections: ExtensionSection[] = [{
+		header: 'Savings',
+		items: [
+			{ 'Blocks elided': blocks, 'Chars saved': chars, 'Approx tokens saved': tokens },
+			...sessions.map((s) => ({
+				'Session': s.name,
+				'Blocks': s.blocks,
+				'Chars': s.chars,
+				'Tokens': s.tokens,
+			})),
+		],
+	}];
+	return {
+		...info,
+		sections,
+		status: blocks > 0 ? 'ok' : info.status,
+		statusText: blocks > 0 ? 'Active' : info.statusText,
+	};
 }
 
 const piDedupHandler: ExtensionHandler = {
@@ -371,20 +421,11 @@ const piDedupHandler: ExtensionHandler = {
 	displayName: 'Dedup',
 
 	enrich(info: ExtensionInfo): ExtensionInfo {
-		const { sessions, blocks, chars, tokens } = dedupStats();
-		info.sections = [{
-			header: 'Savings',
-			items: [{
-				'Sessions with savings': sessions,
-				'Blocks elided': blocks,
-				'Chars saved': chars,
-				'Approx tokens saved': tokens,
-			}],
-		}];
-		if (blocks > 0) {
-			info.status = 'ok';
-			info.statusText = 'Active';
-		}
+		// Intentionally user-agnostic: enrichment happens at poll time without
+		// a request context, so no per-user stats may be attached here. The
+		// zero placeholder keeps the row clickable; /api/extensions swaps in
+		// the requesting user's own numbers.
+		info.sections = DEDUP_PLACEHOLDER.map((s) => ({ ...s, items: s.items.map((i) => ({ ...i })) }));
 		return info;
 	},
 };

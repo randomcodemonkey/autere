@@ -10,11 +10,12 @@ import { join, dirname, basename } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { ProcessManager } from './process-manager.js';
-import { getUser, getUserRole, hasRole, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getAuthPassword, getTokenFromRequest, setLastSession, isRegisteredUser } from './auth.js';
+import { getUser, getUserRole, hasRole, requiredRole, verifyCredentials, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, isRegisteredUser } from './auth.js';
+import { withDedupSections } from './extension-handlers.js';
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filterScopedModels, autoSessionName } from './utils.js';
 import { getPiEnvDir } from './pi-env.js';
-import { listPersonas, savePersonas, validatePersona, getActivePersona, setActivePersona } from './personas.js';
+import { listPersonas, savePersonas, validatePersona, getActivePersona, setActivePersona, type Persona } from './personas.js';
 import { getRouterConfig } from './image-models.js';
 import { extensionsState } from './state.js';
 import { getTokenPricing, getRatesForModel, computeTokenCost } from './user-settings.js';
@@ -116,7 +117,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
             sendJSON(res, { success: false, error: 'Invalid user' }, 401);
             return;
           }
-          if (password !== getAuthPassword()) {
+          if (!verifyCredentials(user, password)) {
             sendJSON(res, { success: false, error: 'Invalid password' }, 401);
             return;
           }
@@ -196,6 +197,13 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     const user = getUser(req);
     if (!token || !user) {
       sendJSON(res, { success: false, error: 'No user' }, 401);
+      return;
+    }
+
+    // ── Role-based authorization (chat < control < admin) ──
+    const neededRole = requiredRole(req.method || 'GET', url.pathname);
+    if (!hasRole(user, neededRole)) {
+      sendJSON(res, { success: false, error: `Requires ${neededRole} role` }, 403);
       return;
     }
 
@@ -316,7 +324,15 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       return;
     }
     if (url.pathname === '/api/extensions') {
-      sendJSON(res, { success: true, data: extensionsState });
+      // Dedup stats are per-user (each pi env has its own counters) and are
+      // injected per request — global state must never carry them, or any
+      // logged-in user could read other users' (user)names and counts.
+      const data = extensionsState.map((e) => {
+        if (e.name !== 'pi-dedup') return e;
+        const patched = withDedupSections(e, user);
+        return { ...e, sections: patched.sections, status: patched.status, statusText: patched.statusText };
+      });
+      sendJSON(res, { success: true, data });
       return;
     }
     if (url.pathname === '/api/models') {
@@ -368,10 +384,6 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     }
 
     if (url.pathname === '/api/restart-backend' && req.method === 'POST') {
-      if (!hasRole(user, 'admin')) {
-        sendJSON(res, { success: false, error: 'Admin role required' }, 403);
-        return;
-      }
       sendJSON(res, { success: true });
       setTimeout(() => { try { if (typeof process.exit === 'function') process.exit(0); } catch {} }, 200);
       return;
@@ -732,7 +744,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         // Persona for the new session — validated BEFORE creating anything,
         // so an invalid id fails cleanly without leaving a stray session.
         const personaId = typeof body?.personaId === 'string' && body.personaId ? body.personaId : '';
-        let persona: import('./personas.js').Persona | null = null;
+        let persona: Persona | null = null;
         if (personaId) {
           persona = listPersonas(user).find((p) => p.id === personaId) || null;
           if (!persona) {
@@ -825,7 +837,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         setLastSession(user, token, state.sessionFile);
 
         // Bind the chosen persona (if any) to the new session — the
-        // pi-personas extension injects it into the LLM context on every call.
+        // pi-personas extension puts it into the system prompt every turn.
         setActivePersona(user, state.sessionFile, persona);
         sessionState.persona = persona ? { id: persona.id, name: persona.name } : null;
 
@@ -907,7 +919,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     if (url.pathname === '/api/set-persona' && req.method === 'POST') {
       try {
         const { personaId } = await readBody(req);
-        let persona: import('./personas.js').Persona | null = null;
+        let persona: Persona | null = null;
         if (personaId) {
           persona = listPersonas(user).find((p) => p.id === personaId) || null;
           if (!persona) {
