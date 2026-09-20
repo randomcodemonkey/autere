@@ -680,7 +680,7 @@ export class UserSession {
         // Seed the cumulative cost from pi (covers pi-catalog-priced history);
         // new messages accumulate on top (see handleMessageEnd/handleToolEnd).
         this.setCostTotal(stats.cost || 0);
-        if (stats.contextUsage) this.state.sessionStats.contextUsage = annotateContextUsage(this.user, stats.contextUsage);
+        if (stats.contextUsage) this.state.sessionStats.contextUsage = annotateContextUsage(this.user, stats.contextUsage, this.state.sessionState.model);
       } catch (err) {
         log.userSession.error('fetchInitialState: failed to get session stats:', err);
       }
@@ -706,6 +706,21 @@ export class UserSession {
       } catch (err) {
         log.userSession.error('fetchInitialState: failed to load session history:', err);
       }
+
+      // pi resolves model + session asynchronously after spawn (seen as zeroed
+      // stats after an idle respawn) — the stats fetch above can still miss
+      // contextUsage, leaving the UI at 0 until the next message. One delayed
+      // re-fetch heals it; broadcast so already-connected UIs see it.
+      const bootedSessionId = this.state.sessionState.sessionId;
+      setTimeout(() => {
+        this.rpc.getSessionStats()
+          .then((stats) => {
+            if (!stats?.contextUsage || this.state.sessionState.sessionId !== bootedSessionId) return;
+            this.state.sessionStats.contextUsage = annotateContextUsage(this.user, stats.contextUsage, this.state.sessionState.model);
+            this.broadcastToSession(bootedSessionId, { type: 'stats', data: { ...this.state.sessionStats } });
+          })
+          .catch(() => {});
+      }, 2000);
     } catch (err) {
       userLog(this.user).error('Failed to fetch initial state:', err);
     }
@@ -851,7 +866,7 @@ export class UserSession {
           // Context shrank — refresh usage stats immediately (pi updates them
           // at compaction, we otherwise only re-fetch on message_end).
           this.rpc.getSessionStats().then(stats => {
-            if (stats.contextUsage) s.sessionStats.contextUsage = annotateContextUsage(this.user, stats.contextUsage);
+            if (stats.contextUsage) s.sessionStats.contextUsage = annotateContextUsage(this.user, stats.contextUsage, s.sessionState.model);
             this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
           }).catch(() => {});
           break;
@@ -1170,7 +1185,7 @@ export class UserSession {
     this.broadcastToSession(s.sessionState.sessionId, { type: 'status', data: { ...s.sessionState } });
 
     this.rpc.getSessionStats().then(stats => {
-      if (stats.contextUsage) s.sessionStats.contextUsage = annotateContextUsage(this.user, stats.contextUsage);
+      if (stats.contextUsage) s.sessionStats.contextUsage = annotateContextUsage(this.user, stats.contextUsage, s.sessionState.model);
       this.broadcastToSession(s.sessionState.sessionId, { type: 'stats', data: { ...s.sessionStats } });
     }).catch((err) => { log.userSession.forSession(s.sessionState.sessionId).error('handleMessageEnd: failed to get session stats:', err); });
   }

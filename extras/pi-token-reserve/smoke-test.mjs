@@ -24,11 +24,12 @@ function makePi() {
 		},
 	};
 }
-const setPercent = (p) => {
-	writeFileSync(cfg, JSON.stringify({ percent: p }));
+const setPercent = (p) => setConfig({ percent: p });
+let mt = 0;
+const setConfig = (c) => {
+	writeFileSync(cfg, JSON.stringify(c));
 	utimesSync(cfg, new Date(), new Date(Date.now() + (mt += 1000)));
 };
-let mt = 0;
 
 // 1. No config file → inert
 let t = makePi();
@@ -90,5 +91,23 @@ assert.strictEqual(
 	t.agent_end({ model: { contextWindow: 200000 }, getContextUsage: () => ({ tokens: 199000, contextWindow: 200000 }), hasPendingMessages: () => false }),
 	false, "0% never compacts"
 );
+
+// 6. perModel map: exact provider/id wins; bare-id keys match any provider;
+//    unmatched models fall back to percent
+setConfig({ percent: 25, perModel: { "z-ai/glm-5.3-flash": 10, "claude-x": 50 } });
+t = makePi();
+factory(t.pi);
+prep = { settings: { reserveTokens: 16384 } };
+t.session_before_compact({ model: { provider: "z-ai", id: "glm-5.3-flash", contextWindow: 200000 } }, prep);
+assert.strictEqual(prep.settings.reserveTokens, 20000, "perModel exact provider/id = 10% of 200k");
+prep = { settings: { reserveTokens: 16384 } };
+t.session_before_compact({ model: { provider: "anthropic", id: "claude-x", contextWindow: 100000 } }, prep);
+assert.strictEqual(prep.settings.reserveTokens, 50000, "perModel bare-id key = 50% of 100k");
+prep = { settings: { reserveTokens: 16384 } };
+t.session_before_compact({ model: { provider: "zzz", id: "glm-5.3-flash", contextWindow: 200000 } }, prep);
+assert.strictEqual(prep.settings.reserveTokens, 20000, "id-suffix key match tolerates provider drift");
+prep = { settings: { reserveTokens: 16384 } };
+t.session_before_compact({ model: { provider: "other", id: "unknown", contextWindow: 200000 } }, prep);
+assert.strictEqual(prep.settings.reserveTokens, 50000, "unmatched model falls back to percent = 25%");
 
 console.log("all pi-token-reserve smoke tests passed");

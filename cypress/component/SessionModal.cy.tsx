@@ -1,6 +1,7 @@
 import React from 'react';
 import { SessionModal, formatSessionTime } from '../../src/frontend/components/SessionModal';
 import type { SessionSearchResult } from '../../src/frontend/types';
+import '../../src/frontend/styles.scss';
 
 const SESSIONS: SessionSearchResult[] = [
   { id: 'aaaa1111-0000', sessionFile: '/s/aaaa.jsonl', sessionName: 'First', parentSession: null, createdAt: 1, lastActivity: Date.now(), cwd: null },
@@ -126,6 +127,42 @@ describe('SessionModal', () => {
     cy.wait('@delete');
     // The deleted session disappears from the list
     cy.get('.session-item').not('.active').should('not.exist');
+  });
+
+  it('does not jump: modal height is stable while sessions load', () => {
+    mountModal();
+    cy.get('.session-empty').should('contain', 'Loading sessions…');
+    let before = 0;
+    cy.get('.modal').then(($m) => { before = $m.height()!; });
+    cy.wait('@sessions');
+    cy.get('.session-item').should('have.length', 2);
+    cy.get('.modal').then(($m) => { expect($m.height()).to.equal(before); });
+  });
+
+  it('persona select: disabled "Loading personas" until personas arrive', () => {
+    cy.intercept('GET', '**/api/personas', {
+      delay: 800,
+      body: { success: true, data: [{ id: 'p1', name: 'Pirate', description: '', prompt: '' }] },
+    }).as('personas');
+    mountModal();
+    cy.get('#session-persona-select').should('be.disabled').and('contain', 'Loading personas');
+    cy.wait('@personas');
+    cy.get('#session-persona-select').should('not.be.disabled').and('contain', 'Pirate');
+    cy.get('#session-persona-select option').should('have.length', 2); // No persona + Pirate
+  });
+
+  it('persona select: "No personas available" and stays disabled when none exist', () => {
+    cy.intercept('GET', '**/api/personas', { success: true, data: [] }).as('personas');
+    mountModal();
+    cy.wait('@personas');
+    cy.get('#session-persona-select').should('be.disabled').and('contain', 'No personas available');
+  });
+
+  it('persona select: surfaces a failed load instead of swallowing it', () => {
+    cy.intercept('GET', '**/api/personas', { statusCode: 500, body: 'boom' }).as('personas');
+    mountModal();
+    cy.wait('@personas');
+    cy.get('#session-persona-select').should('be.disabled').and('contain', 'Failed to load personas');
   });
 
   it('delete button shows no armed/❗ state (confirm() is used instead)', () => {

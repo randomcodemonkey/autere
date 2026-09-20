@@ -163,6 +163,29 @@ export function filterModelsByPatterns(
   });
 }
 
+/**
+ * Look up a per-model map entry for a runtime model, tolerating key-format
+ * drift: matches `provider/id`, bare `id`, or any key whose id suffix is `id`.
+ * Used for per-model thinking levels and reserve-% maps keyed like
+ * `enabledModels` entries (`provider/model`).
+ */
+export function matchModelMap<T>(
+  map: Record<string, T> | undefined | null,
+  provider: string | undefined | null,
+  id: string | undefined | null,
+): T | undefined {
+  if (!map || !id) return undefined;
+  const bare = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
+  for (const key of provider ? [`${provider}/${id}`, id] : [id]) {
+    if (key in map) return map[key];
+  }
+  for (const [key, value] of Object.entries(map)) {
+    const slash = key.indexOf('/');
+    if (slash > 0 && key.slice(slash + 1) === bare) return value;
+  }
+  return undefined;
+}
+
 // ── Session auto-naming helpers ──
 
 /** Date label used for auto-naming sessions, e.g. "2026-09-05" (local time) */

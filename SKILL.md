@@ -63,7 +63,9 @@ src/backend/
   personas.ts           # Persona library + per-session bindings (JSON files)
   scheduler.ts          # Scheduled tasks (cron-style pi prompts)
   session-peers.ts      # Peer sessions view
-  user-settings.ts      # Per-user settings (schema-driven, admin UI)
+  user-settings.ts      # Per-user settings (schema-driven, admin UI; per-model
+                        # thinking levels → pi's modelThinkingLevels, per-model
+                        # reserve % → pi-token-reserve config)
   extension-handlers.ts # Named extension handlers (9router status, memory, dedup)
   stream-history.ts     # StreamMessage building, extractImages (shared)
   shared/format.ts      # Formatting shared with frontend
@@ -78,6 +80,8 @@ src/frontend/
     Modal.tsx, Header.tsx, StatusCard.tsx, UsageCard.tsx, ExtensionsCard.tsx,
     SessionModal.tsx, SettingsCard.tsx, ScheduledTasksCard.tsx, SortableList.tsx,
     Personas.tsx        # PersonaSection (Agent card) + PersonasSettingsSection
+                        # ExtensionsCard fetches /api/extensions for per-user stats —
+                        # the shared state copy carries only zero placeholders
     ChangesPage.tsx, LoginScreen.tsx
   hooks/useSSE.ts, useAuth.ts, useCardState.ts
   styles.scss          # Single global stylesheet (~3600 lines)
@@ -90,9 +94,10 @@ extras/pi-images/      # pi extension: generate_image tool via 9router (symlinke
                        # from ~/.pi/agent/extensions/pi-images)
 extras/pi-filetools/   # pi extension: file tooling with content cache + edit-ignore
 extras/pi-token-reserve/ # pi extension: compaction reserveTokens as % of the model's
-                       # context window, applied live (symlinked into
-                       # ~/.pi/agent/extensions/pi-token-reserve; config written
-                       # per user env as pi-token-reserve-config.json)
+                       # context window — per model (perModel map keyed like
+                       # enabledModels entries; `percent` fallback), applied live
+                       # (symlinked into ~/.pi/agent/extensions/pi-token-reserve;
+                       # config written per user env as pi-token-reserve-config.json)
 extras/pi-personas/    # pi extension: puts the session's bound persona into the SYSTEM
                        # PROMPT every turn (before_agent_start) — no fake user
                        # messages, immune to process restarts; emits a visible
@@ -111,6 +116,26 @@ extras/pi-dedup/       # pi extension: elides exact-duplicate tool results
                        # dashboard injects the requesting user's stats per
                        # request (withDedupSections) — global state stays
                        # user-agnostic, no cross-user exposure.
+extras/pi-janitor/     # pi extension: idle-window context cleanup. Observes
+                       # cache hits/misses per request (usage from the last
+                       # assistant message) to learn the provider's effective
+                       # cache retention; when a request goes out after an
+                       # idle gap ≥ 2× the longest observed warm gap (floor
+                       # 10 min — the cache is cold anyway, so history
+                       # rewriting is free), stubs stale tool results, edit
+                       # diffs and images older than the last 3 user turns.
+                       # Decisions only grow during cold windows; warm calls
+                       # replay byte-identical stubs so prompt caching keeps
+                       # working. Per-call transform — the session file keeps
+                       # full content. Sweep policy is user-configurable via
+                       # the Settings card (janitorMinIdleSec floor 600,
+                       # janitorWarmGapMultiplier 2, janitorKeepRecentTurns 3):
+                       # saving materializes janitor-config.json into the
+                       # user's env, which the extension mtime-caches and
+                       # applies live — settings save skips the pi restart
+                       # when only janitor keys change. Stats per session in
+                       # janitor-stats.json (user's OWN env), injected per
+                       # request by withJanitorSections().
 SKILL.md               # This file — canonical, in-repo
 ```
 

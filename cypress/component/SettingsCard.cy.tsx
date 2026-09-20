@@ -45,6 +45,75 @@ describe('SettingsCard select fields', () => {
   });
 });
 
+describe('SettingsCard per-model fields', () => {
+  const perModelSchema = [
+    {
+      id: 'models',
+      label: 'Models',
+      fields: [
+        { key: 'enabledModels', label: 'Enabled Models', type: 'list' as const },
+        { key: 'modelThinkingLevels', label: 'Thinking level per model', type: 'perModel' as const,
+          perModel: { control: 'select' as const, options: [
+            { value: '', label: 'pi default' }, { value: 'off', label: 'off' }, { value: 'high', label: 'high' },
+          ] } },
+        { key: 'reserveTokensPercentByModel', label: 'Reserved context per model (%)', type: 'perModel' as const,
+          perModel: { control: 'number' as const, min: 0, max: 90 } },
+      ],
+    },
+  ];
+
+  it('renders one row per enabled model with the stored values', () => {
+    cy.window({ log: false }).then((win) => {
+      win.fetch = (input: any, _init: any) => {
+        const u = String(input);
+        let data: any = { success: true };
+        if (u.includes('/api/settings/schema')) data = { success: true, data: perModelSchema };
+        else if (u.includes('/api/settings')) data = { success: true, data: {
+          enabledModels: ['z-ai/glm-5.3-flash', 'anthropic/claude-x'],
+          modelThinkingLevels: { 'z-ai/glm-5.3-flash': 'high' },
+          reserveTokensPercentByModel: { 'anthropic/claude-x': '10' },
+        } };
+        else if (u.includes('/api/extensions/packages')) data = { success: true, data: { available: [] } };
+        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
+      };
+    });
+    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.get('.settings-per-model-row').should('have.length', 4); // 2 models × 2 fields
+    cy.get('.settings-per-model-name').first().should('contain', 'z-ai/glm-5.3-flash');
+    cy.get('select.settings-input').first().should('have.value', 'high');
+    cy.get('select.settings-input').eq(1).should('have.value', '');
+    cy.get('input[type="number"].settings-input').eq(1).should('have.value', '10');
+  });
+
+  it('saves per-model levels and drops entries reset to the default', () => {
+    let savedBody: any = null;
+    const settings = {
+      enabledModels: ['a/m1', 'a/m2'],
+      modelThinkingLevels: { 'a/m1': 'off' },
+      reserveTokensPercentByModel: {},
+    };
+    cy.window({ log: false }).then((win) => {
+      win.fetch = (input: any, init: any) => {
+        const u = String(input);
+        let data: any = { success: true };
+        if (u.includes('/api/settings/schema')) data = { success: true, data: perModelSchema };
+        else if (u.includes('/api/settings') && init?.method === 'POST') { savedBody = JSON.parse(init.body); data = { success: true }; }
+        else if (u.includes('/api/settings')) data = { success: true, data: settings };
+        else if (u.includes('/api/extensions/packages')) data = { success: true, data: { available: [] } };
+        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
+      };
+    });
+    cy.mount(<SettingsCard sseConnected={true} />);
+    // Row 1: clear the stored 'off' → entry removed. Row 2: set 'high'.
+    cy.get('select.settings-input').first().select('');
+    cy.get('select.settings-input').eq(1).select('high');
+    cy.contains('button', 'Save').click();
+    cy.wrap(null).should(() => {
+      expect(savedBody.modelThinkingLevels).to.deep.equal({ 'a/m2': 'high' });
+    });
+  });
+});
+
 describe('SettingsCard number fields', () => {
   const numberSchema = [
     {

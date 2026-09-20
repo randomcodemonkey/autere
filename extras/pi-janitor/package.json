@@ -1,0 +1,12 @@
+{
+	"name": "pi-janitor",
+	"version": "1.0.0",
+	"description": "Idle-window context cleanup: observes provider cache retention and stubs stale tool results, edit diffs and images from the LLM context during cold cache windows",
+	"type": "module",
+	"main": "./index.ts",
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	}
+}

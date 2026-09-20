@@ -37,6 +37,11 @@ assert.ok(t.toolResult(text(big), ctx).content[0].text.includes("pi-dedup"), "th
 // 4. Different content → kept
 assert.strictEqual(t.toolResult(text("y".repeat(500)), ctx), undefined, "different content kept");
 
+// 4b. Mid-size duplicate → elided (floor tracks pointer length, not a fixed 400)
+const mid = text("m".repeat(150));
+assert.strictEqual(t.toolResult(mid, ctx), undefined, "mid-size first occurrence kept");
+assert.ok(t.toolResult(mid, ctx).content[0].text.includes("pi-dedup"), "mid-size duplicate elided");
+
 // 5. Small results → never elided even if identical
 assert.strictEqual(t.toolResult(text("small"), ctx), undefined, "small kept");
 assert.strictEqual(t.toolResult(text("small"), ctx), undefined, "small duplicate kept");
@@ -49,9 +54,9 @@ assert.strictEqual(t.toolResult(err, ctx), undefined, "error result kept");
 const mixed = { toolName: "img", content: [{ type: "text", text: big }, { type: "image", data: "..." }] };
 assert.strictEqual(t.toolResult(mixed, ctx), undefined, "mixed content kept");
 
-// 8. Stats recorded (2 elisions × ~500 chars)
+// 8. Stats recorded (big dup ×2 + mid-size dup = 3 elisions)
 const stats = JSON.parse(readFileSync(join(agentDir, "dedup-stats.json"), "utf-8"));
-assert.strictEqual(stats["s1.jsonl"].elidedBlocks, 2, "two elisions recorded");
+assert.strictEqual(stats["s1.jsonl"].elidedBlocks, 3, "three elisions recorded");
 assert.ok(stats["s1.jsonl"].charsSaved > 0, "chars saved > 0");
 assert.ok(stats["s1.jsonl"].tokensSaved > 0, "tokens saved > 0");
 
@@ -65,7 +70,7 @@ const ctx2 = { sessionManager: { getSessionFile: () => "/env/sessions/s2.jsonl" 
 assert.strictEqual(t.toolResult(text(big), ctx2), undefined, "other session keeps its first occurrence");
 
 // 11. Stats accumulate across sessions without clobbering
-assert.strictEqual(JSON.parse(readFileSync(join(agentDir, "dedup-stats.json"), "utf-8"))["s1.jsonl"].elidedBlocks, 3, "s1 stats preserved");
+assert.strictEqual(JSON.parse(readFileSync(join(agentDir, "dedup-stats.json"), "utf-8"))["s1.jsonl"].elidedBlocks, 4, "s1 stats preserved");
 
 // 12. Corrupt stats file → elision still works
 rmSync(join(agentDir, "dedup-stats.json"));

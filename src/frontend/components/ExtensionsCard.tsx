@@ -1,9 +1,20 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useCardState } from '../hooks/useCardState';
 import { Modal } from './Modal';
+import { url } from '../base-path';
 import type { ExtensionInfo } from '../types';
 import type { ExtensionSection } from '../types';
 import { formatTimestamp } from './ChatMessage';
+
+/** Clock time today, date + time otherwise — for last-active stamps. */
+const formatLastActive = (ts?: number): string => {
+  if (!ts) return '-';
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return new Date().toDateString() === d.toDateString()
+    ? time
+    : `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`;
+};
 
 interface ExtensionsCardProps {
   extensions: ExtensionInfo[];
@@ -13,13 +24,41 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
   const { collapsed, toggle } = useCardState('extensions');
   const [modalIdx, setModalIdx] = useState<number | null>(null);
 
+  // The shared state copy carries only zero placeholders for per-user
+  // extensions (enrich is user-agnostic by design) — /api/extensions is the
+  // per-request injection point for the real stats.
+  const [patched, setPatched] = useState<ExtensionInfo[] | null>(null);
+  const fetchPatched = useCallback(() => {
+    fetch(url('/api/extensions'))
+      .then((r) => r.json())
+      .then((res) => {
+        if (res?.success && Array.isArray(res.data)) setPatched(res.data);
+      })
+      .catch(() => { /* fall back to the state copy */ });
+  }, []);
+  useEffect(() => {
+    fetchPatched();
+  }, [extensions, fetchPatched]);
+
+  // Janitor sweeps / dedup elisions write their stats files server-side with
+  // no push event — poll while the detail modal is open so the numbers
+  // (and the session rows) update without a UI reload. Stats change on turn
+  // boundaries, so 3s granularity is plenty.
+  const modalOpen = modalIdx !== null;
+  useEffect(() => {
+    if (!modalOpen) return;
+    const t = setInterval(fetchPatched, 3000);
+    return () => clearInterval(t);
+  }, [modalOpen, fetchPatched]);
+  const list = patched ?? extensions;
+
   // Extensions with a known runtime status — surfaced as counts in the
   // card title (matching the Tools card's badge style).
-  const availableCount = extensions.filter((e) => e.status === 'ok').length;
-  const errorCount = extensions.filter((e) => e.status === 'error').length;
+  const availableCount = list.filter((e) => e.status === 'ok').length;
+  const errorCount = list.filter((e) => e.status === 'error').length;
 
   const openModal = (idx: number) => {
-    const ext = extensions[idx];
+    const ext = list[idx];
     const hasContent = (ext.hasConfig && Object.keys(ext.details || {}).length > 0)
       || (ext.sections && ext.sections.length > 0);
     if (hasContent) {
@@ -29,7 +68,7 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
 
   const closeModal = () => setModalIdx(null);
 
-  const modalExt = modalIdx !== null ? extensions[modalIdx] : null;
+  const modalExt = modalIdx !== null ? list[modalIdx] : null;
 
   // Filter out internal/sensitive fields from the detail display
   const isDisplayableDetail = (key: string): boolean => {
@@ -61,10 +100,10 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
           </button>
         </div>
         <div>
-          {(!extensions || extensions.length === 0) ? (
+          {(!list || list.length === 0) ? (
             <div className="ext-empty">No extensions loaded</div>
           ) : (
-            extensions.map((ext, i) => {
+            list.map((ext, i) => {
               const hasDetails = (ext.hasConfig && Object.keys(ext.details || {}).length > 0)
                 || (ext.sections && ext.sections.length > 0);
               // Backend decides status (ok/error/neutral) and text — we
@@ -126,7 +165,9 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
                         <div key={k} className="ext-section-field">
                           <span className="ext-section-field-key">{k}</span>
                           <span className="ext-section-field-val">
-                            {k === 'Time' && typeof v === 'number' ? formatTimestamp(v) : String(v ?? '-')}
+                            {k === 'Last active' && typeof v === 'number' ? formatLastActive(v)
+                              : k === 'Time' && typeof v === 'number' ? formatTimestamp(v)
+                              : String(v ?? '-')}
                           </span>
                         </div>
                       ))}

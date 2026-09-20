@@ -13,6 +13,7 @@ import { PI_ENVS_DIR } from './pi-env.js';
 import { sanitizeUserName } from '../shared/format.js';
 import { getUserSetting } from './user-settings.js';
 import { log } from './logger.js';
+import { readSessions } from './sessions.js';
 
 // ── 9router handler ──
 
@@ -339,8 +340,28 @@ register(piImagesHandler);
 
 // ── pi-dedup handler ──
 
+/**
+ * Basename → display name (user-set session name, else file stem) and last
+ * activity (file mtime) for the requesting user's sessions. Shared by the
+ * dedup/janitor modals so per-session rows can sort and label by activity.
+ */
+function sessionMetaFor(user: string): Map<string, { name: string; lastActivity: number }> {
+	const map = new Map<string, { name: string; lastActivity: number }>();
+	try {
+		for (const s of readSessions(user)) {
+			const file = s.sessionFile.split('/').pop() || s.sessionFile;
+			map.set(file, { name: s.sessionName || file.replace(/\.jsonl$/, ''), lastActivity: s.lastActivity });
+		}
+	} catch {
+		// names/activity are decoration — stats still render without them
+	}
+	return map;
+}
+
 interface DedupSessionStat {
 	name: string;
+	displayName: string;
+	lastActivity: number;
 	blocks: number;
 	chars: number;
 	tokens: number;
@@ -360,16 +381,22 @@ function dedupStatsFor(user: string): DedupSessionStat[] {
 		return [];
 	}
 	if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+	const meta = sessionMetaFor(user);
 	return Object.entries<any>(data)
-		.map(([file, s]) => ({
-			name: file.replace(/\.jsonl$/, ''),
-			blocks: s?.elidedBlocks || 0,
-			chars: s?.charsSaved || 0,
-			tokens: s?.tokensSaved || 0,
-			last: String(s?.lastElision ?? ''),
-		}))
+		.map(([file, s]) => {
+			const m = meta.get(file);
+			return {
+				name: file.replace(/\.jsonl$/, ''),
+				displayName: m?.name ?? file.replace(/\.jsonl$/, ''),
+				lastActivity: m?.lastActivity ?? 0,
+				blocks: s?.elidedBlocks || 0,
+				chars: s?.charsSaved || 0,
+				tokens: s?.tokensSaved || 0,
+				last: String(s?.lastElision ?? ''),
+			};
+		})
 		.filter((s) => s.blocks > 0)
-		.sort((a, b) => b.last.localeCompare(a.last));
+		.sort((a, b) => b.lastActivity - a.lastActivity || b.last.localeCompare(a.last));
 }
 
 /**
@@ -401,10 +428,11 @@ export function withDedupSections(info: ExtensionInfo, user: string): ExtensionI
 		items: [
 			{ 'Blocks elided': blocks, 'Chars saved': chars, 'Approx tokens saved': tokens },
 			...sessions.map((s) => ({
-				'Session': s.name,
+				'Session': s.displayName,
 				'Blocks': s.blocks,
 				'Chars': s.chars,
 				'Tokens': s.tokens,
+				'Last active': s.lastActivity,
 			})),
 		],
 	}];
@@ -431,6 +459,170 @@ const piDedupHandler: ExtensionHandler = {
 };
 
 register(piDedupHandler);
+
+// ── pi-janitor handler ──
+
+interface JanitorSessionStat {
+	name: string;
+	displayName: string;
+	lastActivity: number;
+	sweeps: number;
+	toolResults: number;
+	images: number;
+	tokens: number;
+	requestsObserved: number;
+	naturalMisses: number;
+	missedTokens: number;
+	postSweepRequests: number;
+	warmGap: number;
+	threshold: number;
+	telemetry: string;
+	last: string;
+}
+
+/**
+ * Per-session janitor stats for ONE user's pi env. Each pi process writes
+ * janitor-stats.json into its OWN env (PI_CODING_AGENT_DIR); this reads only
+ * the requesting user's file — never another env's.
+ */
+function janitorStatsFor(user: string): JanitorSessionStat[] {
+	let data: any;
+	try {
+		data = JSON.parse(readFileSync(join(PI_ENVS_DIR, sanitizeUserName(user), 'janitor-stats.json'), 'utf-8'));
+	} catch {
+		return [];
+	}
+	if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+	const meta = sessionMetaFor(user);
+	return Object.entries<any>(data)
+		.map(([file, s]) => {
+			const m = meta.get(file);
+			return {
+				name: file.replace(/\.jsonl$/, ''),
+				displayName: m?.name ?? file.replace(/\.jsonl$/, ''),
+				lastActivity: m?.lastActivity ?? 0,
+				sweeps: s?.sweeps || 0,
+			toolResults: s?.stubbedToolResults || 0,
+			images: s?.stubbedImages || 0,
+			tokens: Math.round((s?.textCharsSaved || 0) / 4),
+			requestsObserved: s?.requestsObserved || 0,
+			naturalMisses: s?.naturalMisses || 0,
+			missedTokens: s?.missedTokens || 0,
+			postSweepRequests: s?.postSweepRequests || 0,
+			warmGap: s?.warmGapSec || 0,
+			threshold: s?.thresholdSec || 0,
+			telemetry: s?.telemetry === 'observed' ? 'observed' : 'none',
+			last: String(s?.lastSweep ?? ''),
+		};
+		})
+		// Observation-only sessions are worth showing (cache stats), silent ones are not.
+		.filter((s) => s.sweeps > 0 || s.requestsObserved > 0)
+		.sort((a, b) => b.lastActivity - a.lastActivity || b.last.localeCompare(a.last));
+}
+
+/**
+ * Zero-placeholder sections for the shared global state — no user data.
+ * Real numbers are injected per request by withJanitorSections().
+ */
+const JANITOR_PLACEHOLDER: ExtensionSection[] = [
+	{
+		header: 'Cache observations',
+		items: [{
+			'Requests observed': 0,
+			'Cache misses': 0,
+			'Missed tokens': 0,
+			'Post-sweep requests': 0,
+			'Observed cache TTL (s)': 0,
+			'Sweep threshold (s)': 0,
+		}],
+	},
+	{
+		header: 'Cleanups',
+		items: [{
+			'Sweeps': 0,
+			'Tool results stubbed': 0,
+			'Images stubbed': 0,
+			'Approx tokens saved': 0,
+		}],
+	},
+];
+
+/**
+ * Returns a copy of the extension info with the GIVEN USER's own janitor
+ * stats as sections. Called per /api/extensions request; the shared global
+ * state is never mutated.
+ */
+export function withJanitorSections(info: ExtensionInfo, user: string): ExtensionInfo {
+	const sessions = janitorStatsFor(user);
+	const sum = (f: (s: JanitorSessionStat) => number) => sessions.reduce((n, s) => n + f(s), 0);
+	const maxOr0 = (f: (s: JanitorSessionStat) => number) => (sessions.length ? Math.max(...sessions.map(f)) : 0);
+	const sections: ExtensionSection[] = [
+		{
+			header: 'Cache observations',
+			items: [
+				{
+					'Requests observed': sum((s) => s.requestsObserved),
+					'Cache misses': sum((s) => s.naturalMisses),
+					'Missed tokens': sum((s) => s.missedTokens),
+					'Post-sweep requests': sum((s) => s.postSweepRequests),
+					'Observed cache TTL (s)': maxOr0((s) => s.warmGap),
+					'Sweep threshold (s)': maxOr0((s) => s.threshold),
+				},
+				...sessions.map((s) => ({
+					'Session': s.displayName,
+					'Requests': s.requestsObserved,
+					'Misses': s.naturalMisses,
+					'Missed tokens': s.missedTokens,
+					'Cache TTL (s)': s.warmGap,
+					'Threshold (s)': s.threshold,
+					'Last active': s.lastActivity,
+				})),
+			],
+		},
+		{
+			header: 'Cleanups',
+			items: [
+				{
+					'Sweeps': sum((s) => s.sweeps),
+					'Tool results stubbed': sum((s) => s.toolResults),
+					'Images stubbed': sum((s) => s.images),
+					'Approx tokens saved': sum((s) => s.tokens),
+				},
+				...sessions.filter((s) => s.sweeps > 0).map((s) => ({
+					'Session': s.displayName,
+					'Sweeps': s.sweeps,
+					'Tool results': s.toolResults,
+					'Images': s.images,
+					'Tokens saved': s.tokens,
+					'Last sweep': s.last,
+					'Last active': s.lastActivity,
+				})),
+			],
+		},
+	];
+	const active = sum((s) => s.sweeps) > 0;
+	return {
+		...info,
+		sections,
+		status: active ? 'ok' : info.status,
+		statusText: active ? 'Active' : info.statusText,
+	};
+}
+
+const piJanitorHandler: ExtensionHandler = {
+	name: 'pi-janitor',
+	displayName: 'Janitor',
+	enrich(info: ExtensionInfo): ExtensionInfo {
+		// Intentionally user-agnostic: enrichment happens at poll time without
+		// a request context, so no per-user stats may be attached here. The
+		// zero placeholder keeps the row clickable; /api/extensions swaps in
+		// the requesting user's own numbers.
+		info.sections = JANITOR_PLACEHOLDER.map((s) => ({ ...s, items: s.items.map((i) => ({ ...i })) }));
+		return info;
+	},
+};
+
+register(piJanitorHandler);
 
 /**
  * Get a handler for the given extension name, if one exists.

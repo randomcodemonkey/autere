@@ -11,7 +11,7 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { ProcessManager } from './process-manager.js';
 import { getUser, getUserRole, hasRole, requiredRole, verifyCredentials, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, isRegisteredUser } from './auth.js';
-import { withDedupSections } from './extension-handlers.js';
+import { withDedupSections, withJanitorSections } from './extension-handlers.js';
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionUsage, readSessionHistory, filterScopedModels, autoSessionName } from './utils.js';
 import { getPiEnvDir } from './pi-env.js';
@@ -324,13 +324,19 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       return;
     }
     if (url.pathname === '/api/extensions') {
-      // Dedup stats are per-user (each pi env has its own counters) and are
-      // injected per request — global state must never carry them, or any
-      // logged-in user could read other users' (user)names and counts.
+      // Dedup/janitor stats are per-user (each pi env has its own counters)
+      // and are injected per request — global state must never carry them, or
+      // any logged-in user could read other users' (user)names and counts.
       const data = extensionsState.map((e) => {
-        if (e.name !== 'pi-dedup') return e;
-        const patched = withDedupSections(e, user);
-        return { ...e, sections: patched.sections, status: patched.status, statusText: patched.statusText };
+        if (e.name === 'pi-dedup') {
+          const patched = withDedupSections(e, user);
+          return { ...e, sections: patched.sections, status: patched.status, statusText: patched.statusText };
+        }
+        if (e.name === 'pi-janitor') {
+          const patched = withJanitorSections(e, user);
+          return { ...e, sections: patched.sections, status: patched.status, statusText: patched.statusText };
+        }
+        return e;
       });
       sendJSON(res, { success: true, data });
       return;
@@ -1089,16 +1095,17 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           // Save user settings
           const prev = getAllUserSettings(user);
           saveUserSettings(user, settings);
-          // Reserve % is applied live by the pi-token-reserve extension (per
-          // model, no restart needed) — skip the restart when it's the only
-          // change, so the running session is not interrupted.
-          const onlyReservePercent = Object.keys(settings).every(
-            (k) => k === 'reserveTokensPercent' || prev[k] === (settings as any)[k]
+          // Reserve % and janitor sweep policy are applied live by their pi
+          // extensions (mtime-cached config reads, per model/call — no
+          // restart needed) — skip the restart when only those change, so
+          // the running session is not interrupted.
+          const onlyLiveApplyKeys = Object.keys(settings).every(
+            (k) => k === 'reserveTokensPercent' || k.startsWith('janitor') || prev[k] === (settings as any)[k]
           );
           // Restart the pi process so it picks the settings up — but never
           // kill an active turn: while streaming/compacting, queue a deferred
           // restart that ProcessManager applies at the next turn end.
-          if (onlyReservePercent) {
+          if (onlyLiveApplyKeys) {
             sendJSON(res, { success: true });
           } else if (session.state.sessionState.isStreaming || session.state.sessionState.compacting) {
             pm.queueRestart(token);

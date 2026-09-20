@@ -5,10 +5,31 @@
 
 import { parseCookies, extractFullText, formatToolArgs, dedupHistory, extractImages } from '../../src/shared/format';
 import { findSession, type SessionRef } from '../../src/shared/find-session';
-import { isRmCommand, extractRmPaths, accumulateUsage, sanitizeUserName, filterModelsByPatterns, sessionLocaleStamp, autoSessionName } from '../../src/shared/format';
+import { isRmCommand, extractRmPaths, accumulateUsage, sanitizeUserName, filterModelsByPatterns, matchModelMap, sessionLocaleStamp, autoSessionName } from '../../src/shared/format';
 import { pathIsIgnored } from '../../src/shared/edit-ignore';
 
 describe('Backend Utilities (real implementations)', () => {
+  describe('matchModelMap', () => {
+    const map = { 'z-ai/glm-5.3-flash': 10, 'claude-x': 50 };
+
+    it('matches exact provider/id keys first', () => {
+      expect(matchModelMap(map, 'z-ai', 'glm-5.3-flash')).to.equal(10);
+    });
+
+    it('matches bare-id keys for any provider', () => {
+      expect(matchModelMap(map, 'anthropic', 'claude-x')).to.equal(50);
+    });
+
+    it('matches provider-prefixed keys by id suffix (provider drift)', () => {
+      expect(matchModelMap(map, 'other', 'glm-5.3-flash')).to.equal(10);
+    });
+
+    it('returns undefined for unknown models and missing inputs', () => {
+      expect(matchModelMap(map, 'other', 'nope')).to.equal(undefined);
+      expect(matchModelMap(undefined, null, null)).to.equal(undefined);
+    });
+  });
+
   describe('parseCookies', () => {
     it('parses empty cookie string', () => {
       expect(parseCookies('')).to.deep.equal({});

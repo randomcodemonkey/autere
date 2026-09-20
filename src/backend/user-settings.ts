@@ -19,6 +19,7 @@ import { randomUUID } from 'crypto';
 import { USER_SETTINGS_DIR, PI_DIR } from './constants.js';
 import { getPiEnvDir, ensurePiEnv } from './pi-env.js';
 import { isPiImagesInstalled } from './image-models.js';
+import { matchModelMap } from '../shared/format.js';
 import { log } from './logger.js';
 
 interface UserSettings {
@@ -30,12 +31,19 @@ interface UserSettings {
 export interface SettingField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea';
+  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel';
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;
   listPlaceholder?: string;
   listAddLabel?: string;
+  /** Renderer config for type 'perModel': one control per entry of enabledModels */
+  perModel?: {
+    control: 'select' | 'number';
+    options?: { value: string; label: string }[];
+    min?: number;
+    max?: number;
+  };
 }
 
 export interface SettingSection {
@@ -157,6 +165,13 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
       try { piSettings = JSON.parse(readFileSync(piSettingsPath, 'utf-8')); } catch {}
     }
     let piSettingsChanged = false;
+    if ('modelThinkingLevels' in settings) {
+      // pi-native per-model startup/switch thinking levels, keyed
+      // "provider/modelId". Sanitized: unknown levels would poison pi's
+      // model switching, so they are dropped here.
+      piSettings.modelThinkingLevels = sanitizeModelThinkingLevels(settings.modelThinkingLevels);
+      piSettingsChanged = true;
+    }
     if ('enabledModels' in settings) {
       piSettings.enabledModels = settings.enabledModels;
       piSettingsChanged = true;
@@ -218,8 +233,12 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
       invalidateCache(configPath);
     }
     // Reserve-context policy file for the pi-token-reserve extension
-    if ('reserveTokensPercent' in settings) {
+    if ('reserveTokensPercent' in settings || 'reserveTokensPercentByModel' in settings) {
       writeReserveTokensConfig(user);
+    }
+    // Sweep policy file for the pi-janitor extension (live-read, no restart)
+    if ('janitorMinIdleSec' in settings || 'janitorKeepRecentTurns' in settings || 'janitorWarmGapMultiplier' in settings) {
+      writeJanitorConfig(user);
     }
   } catch (err) {
     log.settings.error(`Failed to apply settings to pi env for user "${user}":`, err);
@@ -260,6 +279,36 @@ export function getReserveTokensPercent(user: string): number {
   return Math.min(90, Math.max(0, Math.floor(n)));
 }
 
+/** Per-model reserve-% overrides, keyed like enabledModels entries. */
+export function getReservePercentByModel(user: string): Record<string, number> {
+  const raw = getUserSetting(user, 'reserveTokensPercentByModel', {});
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, number> = {};
+  for (const [key, v] of Object.entries(raw)) {
+    const n = typeof v === 'number' ? v : parseInt(String(v), 10);
+    if (Number.isFinite(n)) out[key] = Math.min(90, Math.max(0, Math.floor(n)));
+  }
+  return out;
+}
+
+/** Reserve % for one model: per-model override, else the default scalar. */
+export function getReservePercentForModel(user: string, provider?: string | null, id?: string | null): number {
+  const pct = matchModelMap(getReservePercentByModel(user), provider, id);
+  return pct ?? getReserveTokensPercent(user);
+}
+
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+/** Keep only non-empty keys with a known pi thinking level. */
+function sanitizeModelThinkingLevels(raw: any): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, v] of Object.entries(raw)) {
+    if (key.trim() && typeof v === 'string' && (THINKING_LEVELS as readonly string[]).includes(v)) out[key] = v;
+  }
+  return out;
+}
+
 /**
  * pi contextUsage annotated with the effective context window (total minus
  * the reserve-% policy applied by the pi-token-reserve extension), so the
@@ -267,8 +316,12 @@ export function getReserveTokensPercent(user: string): number {
  * Shared by every path that copies pi stats to the frontend (user-session
  * fetch/broadcast sites + the routes.ts session-switch path).
  */
-export function annotateContextUsage(user: string, cu: { tokens: number; contextWindow: number; percent: number }) {
-  const pct = getReserveTokensPercent(user);
+export function annotateContextUsage(
+  user: string,
+  cu: { tokens: number; contextWindow: number; percent: number },
+  model?: { provider?: string; id?: string } | null,
+) {
+  const pct = getReservePercentForModel(user, model?.provider, model?.id);
   const effectiveWindow = cu.contextWindow > 0 && pct > 0
     ? cu.contextWindow - Math.floor((cu.contextWindow * pct) / 100)
     : cu.contextWindow;
@@ -285,10 +338,41 @@ export function writeReserveTokensConfig(user: string): void {
   try {
     const envDir = ensurePiEnv(user);
     const tmp = join(envDir, `.pi-token-reserve-config-tmp-${randomUUID()}`);
-    writeFileSync(tmp, JSON.stringify({ percent: getReserveTokensPercent(user) }), 'utf-8');
+    writeFileSync(tmp, JSON.stringify({
+      percent: getReserveTokensPercent(user),
+      perModel: getReservePercentByModel(user),
+    }), 'utf-8');
     renameSync(tmp, join(envDir, 'pi-token-reserve-config.json'));
   } catch (err) {
     log.settings.error(`Failed to write pi-token-reserve-config.json for user "${user}":`, err);
+  }
+}
+
+// ── Janitor sweep policy (consumed live by extras/pi-janitor — same pattern
+// as pi-token-reserve: settings save materializes a config file into the
+// user's env; the extension mtime-caches and applies it per LLM call) ──
+
+export function getJanitorSettings(user: string): { minIdleSec: number; keepRecentTurns: number; warmGapMultiplier: number } {
+  const num = (key: string, def: number, lo: number, hi: number) => {
+    const raw = getUserSetting(user, key, def);
+    const n = typeof raw === 'number' ? raw : parseInt(raw, 10);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.floor(n))) : def;
+  };
+  return {
+    minIdleSec: num('janitorMinIdleSec', 600, 60, 7200),
+    keepRecentTurns: num('janitorKeepRecentTurns', 3, 1, 20),
+    warmGapMultiplier: num('janitorWarmGapMultiplier', 2, 1, 4),
+  };
+}
+
+export function writeJanitorConfig(user: string): void {
+  try {
+    const envDir = ensurePiEnv(user);
+    const tmp = join(envDir, `.janitor-config-tmp-${randomUUID()}`);
+    writeFileSync(tmp, JSON.stringify(getJanitorSettings(user)), 'utf-8');
+    renameSync(tmp, join(envDir, 'janitor-config.json'));
+  } catch (err) {
+    log.settings.error(`Failed to write janitor-config.json for user "${user}":`, err);
   }
 }
 
@@ -467,6 +551,11 @@ function getUserSettingsDefaults(user: string): UserSettings {
   defaults.imageStreamFix = true;
 
   defaults.reserveTokensPercent = 0;
+  defaults.reserveTokensPercentByModel = {};
+  defaults.modelThinkingLevels = {};
+  defaults.janitorMinIdleSec = 600;
+  defaults.janitorKeepRecentTurns = 3;
+  defaults.janitorWarmGapMultiplier = 2;
 
   // Pi settings defaults
   defaults.enabledModels = readJsonCached(join(PI_DIR, 'settings.json'))?.enabledModels || [];
@@ -597,9 +686,9 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
       },
       {
         key: 'reserveTokensPercent',
-        label: 'Reserved context (%)',
+        label: 'Reserved context — default (%)',
         type: 'number',
-        description: "This percentage of the current model's context window cannot be used (0-90; 0 = pi default of 16384 tokens) — usable context shrinks accordingly, so automatic compaction triggers earlier. Recalculated per model; applies to the running session without a pi restart.",
+        description: "Fallback reserve for models without a per-model value (see Models). This percentage of the model's context window cannot be used (0-90; 0 = pi default of 16384 tokens) — usable context shrinks accordingly, so automatic compaction triggers earlier. Applies to the running session without a pi restart.",
       },
       {
         key: 'editIgnorePaths',
@@ -637,6 +726,31 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
   });
 
   sections.push({
+    id: 'janitor',
+    label: 'Janitor',
+    fields: [
+      {
+        key: 'janitorMinIdleSec',
+        label: 'Sweep minimum idle (s)',
+        type: 'number',
+        description: 'Never sweep before this much idle time (60-7200). The real threshold is this or the observed cache TTL × margin, whichever is larger — after a longer idle the cache is cold, so rewriting history is free. Applies to the running session without a pi restart.',
+      },
+      {
+        key: 'janitorWarmGapMultiplier',
+        label: 'Cache margin (×)',
+        type: 'number',
+        description: 'Safety margin on the observed cache TTL — the longest idle gap that still saw a cache hit (1-4; default 2). Lower = more eager, higher risk of busting a still-warm cache when provider TTLs fluctuate. Applies without a pi restart.',
+      },
+      {
+        key: 'janitorKeepRecentTurns',
+        label: 'Keep recent turns',
+        type: 'number',
+        description: 'User turns the janitor always leaves intact (1-20; default 3) — everything older (tool results, edit diffs, images over ~50 chars) gets stubbed. Applies without a pi restart.',
+      },
+    ],
+  });
+
+  sections.push({
     id: 'models',
     label: 'Models',
     fields: [
@@ -647,6 +761,26 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
         description: 'Models available for selection (provider/model). Drag to reorder priority.',
         listPlaceholder: 'e.g. anthropic/claude-sonnet-4-20250514',
         listAddLabel: 'Add Model',
+      },
+      {
+        key: 'modelThinkingLevels',
+        label: 'Thinking level per model',
+        type: 'perModel',
+        perModel: {
+          control: 'select',
+          options: [
+            { value: '', label: 'pi default' },
+            ...THINKING_LEVELS.map((l) => ({ value: l, label: l })),
+          ],
+        },
+        description: 'Reasoning/thinking level per enabled model. pi applies it on session start and on every model switch (xhigh/max are honored only by models that support them). Saving restarts the agent.',
+      },
+      {
+        key: 'reserveTokensPercentByModel',
+        label: 'Reserved context per model (%)',
+        type: 'perModel',
+        perModel: { control: 'number', min: 0, max: 90 },
+        description: "Per-model compaction reserve as % of that model's context window (0-90). Overrides the default in Chat; empty = use the default. Applies to the running session without a pi restart.",
       },
     ],
   });

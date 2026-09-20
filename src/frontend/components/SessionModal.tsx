@@ -60,6 +60,7 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   const [nameSaving, setNameSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [personas, setPersonas] = useState<Persona[]>([]);
+  const [personasStatus, setPersonasStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [personaId, setPersonaId] = useState('');
   const searchSeq = useRef(0);
 
@@ -70,11 +71,16 @@ export const SessionModal: React.FC<SessionModalProps> = ({
       setNameInput(sessionName || '');
       setPersonaId('');
       setLoaded(false);
+      setPersonas([]);
+      setPersonasStatus('loading');
       // Persona choices for new sessions — only needed while the modal is open
       fetch(url('/api/personas'))
         .then((res) => res.json())
-        .then((data) => { if (data.success) setPersonas(data.data || []); })
-        .catch(() => {});
+        .then((data) => {
+          if (data.success) { setPersonas(data.data || []); setPersonasStatus('ready'); }
+          else setPersonasStatus('error');
+        })
+        .catch(() => setPersonasStatus('error'));
     }
   }, [open, sessionName]);
 
@@ -186,22 +192,30 @@ export const SessionModal: React.FC<SessionModalProps> = ({
             ✨ New Session
           </button>
 
-          {personas.length > 0 && (
-            <div className="session-persona-row">
-              <label className="settings-label" htmlFor="session-persona-select">Persona for new session</label>
-              <select
-                id="session-persona-select"
-                className="settings-input"
-                value={personaId}
-                onChange={(e) => setPersonaId(e.target.value)}
-              >
-                <option value="">No persona</option>
-                {personas.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/* Always rendered (states below) so the modal doesn't jump when personas arrive */}
+          <div className="session-persona-row">
+            <label className="settings-label" htmlFor="session-persona-select">Persona for new session</label>
+            <select
+              id="session-persona-select"
+              className="settings-input"
+              value={personaId}
+              onChange={(e) => setPersonaId(e.target.value)}
+              disabled={personasStatus !== 'ready' || personas.length === 0}
+            >
+              {personasStatus === 'loading' && <option value="">Loading personas</option>}
+              {personasStatus === 'error' && <option value="">Failed to load personas</option>}
+              {personasStatus === 'ready' && (personas.length === 0 ? (
+                <option value="">No personas available</option>
+              ) : (
+                <>
+                  <option value="">No persona</option>
+                  {personas.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </>
+              ))}
+            </select>
+          </div>
         </div>
 
         <input

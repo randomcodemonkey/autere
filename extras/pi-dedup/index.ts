@@ -25,7 +25,7 @@ import { homedir } from "node:os";
 import { join, basename } from "node:path";
 
 const STATS_FILE = "dedup-stats.json";
-const MIN_CHARS = 400; // pointer must cost far less than the block it replaces
+const MIN_SAVED_CHARS = 20; // elide only when the block beats the pointer by this margin
 const MAX_SESSIONS = 100; // stats-file keys kept (oldest lastElision pruned)
 const CHARS_PER_TOKEN = 4;
 
@@ -87,7 +87,7 @@ export default function (pi: any) {
 		const blocks = Array.isArray(event.content) ? event.content : [];
 		if (blocks.length === 0 || !blocks.every((b: any) => b?.type === "text")) return;
 		const text = blocks.map((b: any) => b.text ?? "").join("\n");
-		if (text.length < MIN_CHARS) return;
+		if (text.length < MIN_SAVED_CHARS) return;
 
 		let set = seen.get(key);
 		if (!set) {
@@ -100,12 +100,13 @@ export default function (pi: any) {
 			return;
 		}
 
-		// Duplicate → pointer to the in-context first occurrence
-		const approxTokens = Math.round(text.length / CHARS_PER_TOKEN);
+		// Duplicate → pointer to the in-context first occurrence. Elide only
+		// when the block is big enough to actually pay for the pointer.
 		const pointer =
-			`⟪pi-dedup: this ${event.toolName} result is identical to an earlier result in this conversation (elided). ` +
-			`Re-run the tool if you need the exact text. Original: ${text.length} chars ≈ ${approxTokens} tokens.⟫`;
-		const saved = Math.max(0, text.length - pointer.length);
+			`⟪pi-dedup: this ${event.toolName} result is identical to an earlier result; re-run the tool if needed⟫`;
+		const saved = text.length - pointer.length;
+		if (saved < MIN_SAVED_CHARS) return;
+		const approxTokens = Math.round(saved / CHARS_PER_TOKEN);
 		recordElision(key, saved);
 
 		return { content: [{ type: "text", text: pointer }] };

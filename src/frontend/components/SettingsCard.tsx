@@ -190,6 +190,54 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       );
     }
 
+    if (field.type === 'perModel') {
+      const map: Record<string, string | number> = value && typeof value === 'object' ? value : {};
+      const models: string[] = Array.isArray(settings.enabledModels) ? settings.enabledModels : [];
+      // '' clears the entry → the row falls back to the field's default
+      const setEntry = (model: string, v: string) => {
+        const next = { ...map };
+        if (v === '') delete next[model];
+        else next[model] = v;
+        handleChange(field.key, next);
+      };
+      return (
+        <FieldShell key={field.key} field={field}>
+          {models.length === 0 ? (
+            <div className="settings-description">Add enabled models first.</div>
+          ) : (
+            <div className="settings-per-model">
+              {models.map((m) => (
+                <div key={m} className="settings-per-model-row">
+                  <span className="settings-per-model-name">{m}</span>
+                  {field.perModel?.control === 'select' ? (
+                    <select
+                      className="settings-input"
+                      value={String(map[m] ?? '')}
+                      onChange={(e) => setEntry(m, e.target.value)}
+                    >
+                      {(field.perModel?.options || []).map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="number"
+                      className="settings-input"
+                      min={field.perModel?.min}
+                      max={field.perModel?.max}
+                      placeholder="default"
+                      value={String(map[m] ?? '')}
+                      onChange={(e) => setEntry(m, e.target.value)}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </FieldShell>
+      );
+    }
+
     return (
       <FieldShell key={field.key} field={field}>
         <input
