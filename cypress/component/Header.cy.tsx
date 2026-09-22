@@ -92,8 +92,6 @@ describe('Header', () => {
     mountHeader({ statusType: 'streaming', statusText: 'Working' });
     cy.get('.session-badge.status-streaming').should('exist');
     cy.get('.session-badge .connection-dot.dot-yellow').should('exist');
-    mountHeader({ workingExternal: true });
-    cy.get('.session-badge.status-external .dot-pulse-amber').should('exist');
   });
 
   it('session badge is clickable and triggers the status action', () => {
@@ -114,10 +112,5 @@ describe('Header', () => {
   it('shows disconnected header styling', () => {
     mountHeader({ statusType: 'disconnected', statusText: 'Disconnected' });
     cy.get('.header').should('have.class', 'header-disconnected');
-  });
-
-  it('shows external activity styling', () => {
-    mountHeader({ workingExternal: true });
-    cy.get('.header').should('have.class', 'header-external');
   });
 });

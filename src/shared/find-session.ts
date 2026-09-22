@@ -7,7 +7,6 @@
 export interface SessionRef {
   id: string;
   sessionFile: string;
-  [key: string]: unknown;
 }
 
 /**

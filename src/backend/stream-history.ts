@@ -160,6 +160,15 @@ export function readAllMessageEntries(sessionFile: string): any[] {
  * (`{ type: 'message', message, timestamp }`) — the entry-level timestamp
  * is used as a fallback when the message itself has none.
  */
+/** pi messages normally carry array content, but custom/persona messages can
+ *  carry a plain string (or none). Text extraction must tolerate all shapes. */
+function msgText(content: any): string {
+  if (Array.isArray(content)) {
+    return content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
+  }
+  return typeof content === 'string' ? content : '';
+}
+
 export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
   const entries = rawMessages.map((raw: any) => ({
     msg: raw.message || raw,
@@ -193,6 +202,28 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
 
   const out = entries
     .flatMap(({ msg, entryTimestamp }: any) => {
+      try {
+        return buildOneEntry(msg, entryTimestamp, toolCallArgs, matchedCallIds, toolCallInfo);
+      } catch (err) {
+        // One malformed entry must never abort the whole history load —
+        // that silently wiped sessions after respawn (see persona markers
+        // with string content in get_messages).
+        console.warn(`[stream-history] skipped malformed message (role=${msg.role}):`, err instanceof Error ? err.message : err);
+        return [];
+      }
+    }) as any[];
+  // Custom 'file_saved' entries become 'file' pseudo-entries (downloadable
+  // file cards) — same treatment images get from splitImageEntry.
+  return out;
+}
+
+function buildOneEntry(
+  msg: any,
+  entryTimestamp: any,
+  toolCallArgs: Map<string, any>,
+  matchedCallIds: Set<string>,
+  toolCallInfo: (id: string | undefined) => any,
+): any[] {
       // Custom entries (file_saved / file_change) are part of the file's
       // chronological order — render them in place, NOT appended at the end.
       if (msg.customType === 'file_saved' && msg.data?.savedName) {
@@ -272,16 +303,15 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
         return out;
       }
 
-      // model_change and other non-renderable roles have no text content
-      const text = msg.content?.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('') || '';
+      // model_change, compactionSummary and other non-renderable roles have
+      // no text content; custom/persona messages carry string content but are
+      // not rendered (the live path ignores them too — keep both consistent).
+      if (role === 'custom') return [];
+      const text = msgText(msg.content);
       const images = extractImages(msg.content);
       return text || images.length > 0
         ? [{ role, text, streaming: false, timestamp, ...(images.length > 0 ? { images } : {}) }]
         : [];
-    }) as any[];
-  // Custom 'file_saved' entries become 'file' pseudo-entries (downloadable
-  // file cards) — same treatment images get from splitImageEntry.
-  return out;
 }
 
 // ── Image pseudo-entry ──

@@ -21,8 +21,17 @@ import { AUTH_TOKENS_FILE, AUTH_TOKEN_EXPIRY_MS } from './constants.js';
 import { log } from './logger.js';
 import { getPiEnvDir } from './pi-env.js';
 import { parseCookies } from '../shared/format.js';
+import {
+  initUserRegistry,
+  isRegisteredUser as registryHasUser,
+  getUserRole as registryUserRole,
+  verifyUser,
+  getMustChangePassword,
+  type Role,
+} from './users.js';
 
 export { parseCookies };
+export type { Role } from './users.js';
 
 // ── Auth state ──
 
@@ -31,17 +40,7 @@ interface TokenEntry {
   user: string;
 }
 
-export type Role = 'chat' | 'control' | 'admin';
-
 const ROLE_LEVEL: Record<Role, number> = { chat: 1, control: 2, admin: 3 };
-
-interface UserEntry {
-  password: string;
-  role: Role;
-}
-
-// User registry — populated by resolveAuth() from env/flags
-const users: Record<string, UserEntry> = {};
 
 let authTokens: Map<string, TokenEntry> = new Map();
 let authEnabled = true;
@@ -147,14 +146,19 @@ export function getUser(req: IncomingMessage): string | null {
   return entry?.user || null;
 }
 
-/** Whether the user exists in the user registry */
+/** Whether the user exists in the user registry (file-backed, see users.ts) */
 export function isRegisteredUser(user: string): boolean {
-  return user in users;
+  return registryHasUser(user);
 }
 
 /** Get the role for a user */
 export function getUserRole(user: string): Role {
-  return users[user]?.role ?? 'chat';
+  return registryUserRole(user);
+}
+
+/** Whether the user must change their password before using the dashboard */
+export function userMustChangePassword(user: string): boolean {
+  return getMustChangePassword(user);
 }
 
 /** Whether the user's role satisfies the required level (chat < control < admin) */
@@ -164,8 +168,7 @@ export function hasRole(user: string, role: Role): boolean {
 
 /** Verify a login attempt against the user registry */
 export function verifyCredentials(user: string, password: string): boolean {
-  const entry = users[user];
-  return !!entry && entry.password === password;
+  return verifyUser(user, password);
 }
 
 /**
@@ -184,13 +187,19 @@ const CONTROL_ROUTES = new Set([
   'POST /api/extensions/packages',
 ]);
 
-const ADMIN_ROUTES = new Set(['POST /api/restart-backend']);
+const ADMIN_ROUTES = new Set([
+  'POST /api/restart-backend',
+  'GET /api/users',
+  'POST /api/users',
+]);
 
 export function requiredRole(method: string, pathname: string): Role {
   const key = `${method} ${pathname}`;
   if (ADMIN_ROUTES.has(key)) return 'admin';
   if (CONTROL_ROUTES.has(key)) return 'control';
   if (pathname.startsWith('/api/scheduler/tasks/') && method === 'DELETE') return 'control';
+  // /api/users/<name> update (POST) and delete (DELETE) — admin
+  if (pathname.startsWith('/api/users/')) return 'admin';
   return 'chat';
 }
 
@@ -212,13 +221,13 @@ export function resolveAuth(pi: { getFlag: (name: string) => any }) {
   // back-compat with existing deployments, then the documented default.
   const adminName = process.env.AUTERE_ADMIN_USER || 'admin';
   const adminPassword = process.env.AUTERE_ADMIN_PASSWORD || authPassword || 'admin';
-  users[adminName] = { password: adminPassword, role: 'admin' };
-  if (authPassword) users['user'] = { password: authPassword, role: 'control' };
+  // File-backed registry seeds from env on FIRST start; afterwards the file
+  // is authoritative (env password changes do not reset stored accounts).
+  initUserRegistry({ adminName, adminPassword, monitorPassword: authPassword });
   if (authEnabled) {
     if (!process.env.AUTERE_ADMIN_PASSWORD && !authPassword) {
       log.auth.warn('No AUTERE_ADMIN_PASSWORD / monitor password configured — admin password defaults to "admin"');
     }
-    log.auth.info(`Registered users: ${Object.keys(users).join(', ')}`);
   }
   loadAuthTokens();
   if (!authEnabled) {
@@ -230,6 +239,19 @@ export function resolveAuth(pi: { getFlag: (name: string) => any }) {
 
 export function getAuthEnabled(): boolean {
   return authEnabled;
+}
+
+/** Remove and return all tokens belonging to a user (invalidates their sessions) */
+export function removeUserTokens(user: string): string[] {
+  const removed: string[] = [];
+  for (const [token, entry] of authTokens) {
+    if (entry.user === user) {
+      authTokens.delete(token);
+      removed.push(token);
+    }
+  }
+  if (removed.length > 0) saveAuthTokens();
+  return removed;
 }
 
 /** Add auth token for a user */

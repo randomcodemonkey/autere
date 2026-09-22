@@ -58,32 +58,61 @@ export { extractFullText } from '../shared/format.js';
 
 // ── Session file I/O ──
 
-export function readSessionUsage(sessionFile: string): SessionUsageResult {
+export function readSessionUsage(
+  sessionFile: string,
+  price?: (modelId: string | undefined, usage: any) => number,
+): SessionUsageResult {
   const stats: SessionUsageResult = {
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     messageCount: 0,
     requestCount: 0,
+    cost: 0,
   };
   try {
     if (!existsSync(sessionFile)) return stats;
     const content = readFileSync(sessionFile, 'utf-8');
     const lines = content.split('\n');
+    let lastModel: string | undefined;
+    const addCost = (modelId: string | undefined, usage: any) => {
+      const piCost = Number(usage?.cost?.total);
+      stats.cost += Number.isFinite(piCost) && piCost > 0 ? piCost : price ? price(modelId, usage) : 0;
+    };
     for (let i = 1; i < lines.length; i++) {
       if (!lines[i].trim()) continue;
       try {
         const entry = JSON.parse(lines[i]);
-        if (entry.type === 'message' && entry.message?.role === 'assistant') {
-          stats.messageCount++;
-          const usage = entry.message.usage;
+        if (entry.type === 'compaction' && entry.usage) {
+          // Compaction is a real billed LLM call; price it at the model in
+          // effect when it ran (compaction entries carry no model of their own).
+          const u = entry.usage;
+          stats.tokens.input += u.input || 0;
+          stats.tokens.output += u.output || 0;
+          stats.tokens.cacheRead += u.cacheRead || 0;
+          stats.tokens.cacheWrite += u.cacheWrite || 0;
+          addCost(lastModel, u);
+          continue;
+        }
+        if (entry.type !== 'message') continue;
+        stats.messageCount++;
+        const message = entry.message;
+        if (message?.role === 'assistant') {
+          stats.requestCount++;
+          lastModel = message.model || lastModel;
+          const usage = message.usage;
           if (usage) {
             stats.tokens.input += usage.input || 0;
             stats.tokens.output += usage.output || 0;
             stats.tokens.cacheRead += usage.cacheRead || 0;
             stats.tokens.cacheWrite += usage.cacheWrite || 0;
+            addCost(message.model, usage);
           }
-        }
-        if (entry.type === 'message' && entry.message?.role === 'user') {
-          stats.requestCount++;
+        } else if (message?.role === 'toolResult' && message.usage) {
+          // pi counts toolResult usage in its session stats — mirror it
+          const usage = message.usage;
+          stats.tokens.input += usage.input || 0;
+          stats.tokens.output += usage.output || 0;
+          stats.tokens.cacheRead += usage.cacheRead || 0;
+          stats.tokens.cacheWrite += usage.cacheWrite || 0;
         }
       } catch (lineErr) { log.utils.error('Failed to parse session usage line:', lineErr); continue; }
     }

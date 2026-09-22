@@ -10,7 +10,6 @@ export interface SessionState {
   sessionName: string | null;
   connected: boolean;
   startTime: number;
-  externalActivity: boolean;
   compacting: boolean;
   /** Persona bound to the current session — null/undefined when none */
   persona?: { id: string; name: string } | null;
@@ -109,12 +108,19 @@ export interface AvailableModel {
 export interface SettingField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea';
+  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel';
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;
   listPlaceholder?: string;
   listAddLabel?: string;
+  /** Renderer config for type 'perModel': one control per entry of enabledModels */
+  perModel?: {
+    control: 'select' | 'number';
+    options?: { value: string; label: string }[];
+    min?: number;
+    max?: number;
+  };
 }
 
 export interface SettingSection {
@@ -142,6 +148,9 @@ export interface SessionInfo {
   createdAt: number;
   lastActivity: number;
   cwd: string | null;
+  /** Live flags: its pi process is running / its turn is in flight */
+  active?: boolean;
+  streaming?: boolean;
 }
 
 export type SSEEventType =
@@ -160,7 +169,6 @@ export type SSEEventType =
   | 'new_session_creating'
   | 'navigate'
   | 'error'
-  | 'session_activity'
   | 'heartbeat';
 export interface SSEMessage {
   type: SSEEventType;
@@ -206,4 +214,20 @@ export interface TaskRunLog extends TaskRunRecord {
   resultScriptOutput?: string;
   /** Progress lines — t is UTC epoch ms, formatted in the user's locale/tz on render */
   log: Array<{ t: number; line: string }>;
+}
+
+// ── User management ──
+
+export type DirAccess = 'read' | 'rw';
+
+export interface AllowedDir {
+  path: string;
+  access: DirAccess;
+}
+
+export interface ManagedUser {
+  username: string;
+  role: 'chat' | 'control' | 'admin';
+  mustChangePassword: boolean;
+  allowedDirs: AllowedDir[];
 }

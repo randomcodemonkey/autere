@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { SSEMessage } from '../types';
 import { url } from '../base-path';
+import { getClientId } from '../client-id';
 
 interface UseSSEOptions {
   onMessage?: (msg: SSEMessage) => void;
@@ -64,7 +65,7 @@ export function useSSE(options: UseSSEOptions = {}) {
     }
 
     setConnecting(true);
-    const es = new EventSource(url('/events'));
+    const es = new EventSource(url(`/events?clientId=${encodeURIComponent(getClientId())}`));
     eventSourceRef.current = es;
 
     es.onopen = () => {

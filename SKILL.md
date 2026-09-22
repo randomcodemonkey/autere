@@ -210,13 +210,36 @@ Env: `PI_MONITOR_PASSWORD`, `PI_MONITOR_AUTH`, `PI_IMAGES_MODEL`,
 - **chat** — converse and view: send/abort/compact, sessions, models, state
 - **control** — everything except restarting autere itself: settings save,
   personas library, scheduled tasks, session deletion
-- **admin** — everything, including `/api/restart-backend` (the only admin
-  route; the frontend hides the button for non-admins)
+- **admin** — everything, including `/api/restart-backend` and user
+  management (Users view + `/api/users*` endpoints)
 
 The admin account comes from `AUTERE_ADMIN_USER`/`AUTERE_ADMIN_PASSWORD`
 (falling back to the monitor password, then `admin`/`admin`). The legacy
 shared `user` account (monitor password) has the `control` role and only
 exists when a monitor password is configured.
+
+## User management
+
+Admin-managed account registry in `~/.autere/monitor-users.json`
+(`AUTERE_USERS_FILE` overrides — e2e sets it; a future sqlite table would
+replace `src/backend/users.ts`'s JSON load/save only). Seeded ONCE from
+`AUTERE_ADMIN_*` / monitor password when the file doesn't exist; afterwards
+the file is authoritative (env password changes no longer reset accounts —
+delete the file to re-seed). Passwords are scrypt hashes (`s2:salt:hash`).
+
+- Admin UI: Users view (`/session/:id/users`, Header button for admin role
+  only) — `UsersCard.tsx`: create/edit/delete users, per-user
+  `allowedDirs: [{path, access: 'read'|'rw'}]` (the future per-user container
+  mounts), role, optional password reset. Guards: no self-delete, no
+  deleting/demoting the last admin.
+- Endpoints: `GET/POST /api/users`, `POST/DELETE /api/users/<name>` (admin),
+  `POST /api/auth/change-password` (self, any role).
+- Forced password change: new users (and admin password resets) get
+  `mustChangePassword`; the backend 403s every API call except
+  change-password/logout until it is cleared, and the frontend shows a
+  full-screen ChangePasswordScreen (App.tsx).
+- Deleting a user removes their auth tokens (sessions invalidated) and
+  terminates their pi processes; their pi env dir stays on disk.
 
 Logs (supervisord instance): `~/log/autere.out.log` / `~/log/autere.err.log`
 (err log includes EVENT LOOP LAG warnings — useful for diagnosing load).

@@ -14,7 +14,6 @@ interface StreamCardProps {
   steerPending?: number;
   followUpPending?: number;
   model?: { provider: string; id: string; name: string } | null;
-  externalActivity?: boolean;
   models?: AvailableModel[];
   activeModelId?: string | null;
   onModelsFetched?: (models: AvailableModel[]) => void;
@@ -37,7 +36,7 @@ const TRUNC_LEN: Record<string, number> = {
 /** Collapse edit diffs longer than this many diff rows */
 const EDIT_COLLAPSE_ROWS = 12;
 
-export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError, steerPending, followUpPending, model, externalActivity, models, activeModelId, onModelsFetched, onSent, onCancelPending, sessionId }) => {
+export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError, steerPending, followUpPending, model, models, activeModelId, onModelsFetched, onSent, onCancelPending, sessionId }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const [filters, setFilters] = useState({
     thinking: localStorage.getItem('autere-filter-thinking') !== 'off',
@@ -105,7 +104,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
       const res = await fetch(url('/api/set-model'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, modelId }),
+        body: JSON.stringify({ provider, modelId, sessionId }),
       });
       const data = await res.json();
       if (!data.success) onCommandError?.('Failed to change model');
@@ -296,9 +295,9 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
             </div>
           )}
         </span>
-        {(externalActivity || isStreaming || compacting) && (
-          <span className={`chat-model-external${externalActivity ? '' : compacting ? ' chat-model-compacting' : ' chat-model-active'}`}>
-            {externalActivity ? 'Active elsewhere' : compacting ? 'Compacting' : 'Active'}
+        {(isStreaming || compacting) && (
+          <span className={`chat-model-external${compacting ? ' chat-model-compacting' : ' chat-model-active'}`}>
+            {compacting ? 'Compacting' : 'Active'}
           </span>
         )}
       </div>
@@ -339,7 +338,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
           </button>
         )}
       </div>
-      <ChatInput onNewSession={onNewSession} onCompact={onCompact} onError={onCommandError} disabled={compacting || externalActivity} isStreaming={isStreaming} isActive={isStreaming || compacting} steerPending={steerPending} followUpPending={followUpPending} onSent={onSent} sessionId={sessionId} />
+      <ChatInput onNewSession={onNewSession} onCompact={onCompact} onError={onCommandError} disabled={compacting} isStreaming={isStreaming} isActive={isStreaming || compacting} steerPending={steerPending} followUpPending={followUpPending} onSent={onSent} sessionId={sessionId} />
     </div>
   );
 };

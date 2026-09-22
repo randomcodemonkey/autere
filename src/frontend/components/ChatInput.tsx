@@ -176,7 +176,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
         res = await fetch(url('/api/send'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text, type, ...(images.length > 0 ? { images } : {}) }),
+          body: JSON.stringify({ message: text, type, sessionId, ...(images.length > 0 ? { images } : {}) }),
           signal: abort.signal,
         });
       } finally {

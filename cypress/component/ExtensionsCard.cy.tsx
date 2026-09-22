@@ -3,7 +3,7 @@ import { ExtensionsCard } from '../../src/frontend/components/ExtensionsCard';
 import type { ExtensionInfo } from '../../src/frontend/types';
 
 const ext = (over: Partial<ExtensionInfo>): ExtensionInfo => ({
-  name: 'pi-janitor', displayName: 'Janitor', configPath: null, hasConfig: false,
+  name: 'pi-janitor', displayName: 'Janitor', configPath: '', hasConfig: false,
   status: 'ok', statusText: 'Active', details: {},
   sections: [{ header: 'Cleanups', items: [{ 'Sweeps': 0 }] }],
   ...over,
@@ -98,7 +98,7 @@ describe('ExtensionsCard', () => {
 
   it('shows per-user stats from /api/extensions instead of the zero placeholders', () => {
     const props: ExtensionInfo[] = [{
-      name: 'pi-janitor', displayName: 'Janitor', configPath: null, hasConfig: false,
+      name: 'pi-janitor', displayName: 'Janitor', configPath: '', hasConfig: false,
       status: 'neutral', statusText: '', details: {},
       sections: [{ header: 'Cleanups', items: [{ 'Sweeps': 0 }] }],
     }];
@@ -121,7 +121,7 @@ describe('ExtensionsCard', () => {
     const extensions: ExtensionInfo[] = [{
       name: 'pi-janitor',
       displayName: 'Janitor',
-      configPath: null,
+      configPath: '',
       hasConfig: false,
       status: 'ok',
       statusText: 'Active',

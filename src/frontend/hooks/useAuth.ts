@@ -7,6 +7,7 @@ export function useAuth() {
   const [loginError, setLoginError] = useState('');
   const [userRole, setUserRole] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
 
   const checkAuthStatus = useCallback(async (): Promise<boolean> => {
     try {
@@ -17,12 +18,14 @@ export function useAuth() {
         setAuthenticated(false);
         setUserRole(null);
         setUsername(null);
+        setMustChangePassword(false);
         return false;
       }
       setAuthEnabled(data.data.authEnabled);
       setAuthenticated(true);
       setUserRole(data.data.role || null);
       setUsername(data.data.user || null);
+      setMustChangePassword(!!data.data.mustChangePassword);
       return true;
     } catch {
       return false;
@@ -71,5 +74,5 @@ export function useAuth() {
     setAuthenticated(false);
   }, []);
 
-  return { authenticated, authEnabled, loginError, userRole, username, checkAuthStatus, login, logout };
+  return { authenticated, authEnabled, loginError, userRole, username, mustChangePassword, checkAuthStatus, login, logout };
 }

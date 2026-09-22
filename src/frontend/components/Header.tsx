@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { url } from '../base-path';
 
-export type ViewId = 'status' | 'chat' | 'settings' | 'tasks' | 'edits';
+export type ViewId = 'status' | 'chat' | 'settings' | 'tasks' | 'edits' | 'users';
 
 const VIEW_LABELS: Record<ViewId, string> = {
   status: 'Status',
@@ -9,6 +9,7 @@ const VIEW_LABELS: Record<ViewId, string> = {
   settings: 'Settings',
   tasks: 'Tasks',
   edits: 'Edits',
+  users: 'Users',
 };
 
 // Mobile (hamburger) menu labels — overrides for views whose desktop
@@ -26,8 +27,9 @@ interface HeaderProps {
   activeView: ViewId;
   onViewChange: (view: ViewId) => void;
   onStatusClick: () => void;
-  workingExternal?: boolean;
   isActive?: boolean;
+  /** Admin-only views (e.g. Users) are only rendered for this role */
+  userRole?: string | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -38,7 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeView,
   onViewChange,
   onStatusClick,
-  workingExternal,
+  userRole,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const displayName = sessionName
@@ -46,10 +48,12 @@ export const Header: React.FC<HeaderProps> = ({
     : (sessionId ? sessionId.slice(0, 6) + '…' : 'session');
   const dotClass = statusType === 'connected' ? 'green' : statusType === 'streaming' ? 'yellow' : statusType === 'disconnected' ? 'red' : 'gray';
 
+  // Users management is admin-only
   const viewIds: ViewId[] = ['status', 'chat', 'edits', 'settings', 'tasks'];
+  if (userRole === 'admin') viewIds.push('users');
 
   return (
-    <div className={`header${statusType === 'disconnected' ? ' header-disconnected' : ''}${workingExternal ? ' header-external' : ''}`}>
+    <div className={`header${statusType === 'disconnected' ? ' header-disconnected' : ''}`}>
       <h1><img className="logo-icon" src={url('/logo.svg')} alt="autere" /> autere</h1>
       <div className="header-menu">
         {/* Desktop: inline segmented menu (status item hidden via CSS) */}
@@ -101,13 +105,11 @@ export const Header: React.FC<HeaderProps> = ({
           Clicking opens the sessions modal (all viewports) — the modal is
           the single session-management entry point. */}
       <span
-        className={`session-badge status-badge status-${statusType}${workingExternal ? ' status-external' : ''}`}
+        className={`session-badge status-badge status-${statusType}`}
         title={`${statusText} — click to manage session`}
         onClick={onStatusClick}
       >
-        {workingExternal
-          ? <span className="connection-dot dot-pulse-amber" />
-          : <span className={`connection-dot dot-${dotClass}`} />}
+        <span className={`connection-dot dot-${dotClass}`} />
         <span className="session-badge-text">{displayName}</span>
       </span>
     </div>

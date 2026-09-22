@@ -106,6 +106,11 @@ async function main() {
   // Start the HTTP server
   createMonitorServer(config.port, pm, scheduler);
 
+  // A stray rejection in an async handler must never take the server down
+  process.on('unhandledRejection', (reason) => {
+    log.server.error(`Unhandled rejection: ${reason instanceof Error ? reason.stack : reason}`);
+  });
+
   log.server.info(`Dashboard running at http://localhost:${config.port}`);
   log.server.info(`pi processes will be spawned on user login (idle timeout: ${config.idleTimeoutMinutes}min)`);
 

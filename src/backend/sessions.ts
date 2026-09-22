@@ -44,8 +44,14 @@ function chunkLines(chunk: HeaderChunk): string[] {
 /**
  * Read a session's metadata using partial reads. Returns null when the fast
  * path can't produce a trustworthy result (caller falls back to a full read).
+ *
+ * `prev` (a cached info from an earlier, smaller version of this file) turns
+ * this into an append-mode scan: header fields are reused (the JSONL header
+ * is line 1 and never changes) and the backward name scan only covers the
+ * appended region — session_info entries are append-only, so the newest name
+ * is either in the appended tail or was already found by a previous scan.
  */
-function readSessionInfoPartial(fullPath: string): SessionInfo | null {
+function readSessionInfoPartial(fullPath: string, prev?: SessionInfo & { cachedSize: number }): SessionInfo | null {
   let fd: number | null = null;
   try {
     fd = openSync(fullPath, 'r');
@@ -57,17 +63,21 @@ function readSessionInfoPartial(fullPath: string): SessionInfo | null {
     // body for a timestamp entirely.
     const lastActivity = stats.mtimeMs;
 
-    // ── Header: line 1 ──
-    const headerChunk = readChunkAt(fd, 0, Math.min(HEADER_CHUNK_BYTES, size));
-    const headerLines = chunkLines(headerChunk);
-    if (headerLines.length === 0 || !headerLines[0].trim()) return null;
+    // ── Header: line 1 (reused from cache in append mode) ──
     let header: any;
-    try {
-      header = JSON.parse(headerLines[0]);
-    } catch {
-      return null; // oversized/corrupt header — full read will handle it
+    if (prev) {
+      header = { id: prev.id, timestamp: prev.createdAt ? new Date(prev.createdAt).toISOString() : undefined, parentSession: prev.parentSession, cwd: prev.cwd };
+    } else {
+      const headerChunk = readChunkAt(fd, 0, Math.min(HEADER_CHUNK_BYTES, size));
+      const headerLines = chunkLines(headerChunk);
+      if (headerLines.length === 0 || !headerLines[0].trim()) return null;
+      try {
+        header = JSON.parse(headerLines[0]);
+      } catch {
+        return null; // oversized/corrupt header — full read will handle it
+      }
+      if (header.type !== 'session' || !header.id) return null;
     }
-    if (header.type !== 'session' || !header.id) return null;
 
     const createdAt = header.timestamp ? new Date(header.timestamp).getTime() : 0;
 
@@ -93,13 +103,18 @@ function readSessionInfoPartial(fullPath: string): SessionInfo | null {
     // end of the file in chunks until found or file start. Each chunk
     // overlaps the previously scanned region so a session_info line
     // straddling a chunk boundary is still complete.
+    // In append mode the scan floor is the cached size: everything below it
+    // was already scanned in a previous pass (session_info is append-only,
+    // so nothing new can appear there) — a miss falls back to the cached name.
     let pos = size;
-    while (pos > 0 && sessionName === null) {
-      const len = Math.min(NAME_CHUNK_BYTES, pos);
+    const floor = prev ? Math.max(0, prev.cachedSize - NAME_OVERLAP_BYTES) : 0;
+    while (pos > floor && sessionName === null) {
+      const len = Math.min(NAME_CHUNK_BYTES, pos - floor);
       const start = pos - len;
-      findName(chunkLines(readChunkAt(fd, start, len, NAME_OVERLAP_BYTES)));
+      findName(chunkLines(readChunkAt(fd, start, len, start > floor ? NAME_OVERLAP_BYTES : 0)));
       pos = start;
     }
+    if (sessionName === null && prev) sessionName = prev.sessionName;
 
     return {
       id: header.id,
@@ -116,6 +131,33 @@ function readSessionInfoPartial(fullPath: string): SessionInfo | null {
   } finally {
     if (fd !== null) { try { closeSync(fd); } catch {} }
   }
+}
+
+// ── Session listing cache ──
+// /api/sessions runs every 2s per connected user (broadcast loop) and on
+// every modal open. Session files are append-only JSONL, so a file whose
+// mtime+size is unchanged reuses its cached info (zero reads), and an
+// appended file only rescans the appended tail — a session_info entry can
+// only be appended, so the newest name is either in the appended region or
+// already known from a previous scan.
+interface CachedInfo { mtimeMs: number; size: number; info: SessionInfo }
+const infoCache = new Map<string, CachedInfo>();
+
+function readSessionInfoCached(fullPath: string): SessionInfo | null {
+  let st;
+  try { st = statSync(fullPath); } catch { infoCache.delete(fullPath); return null; }
+  const cached = infoCache.get(fullPath);
+  if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return cached.info;
+  const prev = cached && st.size > cached.size
+    ? { ...cached.info, cachedSize: cached.size }
+    : undefined;
+  const info = readSessionInfoPartial(fullPath, prev) ?? readSessionInfoFull(fullPath);
+  if (info) {
+    infoCache.set(fullPath, { mtimeMs: st.mtimeMs, size: st.size, info });
+    return info;
+  }
+  infoCache.delete(fullPath);
+  return null;
 }
 
 /** Full-file parse (previous behavior) — fallback for files the partial
@@ -189,10 +231,10 @@ export function readSessions(user: string): SessionInfo[] {
         if (entry.isDirectory()) {
           findJsonlFiles(fullPath);
         } else if (entry.name.endsWith('.jsonl')) {
-          // Fast path: partial reads (stat + header line + backward name
-          // scan). Falls back to a full-file parse when the fast path can't
-          // produce a result.
-          const info = readSessionInfoPartial(fullPath) ?? readSessionInfoFull(fullPath);
+          // Fast path: cached info (unchanged files cost one stat), partial
+          // reads for new/appended files (append-mode tail rescan for the
+          // latter). Falls back to a full-file parse when neither works.
+          const info = readSessionInfoCached(fullPath);
           // A session whose stored working directory no longer exists can
           // never be switched to (pi refuses to load it) — don't list it.
           if (info && (!info.cwd || existsSync(info.cwd))) sessions.push(info);

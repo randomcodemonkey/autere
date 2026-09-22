@@ -47,6 +47,9 @@ export interface SessionInfo {
   createdAt: number;
   lastActivity: number;
   cwd: string | null;
+  /** Live flags stamped by ProcessManager.listSessions */
+  active?: boolean;
+  streaming?: boolean;
 }
 
 // ── Stream history types ──
@@ -99,6 +102,10 @@ export interface SessionStats {
 
 export interface SessionUsageResult {
   tokens: TokenUsage;
+  /** All message entries (user + assistant + toolResult), incl. compacted-away ones */
   messageCount: number;
+  /** Assistant messages = LLM requests */
   requestCount: number;
+  /** Estimated cost: pi's per-message figure when present, else price() fallback */
+  cost: number;
 }

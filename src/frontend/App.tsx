@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { LoginScreen } from './components/LoginScreen';
+import { ChangePasswordScreen } from './components/ChangePassword';
 import { DashboardPage } from './pages/DashboardPage';
 import { RootRedirect } from './pages/RootRedirect';
 import { NotFound } from './pages/NotFound';
@@ -10,7 +11,7 @@ import type { SSEMessage } from './types';
 
 function App() {
   // Auth
-  const { authenticated, loginError, userRole, username, checkAuthStatus, login, logout } = useAuth();
+  const { authenticated, loginError, userRole, username, mustChangePassword, checkAuthStatus, login, logout } = useAuth();
   const [authChecked, setAuthChecked] = useState(false);
   const [restarting, setRestarting] = useState(false);
 
@@ -64,6 +65,18 @@ function App() {
   const handleLogin = useCallback(async (user: string, password: string): Promise<boolean> => {
     return login(user, password);
   }, [login]);
+
+  // Logged in but forced to pick a new password (first login / admin reset):
+  // render ONLY the change-password screen — every other API call would 403.
+  if (authenticated && mustChangePassword) {
+    return (
+      <ChangePasswordScreen
+        username={username}
+        onSuccess={() => { checkAuthStatus(); }}
+        onLogout={() => { logout(); }}
+      />
+    );
+  }
 
   if (!authChecked) return null;
 

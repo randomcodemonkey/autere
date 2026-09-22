@@ -696,7 +696,8 @@ body {
   #main-app.view-chat .chat-wrapper,
   #main-app.view-settings .chat-wrapper,
   #main-app.view-tasks .chat-wrapper,
-  #main-app.view-edits .chat-wrapper {
+  #main-app.view-edits .chat-wrapper,
+  #main-app.view-users .chat-wrapper {
     display: flex;
   }
 
@@ -738,6 +739,11 @@ body {
     border-radius: 0 0 0.75rem 0.75rem;
     border-color: transparent;
     padding: 0;
+  }
+
+  #main-app.view-users .chat-wrapper .users-card {
+    border-radius: 0 0 0.75rem 0.75rem;
+    border-color: transparent;
   }
 
   // Smaller chat font on mobile
@@ -3592,4 +3598,130 @@ textarea.settings-input {
 
 .modal-persona {
   max-width: 560px;
+}
+
+// ── Users management (admin) ──
+
+.users-card {
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+}
+
+.users-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid #333;
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  .btn-group {
+    margin-left: auto;
+    .btn {
+      width: auto;
+      white-space: nowrap;
+    }
+  }
+}
+
+.users-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.users-flag {
+  margin-left: 0.4rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #f0b429;
+  border: 1px solid #f0b429;
+  border-radius: 0.3rem;
+  padding: 0 0.25rem;
+  vertical-align: middle;
+}
+
+.users-role {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+.users-dirs-count {
+  font-size: 0.7rem;
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
+.users-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.users-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+
+  > span {
+    font-size: 0.75rem;
+    font-weight: 600;
+    opacity: 0.8;
+  }
+}
+
+.users-field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.users-dirs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.users-dir-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.users-dir-path {
+  width: 100%;
+  font-family: monospace;
+  font-size: 0.8rem;
+}
+
+.users-dir-access {
+  width: auto;
+}
+
+.users-dir-add {
+  width: auto;
+  align-self: flex-start;
+}
+
+.users-change-logout {
+  margin-top: 0.5rem;
+  opacity: 0.7;
+}
+
+.users-change-note {
+  margin-bottom: 0.75rem;
+  text-align: center;
 }

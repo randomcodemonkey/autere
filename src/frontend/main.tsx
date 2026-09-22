@@ -3,7 +3,23 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { basePath, url } from './base-path';
+import { getClientId, CLIENT_ID_HEADER } from './client-id';
 import './styles.scss';
+
+// Stamp every same-origin API/SSE request with this tab's client id — the
+// backend routes streaming events and session calls by it. A wrapper here
+// means no call site needs to know about it.
+const origFetch = window.fetch.bind(window);
+window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  const target = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  const api = target.includes('/api/') || target.endsWith('/events');
+  if (api) {
+    const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
+    headers.set(CLIENT_ID_HEADER, getClientId());
+    return origFetch(input, { ...init, headers });
+  }
+  return origFetch(input, init);
+};
 
 declare const __BUILD_ID__: string;
  

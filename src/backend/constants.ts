@@ -5,6 +5,8 @@ export const PI_DIR = join(homedir(), '.pi', 'agent');
 export const AUTERE_DIR = join(homedir(), '.autere');
 export const AUTH_TOKENS_FILE = join(AUTERE_DIR, 'monitor-auth-tokens.json');
 export const AUTH_TOKEN_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// Admin-managed user registry (overridable for e2e isolation)
+export const USERS_FILE = process.env.AUTERE_USERS_FILE || join(AUTERE_DIR, 'monitor-users.json');
 
 // Paths used for extension discovery
 export const SETTINGS_FILE = join(PI_DIR, 'settings.json');

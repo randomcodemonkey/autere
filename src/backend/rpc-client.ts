@@ -248,6 +248,10 @@ export class MonitorRpcClient {
 
     childProcess.once('exit', (code: number | null, signal: string | null) => {
       if (this.process !== childProcess) return;
+      // Clear the handle: exitCode stays NULL on signal death, so isRunning
+      // (process !== null && exitCode === null) would report a dead process
+      // as running forever and getOrCreate would never respawn it.
+      this.process = null;
       const error = this.createProcessExitError(code, signal);
       this.exitError = error;
       this.rejectPendingRequests(error);

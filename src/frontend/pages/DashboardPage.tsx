@@ -5,6 +5,7 @@ import { StatusCard } from '../components/StatusCard';
 import { SettingsCard } from '../components/SettingsCard';
 import { ScheduledTasksCard } from '../components/ScheduledTasksCard';
 import { ChangesPage } from '../components/ChangesPage';
+import { UsersCard } from '../components/UsersCard';
 import { StreamCard } from '../components/StreamCard';
 import { Modal } from '../components/Modal';
 import { SessionModal } from '../components/SessionModal';
@@ -72,7 +73,7 @@ export function DashboardPage({
   // View switching (chat / status / settings). On desktop the status card is
   // always visible on the left and the selection swaps the right pane; on
   // mobile each view is a full-screen card (CSS).
-  const activeView: ViewId = view === 'settings' ? 'settings' : view === 'status' ? 'status' : view === 'tasks' ? 'tasks' : view === 'edits' ? 'edits' : 'chat';
+  const activeView: ViewId = view === 'settings' ? 'settings' : view === 'status' ? 'status' : view === 'tasks' ? 'tasks' : view === 'edits' ? 'edits' : view === 'users' && userRole === 'admin' ? 'users' : 'chat';
   const handleSetView = useCallback((v: ViewId) => {
     if (!urlSessionId) return;
     navigate(v === 'chat' ? `/session/${urlSessionId}` : `/session/${urlSessionId}/${v}`);
@@ -710,6 +711,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         onStatusClick={handleStatusClick}
         workingExternal={sessionState.externalActivity}
         isActive={sessionState.isStreaming || sessionState.compacting}
+        userRole={userRole}
       />
 
       <div className="container">
@@ -747,6 +749,9 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
             <div className="card edits-card">
               <ChangesPage sessionId={urlSessionId || sessionState.sessionId} />
             </div>
+          )}
+          {activeView === 'users' && (
+            <UsersCard username={username} />
           )}
         </div>
       </div>

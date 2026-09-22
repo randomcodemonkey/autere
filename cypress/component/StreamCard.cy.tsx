@@ -262,12 +262,6 @@ describe('StreamCard', () => {
     cy.get('.chat-model-external').should('be.visible').and('contain', 'Active');
   });
 
-  it('shows Active elsewhere and disables chat when externalActivity', () => {
-    cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={null} externalActivity />);
-    cy.get('.chat-model-external').should('be.visible').and('contain', 'Active elsewhere');
-    cy.get('.chat-send-btn').first().should('be.disabled');
-  });
-
   it('shows a dash on the model row when no model is set', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={null} />);
     cy.get('.chat-model-name').should('contain.text', '—');

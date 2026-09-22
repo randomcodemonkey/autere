@@ -110,6 +110,8 @@ export function startBackend(): Promise<void> {
         ...process.env,
         PI_MONITOR_AUTH: 'false',
         AUTERE_PI_ENVS_DIR: testEnvsDir,
+        // Users registry must not seed the real ~/.autere/monitor-users.json
+        AUTERE_USERS_FILE: join(testEnvsDir, 'monitor-users.json'),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
