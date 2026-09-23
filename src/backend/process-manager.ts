@@ -9,7 +9,6 @@
 import { UserSession } from './user-session.js';
 import { findSession } from '../shared/find-session.js';
 import { readSessions } from './sessions.js';
-import { existsSync } from 'fs';
 import { log } from './logger.js';
 import type { SessionInfo } from './types.js';
 

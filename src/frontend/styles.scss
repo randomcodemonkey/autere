@@ -253,26 +253,6 @@ body {
 
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
-.status-external {
-  background: rgba(217, 119, 6, 0.18);
-  color: var(--c-amber);
-  white-space: nowrap;
-}
-
-.dot-pulse-amber {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--c-amber);
-  margin-right: 0.35rem;
-  animation: pulse-dot 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.8); }
-}
-
 .chat-wrapper {
   flex: 1;
   min-height: 0;
@@ -285,11 +265,6 @@ body {
   position: relative;
 }
 
-.chat-external-activity {
-  border-color: rgba(245, 158, 11, 0.5);
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.15);
-}
-
 // Settings rendered as a card inside the chat area
 .chat-wrapper .settings-card {
   flex: 1;
@@ -300,6 +275,16 @@ body {
 // Status card: unified inner padding/spacing for the session & system cards
 // (content was ported from modals, whose .modal-body had 0.75rem 1rem).
 .status-card-session,
+.status-card-inactive {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 16px;
+  color: var(--text-secondary, #9ca3af);
+  font-size: 13px;
+}
+
 .status-card-system {
   display: flex;
   flex-direction: column;
@@ -767,6 +752,12 @@ body {
 }
 
 // Changes card: fill available space, no padding
+// Files view: hide the Agent/System column entirely so the file browser
+// spans the full width (mobile rule below already hides it per-view).
+#main-app.view-edits .cards-scroll {
+  display: none;
+}
+
 .edits-card {
   flex: 1;
   min-height: 0;
@@ -774,6 +765,220 @@ body {
   flex-shrink: 1;
   display: flex;
   flex-direction: column;
+}
+
+// -- Edits view: Files tab (file tree + Monaco) ---------------------------------
+.edits-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.edits-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+
+.edits-tabs button {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #999;
+  font-size: 0.7rem;
+  padding: 0.25rem 0.9rem;
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+.edits-tabs button.active {
+  background: #1e3a5f;
+  color: #e0e0e0;
+  border-color: #3b6ea5;
+}
+
+.files-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.files-tree {
+  flex-shrink: 0;
+  max-height: 35vh;
+  min-height: 6rem;
+  overflow-y: auto;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.files-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.24rem 0.6rem;
+  font-size: 0.72rem;
+  font-family: monospace;
+  color: #bbb;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+
+.files-row:hover {
+  background: #252525;
+}
+
+.files-row.selected {
+  background: #1e3a5f;
+  color: #e0e0e0;
+}
+
+.files-row.files-modified .files-name {
+  color: #7bc47f;
+}
+
+.files-mod-dot {
+  color: #7bc47f;
+  margin-left: 0.35rem;
+  font-weight: 700;
+}
+
+.files-row .files-chev {
+  width: 0.9rem;
+  flex-shrink: 0;
+  text-align: center;
+  color: #666;
+}
+
+.files-row .files-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.files-row.files-dir .files-name {
+  color: #9cc4e4;
+}
+
+.files-access {
+  font-size: 0.58rem;
+  padding: 0.02rem 0.3rem;
+  border-radius: 0.5rem;
+  flex-shrink: 0;
+  margin-left: 0.4rem;
+}
+
+.files-access-rw {
+  background: #1d3320;
+  color: #7bc47f;
+}
+
+.files-access-read {
+  background: #33291d;
+  color: #c4a35f;
+}
+
+.files-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid #2a2a2a;
+  flex-shrink: 0;
+}
+
+.files-toolbar .btn {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.7rem;
+}
+
+.files-path {
+  flex: 1;
+  font-family: monospace;
+  font-size: 0.7rem;
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-ro {
+  font-size: 0.62rem;
+  color: #c4a35f;
+  flex-shrink: 0;
+}
+
+.files-delete {
+  color: #f44;
+  border-color: #5a2a2a;
+}
+
+.files-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+// iOS/PWA scrolling: monaco's scrollers are JS-driven (no native momentum)
+// — enable WebKit momentum + contain the gesture so the editor doesn't
+// rubber-band the whole page; also allow vertical pan on the container so
+// Safari doesn't cancel drag gestures with its own edge bounce.
+.files-editor,
+.files-editor .monaco-scrollable-element {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.files-editor .monaco-scrollable-element {
+  touch-action: pan-y;
+}
+
+.files-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 0.8rem;
+  padding: 1rem;
+}
+
+.files-empty-sm {
+  color: #666;
+  font-size: 0.72rem;
+  padding: 0.5rem 0.6rem;
+}
+
+.files-error {
+  padding: 0.4rem 0.6rem;
+  color: #f44;
+  font-size: 0.72rem;
+  flex-shrink: 0;
+}
+
+// Desktop: tree and editor side by side
+@media (min-width: 769px) {
+  .files-page {
+    flex-direction: row;
+  }
+
+  .files-tree {
+    max-height: none;
+    width: 300px;
+    flex-shrink: 0;
+    border-bottom: none;
+    border-right: 1px solid #2a2a2a;
+  }
 }
 
 // -- Stats ----------------------------------------------------------------------
@@ -869,6 +1074,40 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.5rem 1.5rem;
+}
+
+.usage-compact-row {
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+
+  .btn { width: 100%; }
+}
+
+.session-active-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.4rem 0;
+  font-size: 0.8rem;
+  color: #9ca3af;
+  cursor: pointer;
+  user-select: none;
+
+  input[type='checkbox'] { cursor: pointer; }
+}
+
+.session-new-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+
+  .session-persona-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-top: 0.5rem;
+  }
 }
 
 .context-info {
@@ -1869,6 +2108,11 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
 }
 
 // Running indicator next to an active tool: pulsing amber dot (matches
@@ -3724,4 +3968,15 @@ textarea.settings-input {
 .users-change-note {
   margin-bottom: 0.75rem;
   text-align: center;
+}
+
+// Sessions modal: live flags per session (one pi process per session)
+.session-live-flag {
+  margin-left: 0.4rem;
+  font-size: 0.6rem;
+  opacity: 0.75;
+  color: var(--c-amber);
+  border: 1px solid var(--c-amber);
+  border-radius: 0.3rem;
+  padding: 0 0.25rem;
 }

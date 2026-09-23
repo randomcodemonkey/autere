@@ -198,6 +198,9 @@ export function requiredRole(method: string, pathname: string): Role {
   if (ADMIN_ROUTES.has(key)) return 'admin';
   if (CONTROL_ROUTES.has(key)) return 'control';
   if (pathname.startsWith('/api/scheduler/tasks/') && method === 'DELETE') return 'control';
+  // File browser mutations — paths are additionally restricted to the
+  // user's allowedDirs inside the handlers (files.ts)
+  if (pathname.startsWith('/api/browse/') && method === 'POST') return 'control';
   // /api/users/<name> update (POST) and delete (DELETE) — admin
   if (pathname.startsWith('/api/users/')) return 'admin';
   return 'chat';

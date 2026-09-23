@@ -20,6 +20,69 @@ const totalLen = ($els: JQuery) => {
 };
 
 describe('mid-stream reload keeps the streaming message', () => {
+  it('switching away and back mid-stream keeps the chat history', function () {
+    this.timeout(300000);
+    // The second session to switch to is seeded AFTER landing — RootRedirect
+    // picks the most recently active session, so seeding first would make it
+    // the landing (current) session and the "switch away" click a no-op.
+    const seedId = `seed-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    let switchBackId = '';
+
+    cy.intercept('POST', '**/sessions/switch-by-id').as('switch');
+    cy.visit('/');
+    cy.get('.chat-input', { timeout: 15000 }).should('exist');
+
+    // Turn 1: short, completes — the pre-turn history that must survive.
+    cy.get('.chat-input').type('Reply with just: marker one');
+    cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click();
+    cy.get('.stream-msg:has(.stream-role-assistant)', { timeout: 60000 }).should('exist');
+    cy.get('.status-badge', { timeout: 60000 }).should('not.have.class', 'status-streaming');
+    // The send's HTTP response clears the input AFTER turn end (the response
+    // races the badge update) — wait for it, or it wipes the next message
+    // mid-typing and the second send fires into an empty input.
+    cy.get('.chat-input').should('have.value', '');
+
+    // Turn 2: long, streaming through the switches (the user's repro).
+    cy.get('.chat-input').type('Write an essay of at least 600 words about oak trees. Do not stop early.');
+    cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click();
+    cy.get('.status-badge', { timeout: 60000 }).should('have.class', 'status-streaming');
+
+    // Everything below depends on the CURRENT session id, which is only
+    // known once the URL has settled — and Cypress command args (e.g.
+    // cy.contains(x)) evaluate at QUEUE time, so these must run inside the
+    // .then callback.
+    cy.location('pathname').then((p) => {
+      switchBackId = p.split('/')[2];
+
+      // Idle second session to switch to (lazy: viewing it spawns nothing)
+      cy.task('seedSession', { id: seedId, name: 'switch target' }).should('eq', true);
+
+      // Away to the seeded idle session (modal click path)
+      cy.get('.session-badge').click();
+      cy.get('.modal-session').should('be.visible');
+      cy.get('.session-item').contains('switch target').click();
+      cy.wait('@switch');
+      cy.get('.stream-msg:has(.stream-role-user)', { timeout: 15000 }).should('contain', 'seeded question');
+
+      // Back — the pre-turn history (turn 1) must still be on screen. The
+      // modal closes when the switch response lands (asserted, not assumed —
+      // otherwise its late close races the reopen below).
+      cy.get('.modal-session').should('not.be.visible');
+      cy.get('.session-badge').click();
+      cy.get('.modal-session').should('be.visible');
+      cy.get('.session-item .session-item-id').contains(switchBackId).click();
+      cy.wait('@switch');
+      cy.get('.modal-session').should('not.be.visible');
+      cy.get('.stream-msg:has(.stream-role-user)', { timeout: 15000 }).contains('marker one').should('exist');
+      cy.get('.stream-msg:has(.stream-role-user)').contains('oak trees').should('exist');
+      cy.get('.status-badge').should('have.class', 'status-streaming');
+
+      // Cleanup: abort the essay turn so the run ends idle.
+      cy.request('POST', `/api/abort?sessionId=${switchBackId}`);
+      cy.get('.status-badge', { timeout: 120000 }).should('not.have.class', 'status-streaming');
+    });
+  });
+
   it('assistant message stays visible and keeps growing across cy.reload()', function () {
     this.timeout(300000);
     cy.visit('/');
@@ -27,7 +90,7 @@ describe('mid-stream reload keeps the streaming message', () => {
 
     // Long turn so it is still streaming through the reload + poll window.
     cy.get('.chat-input').type(
-      'Write an essay of at least 2000 words about pine trees: botany, species, ecology, forestry, and human uses. Do not stop early.'
+      'Write an essay of at least 600 words about pine trees. Do not stop early.'
     );
     cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
     cy.get('.status-badge', { timeout: 60000 }).should('have.class', 'status-streaming');
@@ -63,7 +126,8 @@ describe('mid-stream reload keeps the streaming message', () => {
       expect(grew, `assistant text kept growing after reload (len=${lastLen})`).to.eq(true);
     });
 
-    // Turn ends and the final message is intact.
+    // Turn ends and the final message is intact (~600 words streams for
+    // well under a minute even on slow router runs).
     cy.get('.status-badge', { timeout: 240000 }).should('not.have.class', 'status-streaming');
     cy.get('.stream-msg:has(.stream-role-assistant)').should('have.length.greaterThan', 0);
   });

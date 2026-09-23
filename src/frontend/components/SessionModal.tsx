@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Modal } from './Modal';
 import { url } from '../base-path';
+import { uiSessionName } from '../session-name';
 import type { SessionSearchResult, Persona } from '../types';
 
 interface SessionModalProps {
@@ -11,12 +12,10 @@ interface SessionModalProps {
   sessionName: string | null;
   compacting: boolean;
   isStreaming: boolean;
-  isActive: boolean;
   onAbort: () => void;
   onAbortCompaction: () => void;
-  /** Accepts the persona id chosen for the new session (null = none) */
-  onNewSession: (personaId: string | null) => void;
-  onCompact: () => void;
+  /** Creates the session: chosen persona id (null = none) + form name */
+  onNewSession: (personaId: string | null, sessionName: string) => void;
   onSwitchSession: (sessionId: string) => void;
   /** True while a switch request is in flight — blocks further actions */
   switching?: boolean;
@@ -49,8 +48,8 @@ export function formatSessionTime(ts: number, locale?: string): string {
  */
 export const SessionModal: React.FC<SessionModalProps> = ({
   open, onClose, statusType, sessionId, sessionName,
-  compacting, isStreaming, isActive,
-  onAbort, onAbortCompaction, onNewSession, onCompact, onSwitchSession,
+  compacting, isStreaming,
+  onAbort, onAbortCompaction, onNewSession, onSwitchSession,
   switching = false,
 }) => {
   const [query, setQuery] = useState('');
@@ -62,6 +61,10 @@ export const SessionModal: React.FC<SessionModalProps> = ({
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [personasStatus, setPersonasStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [personaId, setPersonaId] = useState('');
+  // 'list' = sessions listing; 'new' = the new-session form
+  const [view, setView] = useState<'list' | 'new'>('list');
+  const [newNameInput, setNewNameInput] = useState('');
+  const [activeOnly, setActiveOnly] = useState(false);
   const searchSeq = useRef(0);
 
   // Reset per open
@@ -70,6 +73,7 @@ export const SessionModal: React.FC<SessionModalProps> = ({
       setQuery('');
       setNameInput(sessionName || '');
       setPersonaId('');
+      setView('list');
       setLoaded(false);
       setPersonas([]);
       setPersonasStatus('loading');
@@ -116,7 +120,7 @@ export const SessionModal: React.FC<SessionModalProps> = ({
       await fetch(url('/api/session-name'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, sessionId }),
       });
     } catch {}
     setNameSaving(false);
@@ -136,15 +140,72 @@ export const SessionModal: React.FC<SessionModalProps> = ({
     } catch {}
   }, []);
 
-  const compactLoading = false;
+  const openNewSessionForm = useCallback(() => {
+    setNewNameInput(uiSessionName());
+    setView('new');
+  }, []);
+
+  const createNewSession = useCallback(() => {
+    onNewSession(personaId || null, newNameInput.trim());
+  }, [onNewSession, personaId, newNameInput]);
+
+  const visibleSessions = activeOnly ? results.filter((s) => s.active || s.streaming) : results;
 
   return (
     <Modal open={open} onClose={onClose} className="modal-session">
       <div className="modal-header">
-        <h3>Sessions</h3>
+        <h3>{view === 'new' ? 'New session' : 'Sessions'}</h3>
         <button className="modal-close" onClick={onClose}>✕</button>
       </div>
       <div className="modal-body">
+        {view === 'new' ? (
+          <>
+            <div className="session-new-form">
+              <label className="settings-label" htmlFor="session-new-name">Session name</label>
+              <input
+                id="session-new-name"
+                className="settings-input"
+                type="text"
+                placeholder="Session name..."
+                value={newNameInput}
+                onChange={(e) => setNewNameInput(e.target.value)}
+                maxLength={128}
+              />
+              <div className="session-persona-row">
+                <label className="settings-label" htmlFor="session-persona-select">Persona for new session</label>
+                <select
+                  id="session-persona-select"
+                  className="settings-input"
+                  value={personaId}
+                  onChange={(e) => setPersonaId(e.target.value)}
+                  disabled={personasStatus !== 'ready' || personas.length === 0}
+                >
+                  {personasStatus === 'loading' && <option value="">Loading personas</option>}
+                  {personasStatus === 'error' && <option value="">Failed to load personas</option>}
+                  {personasStatus === 'ready' && (personas.length === 0 ? (
+                    <option value="">No personas available</option>
+                  ) : (
+                    <>
+                      <option value="">No persona</option>
+                      {personas.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="btn-group">
+              <button className="btn btn-primary session-create-btn" onClick={createNewSession} disabled={switching}>
+                {switching ? '⏳ Creating…' : '✨ Create Session'}
+              </button>
+              <button className="btn session-back-btn" onClick={() => setView('list')} disabled={switching}>
+                ← Back to listing
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
         <div className="session-name-input-row">
           <input
             className="session-name-input"
@@ -185,37 +246,9 @@ export const SessionModal: React.FC<SessionModalProps> = ({
               ⏹ Abort Compaction
             </button>
           )}
-          <button className="btn btn-compact" onClick={onCompact} disabled={compactLoading || compacting || statusType !== 'connected'}>
-            {compacting ? '⏳ Compacting…' : compactLoading ? '⏳ Starting…' : '🗜 Compact Context'}
-          </button>
-          <button className="btn btn-primary" onClick={() => onNewSession(personaId || null)} disabled={switching || statusType === 'disconnected' || isActive}>
+          <button className="btn btn-primary" onClick={openNewSessionForm} disabled={switching || statusType === 'disconnected'}>
             ✨ New Session
           </button>
-
-          {/* Always rendered (states below) so the modal doesn't jump when personas arrive */}
-          <div className="session-persona-row">
-            <label className="settings-label" htmlFor="session-persona-select">Persona for new session</label>
-            <select
-              id="session-persona-select"
-              className="settings-input"
-              value={personaId}
-              onChange={(e) => setPersonaId(e.target.value)}
-              disabled={personasStatus !== 'ready' || personas.length === 0}
-            >
-              {personasStatus === 'loading' && <option value="">Loading personas</option>}
-              {personasStatus === 'error' && <option value="">Failed to load personas</option>}
-              {personasStatus === 'ready' && (personas.length === 0 ? (
-                <option value="">No personas available</option>
-              ) : (
-                <>
-                  <option value="">No persona</option>
-                  {personas.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </>
-              ))}
-            </select>
-          </div>
         </div>
 
         <input
@@ -227,24 +260,37 @@ export const SessionModal: React.FC<SessionModalProps> = ({
           autoFocus
         />
 
+        <label className="session-active-toggle">
+          <input
+            type="checkbox"
+            checked={activeOnly}
+            onChange={(e) => setActiveOnly(e.target.checked)}
+          />
+          Active sessions only
+        </label>
+
         {switching && (
           <div className="session-switching">Switching session…</div>
         )}
-        {results.length === 0 ? (
-          <div className="session-empty">{(searching || !loaded) ? (loaded || searching ? 'Searching…' : 'Loading sessions…') : (query.trim().length >= 2 ? 'No matching sessions' : 'No sessions found')}</div>
+        {visibleSessions.length === 0 ? (
+          <div className="session-empty">{(searching || !loaded) ? (loaded || searching ? 'Searching…' : 'Loading sessions…') : (activeOnly ? 'No active sessions' : query.trim().length >= 2 ? 'No matching sessions' : 'No sessions found')}</div>
         ) : (
           <div className="session-list">
-            {results.map((session) => {
+            {visibleSessions.map((session) => {
               const isCurrentSession = session.id === sessionId;
               return (
                 <div
                   key={session.id}
-                  className={`session-item${isCurrentSession ? ' active' : ''}${!isCurrentSession && isActive ? ' disabled' : ''}`}
-                  onClick={() => { if (!isCurrentSession && !isActive) onSwitchSession(session.id); }}
+                  className={`session-item${isCurrentSession ? ' active' : ''}`}
+                  onClick={() => { if (!isCurrentSession) onSwitchSession(session.id); }}
                 >
                   <div className="session-item-content">
                     <div className="session-item-header">
-                      <span className="session-item-name">{session.sessionName || session.id}</span>
+                      <span className="session-item-name">
+                        {session.sessionName || session.id}
+                        {session.streaming && <span className="badge warning session-live-flag" title="Its agent is working right now">working</span>}
+                        {!session.streaming && session.active && <span className="session-live-flag" title="pi process running">running</span>}
+                      </span>
                       <span className="session-item-time">{formatSessionTime(session.lastActivity)}</span>
                     </div>
                     <div className="session-item-id">{session.id}</div>
@@ -265,6 +311,8 @@ export const SessionModal: React.FC<SessionModalProps> = ({
               );
             })}
           </div>
+        )}
+          </>
         )}
       </div>
     </Modal>

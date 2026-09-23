@@ -139,6 +139,11 @@ export function getMustChangePassword(user: string): boolean {
   return !!registry[user]?.mustChangePassword;
 }
 
+/** The user's admin-managed allowed directories (file browser roots) */
+export function getUserAllowedDirs(user: string): AllowedDir[] {
+  return (registry[user]?.allowedDirs ?? []).map((d) => ({ ...d }));
+}
+
 // ── Validation ──
 
 const USERNAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{1,31}$/;

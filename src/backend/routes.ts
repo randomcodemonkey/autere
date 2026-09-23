@@ -16,6 +16,7 @@ import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword } from
 import { withDedupSections, withJanitorSections } from './extension-handlers.js';
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionHistory, filterScopedModels } from './utils.js';
+import { getScopedModelCatalog } from './model-catalog.js';
 import { getPiEnvDir } from './pi-env.js';
 import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
@@ -23,6 +24,7 @@ import { getHistoryLimit } from './user-settings.js';
 import { getRouterConfig } from './image-models.js';
 import { extensionsState } from './state.js';
 import { pathIsIgnored } from '../shared/edit-ignore.js';
+import { userFileRoots, browseList, browseRead, browseWrite, browseDelete, type BrowseResult } from './files.js';
 import { log } from './logger.js';
 import type { SessionInfo } from './types.js';
 
@@ -38,7 +40,7 @@ function activeToolsSnapshot(session: { state: { activeTools: Map<string, any> }
   return out;
 }
 
-import { getUserSetting, getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths } from './user-settings.js';
+import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths } from './user-settings.js';
 import {
   Scheduler,
   listTasks, getTask, saveTask, deleteTask, validateTaskInput,
@@ -90,7 +92,7 @@ function detectBasePathFromURL(requestPath: string): string {
 
 // ── HTTP server setup ──
 
-export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?: Scheduler): ReturnType<typeof createServer> | null {
+export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?: Scheduler, provider?: string): ReturnType<typeof createServer> | null {
   let sessionRefreshInterval: ReturnType<typeof setInterval> | null = null;
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -288,6 +290,36 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       return;
     }
 
+    // ── File browser (Edits view). list/read are chat-level; write/delete
+    // get 'control' from requiredRole() — plus path/allowedDirs checks in
+    // the handlers themselves. ──
+    const sendBrowse = (r: BrowseResult<any>) => {
+      if ('error' in r) sendJSON(res, { success: false, error: r.error }, r.status);
+      else sendJSON(res, { success: true, data: r.data });
+    };
+    if (url.pathname === '/api/browse/roots' && req.method === 'GET') {
+      sendBrowse({ data: userFileRoots(user) });
+    } else if (url.pathname === '/api/browse/list' && req.method === 'GET') {
+      sendBrowse(browseList(user, url.searchParams.get('path') || ''));
+    } else if (url.pathname === '/api/browse/read' && req.method === 'GET') {
+      sendBrowse(browseRead(user, url.searchParams.get('path') || ''));
+    } else if (url.pathname === '/api/browse/write' && req.method === 'POST') {
+      try {
+        const { path, content } = await readBody(req);
+        sendBrowse(browseWrite(user, path, content));
+      } catch (err: any) {
+        sendBrowse({ error: `Bad request: ${err.message}`, status: 400 });
+      }
+    } else if (url.pathname === '/api/browse/delete' && req.method === 'POST') {
+      try {
+        const { path } = await readBody(req);
+        sendBrowse(browseDelete(user, path));
+      } catch (err: any) {
+        sendBrowse({ error: `Bad request: ${err.message}`, status: 400 });
+      }
+    }
+    if (url.pathname.startsWith('/api/browse/')) return;
+
     if (url.pathname === '/api/new-session' && req.method === 'POST') {
       try {
         // Body is optional (tests may post without JSON). Read ONCE — a
@@ -438,7 +470,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
             // Disk entries need ids too so live history_upserts after the
             // spawn can match them client-side (module-level counter — the
             // UserSession's own seq keeps its buffer ids unique per process).
-            streamHistory = readSessionHistory(disk.sessionFile, getHistoryLimit(user)).map((e: any, i: number) => ({ ...e, id: `d${++diskEntrySeq}` }));
+            streamHistory = readSessionHistory(disk.sessionFile, getHistoryLimit(user)).map((e: any) => ({ ...e, id: `d${++diskEntrySeq}` }));
             // The model the session actually used (pi reports its CLI default
             // on resume — same source of truth as handleSessionStart).
             const raw = readMessageEntries(disk.sessionFile, 40);
@@ -571,7 +603,11 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           log.http.error('Failed to fetch models on demand:', err);
         }
       }
-      sendJSON(res, { success: true, data: t?.state.availableModels ?? [] });
+      let data = t?.state.availableModels ?? [];
+      // Idle session (lazy spawn): no process to ask — serve the router's
+      // catalog filtered by the scoped patterns instead of an empty list.
+      if (data.length === 0) data = await getScopedModelCatalog(user, provider);
+      sendJSON(res, { success: true, data });
       return;
     }
 
@@ -772,7 +808,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     if (url.pathname === '/api/sessions/delete' && req.method === 'POST') {
       try {
         {
-          const { sessionId, spawn } = await readBody(req);
+          const { sessionId } = await readBody(req);
           if (!sessionId || typeof sessionId !== 'string') {
             sendJSON(res, { success: false, error: 'sessionId is required' }, 400);
             return;
@@ -985,7 +1021,6 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         const t = await resolveTarget(body.sessionId);
         if (!t) { sendJSON(res, { success: false, error: 'No active session — reload the page' }, 409); return; }
         const sessionState = t.state.sessionState;
-        const rpc = t.rpc;
         const session = t;
         const { personaId } = body;
         let persona: Persona | null = null;

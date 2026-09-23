@@ -8,7 +8,7 @@ const VIEW_LABELS: Record<ViewId, string> = {
   chat: 'Chat',
   settings: 'Settings',
   tasks: 'Tasks',
-  edits: 'Edits',
+  edits: 'Files',
   users: 'Users',
 };
 

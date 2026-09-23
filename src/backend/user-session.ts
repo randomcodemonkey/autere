@@ -8,7 +8,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { basename, join } from 'path';
 import { createHash } from 'crypto';
-import type { ServerResponse } from 'http';
 import { MonitorRpcClient } from './rpc-client.js';
 import { filterScopedModels, autoSessionName, readSessionUsage } from './utils.js';
 import { log, userLog } from './logger.js';
@@ -304,7 +303,6 @@ export class UserSession {
    * without this the pending indicator would linger until turn end.
    */
   addUserEntry(text: string, queued = false): void {
-    const sessionId = this.state.sessionState.sessionId;
     const buf = this.history();
     const entry = this.tagEntry({ role: 'user', text, streaming: false, timestamp: Date.now(), ...(queued ? { pending: true } : {}) });
     buf.push(entry);
@@ -730,11 +728,19 @@ export class UserSession {
         case 'auto_retry_start':
           log.userSession.forSession(s.sessionState.sessionId).warn(
             `auto retry ${event.attempt}/${event.maxAttempts} scheduled in ${event.delayMs}ms`);
+          // Flatten the retry gap: the failed turn already hit agent_end
+          // (isStreaming = false), but from the UI's point of view the turn is
+          // still in progress — keep streaming status instead of blinking idle
+          // for the delay window.
+          s.sessionState.isStreaming = true;
+          this.broadcast({ type: 'status', data: { ...s.sessionState } });
           break;
         case 'auto_retry_end':
           if (!event.success) {
             log.userSession.forSession(s.sessionState.sessionId).warn(
               `auto retry failed after ${event.attempt} attempt(s): ${event.finalError || 'unknown error'}`);
+            s.sessionState.isStreaming = false;
+            this.broadcast({ type: 'status', data: { ...s.sessionState } });
           }
           break;
         default:
@@ -973,7 +979,6 @@ export class UserSession {
 
     // Finalize any streaming thinking messages
     const buf = this.history();
-    const sessionId = s.sessionState.sessionId;
     const upserts: any[] = [];
     for (const m of buf) {
       if (m.streaming && m.role === 'thinking') {
@@ -1129,7 +1134,6 @@ export class UserSession {
           buf.push(...entries);
         }
         this.broadcastHistoryUpsert(entries);
-        const sessionId = s.sessionState.sessionId;
         this.trimHistory(buf);
       }
     }

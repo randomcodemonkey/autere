@@ -25,6 +25,7 @@ function mountCard(props: Partial<Parameters<typeof StatusCard>[0]> = {}) {
       activeModelId={null}
       onModelsFetched={cy.stub()}
       username="admin"
+      persona={null}
       userRole="admin"
       restarting={false}
       restartingBackend={false}
@@ -49,6 +50,23 @@ describe('StatusCard', () => {
     cy.contains('.modal-uptime-row', 'pi uptime').should('contain', '10s');
     cy.contains('.modal-uptime-row', 'autere uptime').should('contain', '1m 5s');
     cy.contains('.modal-uptime-row', 'UI build').should('contain', 'dev');
+  });
+
+  it('idle session: shows the inactive banner and Load spawns via callback', () => {
+    const onActivate = cy.stub().as('activate');
+    mountCard({ sessionActive: false, onActivateSession: onActivate });
+    cy.get('.status-card-inactive').should('exist');
+    cy.get('.status-card-inactive .btn').should('contain', 'Load status');
+    cy.get('.status-card-inactive .btn').click();
+    cy.wrap(onActivate).should('have.been.calledOnce');
+    // The live agent card stays hidden while inactive
+    cy.get('.agent-card').should('not.exist');
+  });
+
+  it('active session: no inactive banner, agent card visible', () => {
+    mountCard();
+    cy.get('.status-card-inactive').should('not.exist');
+    cy.get('.agent-card').should('exist');
   });
 
   it('shows both restart buttons for admins and logout', () => {
@@ -83,6 +101,7 @@ describe('StatusCard', () => {
         onModelsFetched={cy.stub()}
         username={null}
         userRole={null}
+        persona={null}
         restarting={false}
         restartingBackend={false}
         onRestart={cy.stub()}
@@ -111,6 +130,7 @@ describe('StatusCard collapse', () => {
         activeModelId={null}
         onModelsFetched={() => {}}
         username="admin"
+      persona={null}
         userRole="admin"
         restarting={false}
         restartingBackend={false}

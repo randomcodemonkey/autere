@@ -233,6 +233,25 @@ describe('StreamCard', () => {
     cy.get('.stream-text-truncated').should('contain', 'more characters');
   });
 
+  it('hides the expand footer for an active toolCall (expansion is via the command header)', () => {
+    const longCmd = 'echo ' + 'B'.repeat(3000);
+    const messages: StreamMessage[] = [
+      { role: 'toolCall', text: longCmd, streaming: true, toolCallId: 't1', toolCall: { name: 'bash', cmd: longCmd } },
+    ];
+    cy.mount(<StreamCard messages={messages} isStreaming={true} onNewSession={cy.stub()} />);
+    cy.get('.stream-text-truncated').should('not.exist');
+    cy.get('.tool-call-cmd').should('exist');
+  });
+
+  it('shows the expand footer once the tool result arrives', () => {
+    const longOut = 'C'.repeat(3000);
+    const messages: StreamMessage[] = [
+      { role: 'toolResult', text: longOut, streaming: false, toolCallId: 't1', toolCall: { name: 'bash', cmd: 'echo hi' } },
+    ];
+    cy.mount(<StreamCard messages={messages} isStreaming={false} onNewSession={cy.stub()} />);
+    cy.get('.stream-text-truncated').should('contain', 'more characters');
+  });
+
   it('shows the active model on the second header row', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={{ provider: 'openrouter', id: 'mimo-v2.3', name: 'mimo-v2.3:all' }} />);
     cy.get('.chat-model-row').should('contain', 'mimo-v2.3:all');
@@ -265,6 +284,31 @@ describe('StreamCard', () => {
   it('shows a dash on the model row when no model is set', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={null} />);
     cy.get('.chat-model-name').should('contain.text', '—');
+  });
+
+  it('refetches models on every dropdown open while the list is empty', () => {
+    // First open gets an empty response (e.g. idle session), second open
+    // retries and gets models — the dropdown must recover without a reload.
+    let call = 0;
+    cy.intercept('GET', '**/api/models', (req) => {
+      call += 1;
+      req.reply(call === 1
+        ? { success: true, data: [] }
+        : { success: true, data: [{ provider: '9router', id: 'ocg/glm-5.3-flash', name: 'glm-5.3-flash' }] });
+    }).as('models');
+    const onModelsFetched = cy.stub().as('onModelsFetched');
+    cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={null} models={[]} onModelsFetched={onModelsFetched} />);
+
+    cy.get('.chat-model-name').click();
+    cy.wait('@models');
+    cy.get('.chat-model-empty').should('contain', 'No scoped models configured');
+    // Close and reopen — must fetch again (the old one-shot ref never did)
+    cy.get('body').type('{esc}');
+    cy.get('.chat-model-name').click();
+    cy.wait('@models');
+    cy.get('@onModelsFetched').should('have.been.calledWith', [
+      { provider: '9router', id: 'ocg/glm-5.3-flash', name: 'glm-5.3-flash' },
+    ]);
   });
 });
 

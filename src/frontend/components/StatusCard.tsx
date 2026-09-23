@@ -20,6 +20,13 @@ interface StatusCardProps {
   onModelsFetched: (models: AvailableModel[]) => void;
   /** Persona bound to the active session */
   persona: { id: string; name: string } | null | undefined;
+  /** False = the viewed session has no live pi process (idle, disk-only) */
+  sessionActive?: boolean;
+  /** Spawns the session's pi process (the "Load" click on an idle session) */
+  onActivateSession?: () => void;
+  /** Compact-context action, shown in the Usage card */
+  onCompact?: () => void;
+  compacting?: boolean;
   // System / user
   username: string | null;
   userRole: string | null;
@@ -63,6 +70,7 @@ function formatUptime(startedAt: number | null, now: number): string {
 
 export const StatusCard: React.FC<StatusCardProps> = ({
 
+  statusType,
   messageCount,
   requestCount,
   stats,
@@ -71,6 +79,10 @@ export const StatusCard: React.FC<StatusCardProps> = ({
   activeModelId,
   onModelsFetched,
   persona,
+  sessionActive = true,
+  onActivateSession,
+  onCompact,
+  compacting,
   username,
   userRole,
   restarting,
@@ -111,7 +123,16 @@ export const StatusCard: React.FC<StatusCardProps> = ({
 
   return (
     <>
-      {/* Agent: Model / Extensions / Tools / Usage grouped in one card */}
+      {/* Idle session: no pi process — offer to load one instead of the
+          live agent cards (which would show misleading zeros). */}
+      {!sessionActive && (
+        <div className="card status-card-inactive">
+          <span>Inactive session — the pi process is not running.</span>
+          <button className="btn btn-primary" onClick={onActivateSession}>Load status</button>
+        </div>
+      )}
+      {sessionActive && (
+      /* Agent: Model / Extensions / Tools / Usage grouped in one card */
       <AgentCard
         models={models}
         activeModelId={activeModelId}
@@ -121,7 +142,11 @@ export const StatusCard: React.FC<StatusCardProps> = ({
         stats={stats}
         extensions={extensions}
         persona={persona}
+        onCompact={onCompact}
+        compactDisabled={compacting || statusType !== 'connected'}
+        compacting={compacting}
       />
+      )}
 
       {/* User / System */}
       <div className={`card status-card-system${systemCollapsed ? ' collapsed' : ''}`}>

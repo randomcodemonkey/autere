@@ -9,7 +9,7 @@ description: >
 
 # autere
 
-A real-time web dashboard for monitoring pi agent sessions. Runs as a standalone Node.js server that spawns per-user pi processes in RPC mode (JSON lines on stdin/stdout). NOT an extension — a standalone app communicating with pi over the RPC protocol.
+A real-time web dashboard for monitoring pi agent sessions. Runs as a standalone Node.js server that spawns one pi process PER PI AGENT SESSION (RPC mode, JSON lines on stdin/stdout) — sessions run in parallel, and each dashboard client (auth session) views whichever session it navigates to. NOT an extension — a standalone app communicating with pi over the RPC protocol.
 
 **This file is the canonical skill. It lives in the repo and travels with the
 code — keep it up to date when architecture or workflows change.**
@@ -56,13 +56,15 @@ src/backend/
   routes.ts             # API routes + SSE broadcaster; /api/send image validation
   rpc-client.ts         # pi RPC wrapper (prompt/steer/followUp, image blocks)
   user-session.ts       # Per-user pi process, state, history buffers, SSE fanout
-  process-manager.ts    # Spawning/stopping/tracking pi processes, idle timeout
+  process-manager.ts    # Spawning/stopping/tracking pi processes — ONE per
+                        # pi agent session (user+sessionFile keyed), idle timeout
+  client-hub.ts         # Per-user clientId → viewed-session registry; routes
+                        # SSE events and API calls to the right session's process
   auth.ts               # Token auth, users, roles, last-session tracking
   state.ts              # Global mutable state (extensions, sessions)
   sessions.ts           # Session file listing
   personas.ts           # Persona library + per-session bindings (JSON files)
   scheduler.ts          # Scheduled tasks (cron-style pi prompts)
-  session-peers.ts      # Peer sessions view
   user-settings.ts      # Per-user settings (schema-driven, admin UI; per-model
                         # thinking levels → pi's modelThinkingLevels, per-model
                         # reserve % → pi-token-reserve config)
@@ -82,7 +84,11 @@ src/frontend/
     Personas.tsx        # PersonaSection (Agent card) + PersonasSettingsSection
                         # ExtensionsCard fetches /api/extensions for per-user stats —
                         # the shared state copy carries only zero placeholders
-    ChangesPage.tsx, LoginScreen.tsx
+    ChangesPage.tsx, LoginScreen.tsx,
+    EditsPage.tsx         # Edits view: FileBrowser (allowedDirs-rooted lazy tree +
+                          # Monaco editor; save/delete gated to control/admin +
+                          # rw dirs, backend-enforced) + ChangesPage under the
+                          # Changes tab
   hooks/useSSE.ts, useAuth.ts, useCardState.ts
   styles.scss          # Single global stylesheet (~3600 lines)
   types/index.ts       # Shared frontend types incl. SSEEventType
@@ -174,11 +180,20 @@ npm start            # backend only
 npm run test:component   # component tests (fast, no server)
 npm run test:e2e         # builds frontend, starts isolated backend (slow ~4-5min)
 npm run test:all
+# Run ONE e2e group instead of the whole suite (isolated backend, faster):
+npx tsx cypress/e2e/support/run-one.ts cypress/e2e/dashboard.cy.ts
 ```
 
 - **Always write tests for new features** (component tests preferred; e2e is
   expensive and flake-prone with slow models — 60s timeouts can flake when
   the model goes on tool-call sprees).
+- **e2e is split into logical specs** (cypress/e2e/*.cy.ts): chat,
+  dashboard (UI smoke), model-selection, realtime, sessions-flow (create/
+  switch), sessions-modal (incl. lazy-spawn), settings, stream-reload,
+  edits-feature, tasks, tools. **Each spec is self-sufficient and
+  order-independent**: it seeds its own state (cy.task('seedSession')), must
+  pass in isolation (run-one.ts), and must leave shared env state intact
+  (net-zero mutations). No spec may rely on other specs having run first.
 - Component tests run on the Vite dev server: `cy.intercept` does NOT work for
   network requests — intercept HTTP from the app only where it uses
   `fetch`/XHR normally, stub `window.fetch` otherwise.
@@ -234,6 +249,10 @@ delete the file to re-seed). Passwords are scrypt hashes (`s2:salt:hash`).
   deleting/demoting the last admin.
 - Endpoints: `GET/POST /api/users`, `POST/DELETE /api/users/<name>` (admin),
   `POST /api/auth/change-password` (self, any role).
+- File browser: `GET /api/browse/roots|list|read`, `POST /api/browse/write|delete`
+  (src/backend/files.ts). Roots = the user's `allowedDirs`, fallback `$HOME`;
+  list/read are chat-level, write/delete need `control` AND an `rw` root,
+  enforced server-side per request.
 - Forced password change: new users (and admin password resets) get
   `mustChangePassword`; the backend 403s every API call except
   change-password/logout until it is cleared, and the frontend shows a

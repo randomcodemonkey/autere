@@ -85,6 +85,22 @@ describe('UsageCard', () => {
     cy.get('.card-header').click();
     cy.get('.card').should('have.class', 'collapsed');
   });
+
+  it('compact row: rendered only with onCompact, enabled by default, calls back', () => {
+    const onCompact = cy.stub().as('compact');
+    cy.mount(<UsageCard messageCount={0} requestCount={0} stats={defaultStats} onCompact={onCompact} />);
+    cy.get('.usage-compact-row .btn').should('contain', 'Compact Context').and('not.be.disabled');
+    cy.get('.usage-compact-row .btn').click();
+    cy.get('@compact').should('have.been.calledOnce');
+    // Without onCompact no row renders
+    cy.mount(<UsageCard messageCount={0} requestCount={0} stats={defaultStats} />);
+    cy.get('.usage-compact-row').should('not.exist');
+  });
+
+  it('compact row: disabled while compacting, shows progress label', () => {
+    cy.mount(<UsageCard messageCount={0} requestCount={0} stats={defaultStats} onCompact={cy.stub()} compactDisabled compacting />);
+    cy.get('.usage-compact-row .btn').should('contain', 'Compacting').and('be.disabled');
+  });
 });
 
 describe('UsageCard reserve-% effective window', () => {

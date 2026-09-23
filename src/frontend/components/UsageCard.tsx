@@ -12,9 +12,12 @@ interface UsageCardProps {
   messageCount: number;
   requestCount: number;
   stats: SessionStats;
+  onCompact?: () => void;
+  compactDisabled?: boolean;
+  compacting?: boolean;
 }
 
-export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount, stats }) => {
+export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount, stats, onCompact, compactDisabled, compacting }) => {
   const { collapsed, toggle } = useCardState('usage');
   const [showCostInfo, setShowCostInfo] = useState(false);
 
@@ -93,6 +96,13 @@ export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount
       <div className="progress-bar">
         <div className="progress-fill" style={{ width: `${ctxPct}%` }} />
       </div>
+      {onCompact && (
+        <div className="usage-compact-row">
+          <button className="btn btn-compact" onClick={onCompact} disabled={compactDisabled}>
+            {compacting ? '⏳ Compacting…' : '🗜 Compact Context'}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

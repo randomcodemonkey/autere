@@ -4,8 +4,9 @@ import type { SessionSearchResult } from '../../src/frontend/types';
 import '../../src/frontend/styles.scss';
 
 const SESSIONS: SessionSearchResult[] = [
-  { id: 'aaaa1111-0000', sessionFile: '/s/aaaa.jsonl', sessionName: 'First', parentSession: null, createdAt: 1, lastActivity: Date.now(), cwd: null },
-  { id: 'bbbb2222-0000', sessionFile: '/s/bbbb.jsonl', sessionName: null, parentSession: null, createdAt: 1, lastActivity: Date.now() - 60000, cwd: null },
+  { id: 'aaaa1111-0000', sessionFile: '/s/aaaa.jsonl', sessionName: 'First', parentSession: null, createdAt: 1, lastActivity: Date.now(), cwd: null, active: true, streaming: true },
+  { id: 'bbbb2222-0000', sessionFile: '/s/bbbb.jsonl', sessionName: null, parentSession: null, createdAt: 1, lastActivity: Date.now() - 60000, cwd: null, active: true },
+  { id: 'cccc3333-0000', sessionFile: '/s/cccc.jsonl', sessionName: 'Idle one', parentSession: null, createdAt: 1, lastActivity: Date.now() - 120000, cwd: null, active: false },
 ];
 
 function mountModal(props: Partial<Parameters<typeof SessionModal>[0]> = {}) {
@@ -18,11 +19,9 @@ function mountModal(props: Partial<Parameters<typeof SessionModal>[0]> = {}) {
       sessionName="First"
       compacting={false}
       isStreaming={false}
-      isActive={false}
       onAbort={cy.stub()}
       onAbortCompaction={cy.stub()}
       onNewSession={cy.stub().as('onNewSession')}
-      onCompact={cy.stub()}
       onSwitchSession={cy.stub().as('onSwitchSession')}
       {...props}
     />
@@ -56,9 +55,28 @@ describe('SessionModal', () => {
   it('lists sessions with the current one highlighted', () => {
     mountModal();
     cy.wait('@sessions');
-    cy.get('.session-item').should('have.length', 2);
+    cy.get('.session-item').should('have.length', 3);
     cy.get('.session-item.active').should('contain', 'First');
     cy.get('.session-item.active .session-delete-btn').should('not.exist');
+  });
+
+  it('active-only toggle filters out inactive sessions', () => {
+    mountModal();
+    cy.wait('@sessions');
+    cy.get('.session-item').should('have.length', 3);
+    cy.get('.session-active-toggle input[type=checkbox]').check();
+    cy.get('.session-item').should('have.length', 2);
+    cy.get('.session-item').should('not.contain', 'Idle one');
+    cy.get('.session-active-toggle input[type=checkbox]').uncheck();
+    cy.get('.session-item').should('have.length', 3);
+  });
+
+  it('active-only toggle shows a distinct empty state when nothing is active', () => {
+    cy.intercept('GET', '**/api/sessions', { success: true, data: [SESSIONS[2]] }).as('sessionsIdle');
+    mountModal();
+    cy.wait('@sessionsIdle');
+    cy.get('.session-active-toggle input[type=checkbox]').check();
+    cy.get('.session-empty').should('contain', 'No active sessions');
   });
 
   it('calls onSwitchSession when another session is clicked', () => {
@@ -68,11 +86,30 @@ describe('SessionModal', () => {
     cy.get('@onSwitchSession').should('have.been.calledWith', 'bbbb2222-0000');
   });
 
-  it('calls onNewSession from the New Session button', () => {
+  it('new session form: prefill, persona select and create callback', () => {
+    cy.intercept('GET', '**/api/personas', { success: true, data: [{ id: 'p1', name: 'Pirate', description: '', prompt: '' }] }).as('personas');
     mountModal();
     cy.wait('@sessions');
-    cy.get('.btn-primary').click();
-    cy.get('@onNewSession').should('have.been.calledOnce');
+    cy.get('.btn-primary').contains('New Session').click();
+    // The form replaced the listing
+    cy.get('.session-item').should('not.exist');
+    cy.get('.modal-header h3').should('contain', 'New session');
+    // Prefilled (auto-name pattern), editable
+    cy.get('#session-new-name').invoke('val').should('match', /^\[ui\] - /);
+    cy.get('#session-new-name').clear().type('My custom name');
+    cy.wait('@personas');
+    cy.get('#session-persona-select').select('Pirate');
+    cy.get('.session-create-btn').click();
+    cy.get('@onNewSession').should('have.been.calledWith', 'p1', 'My custom name');
+  });
+
+  it('back to listing returns from the form to the session list', () => {
+    mountModal();
+    cy.wait('@sessions');
+    cy.get('.btn-primary').contains('New Session').click();
+    cy.get('.session-back-btn').click();
+    cy.get('.session-item').should('have.length', 3);
+    cy.get('@onNewSession').should('not.have.been.called');
   });
 
   it('searches by name/id via the search endpoint and keeps ranking', () => {
@@ -119,14 +156,14 @@ describe('SessionModal', () => {
     mountModal();
     cy.wait('@sessions');
     // Dismissing the confirm dialog must NOT send the delete request
-    cy.get('.session-item').not('.active').find('.session-delete-btn').click();
+    cy.get('.session-item').not('.active').find('.session-delete-btn').first().click();
     cy.get('@delete.all').should('have.length', 0);
     // Accepting the confirm dialog issues the delete
     cy.wrap(null).then(() => { accept = true; });
-    cy.get('.session-item').not('.active').find('.session-delete-btn').click();
+    cy.get('.session-item').not('.active').find('.session-delete-btn').first().click();
     cy.wait('@delete');
     // The deleted session disappears from the list
-    cy.get('.session-item').not('.active').should('not.exist');
+    cy.get('.session-item').contains('bbbb2222-0000').should('not.exist');
   });
 
   it('does not jump: modal height is stable while sessions load', () => {
@@ -135,7 +172,7 @@ describe('SessionModal', () => {
     let before = 0;
     cy.get('.modal').then(($m) => { before = $m.height()!; });
     cy.wait('@sessions');
-    cy.get('.session-item').should('have.length', 2);
+    cy.get('.session-item').should('have.length', 3);
     cy.get('.modal').then(($m) => { expect($m.height()).to.equal(before); });
   });
 
@@ -145,6 +182,7 @@ describe('SessionModal', () => {
       body: { success: true, data: [{ id: 'p1', name: 'Pirate', description: '', prompt: '' }] },
     }).as('personas');
     mountModal();
+    cy.get('.btn-primary').contains('New Session').click();
     cy.get('#session-persona-select').should('be.disabled').and('contain', 'Loading personas');
     cy.wait('@personas');
     cy.get('#session-persona-select').should('not.be.disabled').and('contain', 'Pirate');
@@ -154,6 +192,7 @@ describe('SessionModal', () => {
   it('persona select: "No personas available" and stays disabled when none exist', () => {
     cy.intercept('GET', '**/api/personas', { success: true, data: [] }).as('personas');
     mountModal();
+    cy.get('.btn-primary').contains('New Session').click();
     cy.wait('@personas');
     cy.get('#session-persona-select').should('be.disabled').and('contain', 'No personas available');
   });
@@ -161,6 +200,7 @@ describe('SessionModal', () => {
   it('persona select: surfaces a failed load instead of swallowing it', () => {
     cy.intercept('GET', '**/api/personas', { statusCode: 500, body: 'boom' }).as('personas');
     mountModal();
+    cy.get('.btn-primary').contains('New Session').click();
     cy.wait('@personas');
     cy.get('#session-persona-select').should('be.disabled').and('contain', 'Failed to load personas');
   });

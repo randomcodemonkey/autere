@@ -15,6 +15,9 @@ interface AgentCardProps {
   extensions: ExtensionInfo[];
   /** Persona bound to the active session */
   persona: { id: string; name: string } | null | undefined;
+  onCompact?: () => void;
+  compactDisabled?: boolean;
+  compacting?: boolean;
 }
 
 /**
@@ -27,6 +30,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   messageCount, requestCount, stats,
   extensions,
   persona,
+  onCompact, compactDisabled, compacting,
 }) => {
   const { collapsed, toggle } = useCardState('agent');
 
@@ -41,7 +45,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
 
       <PersonaSection persona={persona} />
       <ExtensionsCard extensions={extensions} />
-      <UsageCard messageCount={messageCount} requestCount={requestCount} stats={stats} />
+      <UsageCard messageCount={messageCount} requestCount={requestCount} stats={stats} onCompact={onCompact} compactDisabled={compactDisabled} compacting={compacting} />
     </div>
   );
 };

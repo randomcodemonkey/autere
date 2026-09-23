@@ -83,13 +83,12 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   // Model dropdown on the chat model row
   const [modelOpen, setModelOpen] = useState(false);
   const modelWrapperRef = useRef<HTMLSpanElement>(null);
-  const modelsFetchedRef = useRef(false);
   const modelsList = models || [];
   const openModelDropdown = useCallback(() => {
     setModelOpen((v) => !v);
-    // Fetch models on first open if the list is empty (SSE timing fallback)
-    if (!modelsFetchedRef.current && modelsList.length === 0) {
-      modelsFetchedRef.current = true;
+    // Fetch while the list is empty — the backend serves the scoped catalog
+    // for idle sessions, but an earlier open may have raced a spawn.
+    if (modelsList.length === 0) {
       fetch(url('/api/models'))
         .then((res) => res.json())
         .then((data) => {

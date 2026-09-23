@@ -4,7 +4,7 @@ import { Header, ViewId } from '../components/Header';
 import { StatusCard } from '../components/StatusCard';
 import { SettingsCard } from '../components/SettingsCard';
 import { ScheduledTasksCard } from '../components/ScheduledTasksCard';
-import { ChangesPage } from '../components/ChangesPage';
+import { EditsPage } from '../components/EditsPage';
 import { UsersCard } from '../components/UsersCard';
 import { StreamCard } from '../components/StreamCard';
 import { Modal } from '../components/Modal';
@@ -92,7 +92,6 @@ export function DashboardPage({
     sessionName: null,
     connected: false,
     startTime: Date.now(),
-    externalActivity: false,
     compacting: false,
   });
 
@@ -106,7 +105,7 @@ export function DashboardPage({
   const [, setRecentTools] = useState<RecentTool[]>([]);
   const [extensions, setExtensions] = useState<ExtensionInfo[]>([]);
   const [models, setModels] = useState<AvailableModel[]>([]);
-  const [, setAvailableSessions] = useState<SessionInfo[]>([]);
+  const [availableSessions, setAvailableSessions] = useState<SessionInfo[]>([]);
   // UI state
   const [restartingBackend, setRestartingBackend] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
@@ -175,6 +174,10 @@ export function DashboardPage({
   // Canonical session id (pi's id may drift from the URL's file-derived id)
   const canonicalSessionIdRef = useRef<string | null>(null);
   canonicalSessionIdRef.current = sessionState.sessionId;
+  // The session the user is viewing — stamped on every session-scoped API
+  // call so routing never depends on the (racy) server-side binding.
+  const targetSessionRef = useRef<string | null>(null);
+  targetSessionRef.current = viewedSessionRef.current;
 
   const handleDashboardSSEMessage = useCallback((msg: SSEMessage) => {
     switch (msg.type) {
@@ -332,17 +335,6 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         setActiveTools((prev) => prev.filter((t) => t.id !== msg.data.id));
         if (msg.data.recentTools) setRecentTools(msg.data.recentTools);
         break;
-      case 'session_activity': {
-        // 'Active elsewhere' signal from the per-user peer hub: another of
-        // the user's devices started/stopped driving this session. Accept
-        // both the URL id and the canonical sessionState id — pi id-drift
-        // can make them differ.
-        const esid = msg.data?.sessionId;
-        if (esid && (esid === viewedSessionRef.current || esid === canonicalSessionIdRef.current)) {
-          setSessionState((prev) => ({ ...prev, externalActivity: !!msg.data.active }));
-        }
-        break;
-      }
       case 'extensions':
         setExtensions(msg.data || []);
         break;
@@ -357,12 +349,9 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   // response — same shape) to the UI state.
   const applyBootstrap = useCallback((d: any) => {
     setSessionState((prev: any) => ({ ...prev, ...d.sessionState, sessionId: d.sessionState?.sessionId ?? prev.sessionId }));
-    // Initial 'active elsewhere' state for the bootstrapped session —
-    // computed live by the backend from its per-user peer registry.
-    if (d.sessionActivity && (!viewedSessionRef.current || !d.historySessionId || d.historySessionId === viewedSessionRef.current)) {
-      setSessionState((prev: any) => ({ ...prev, externalActivity: !!d.sessionActivity.active }));
-    }
-    if (d.sessionStats) setStats(d.sessionStats);
+    // null stats (idle/disk payload) must clear stale numbers from the
+    // previously viewed session, not keep them on screen.
+    setStats(d.sessionStats ?? EMPTY_STATS);
     setActiveTools(d.activeTools ?? []);
     setRecentTools(d.recentTools ?? []);
     // Apply history only if it belongs to the session being viewed
@@ -559,7 +548,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
       await fetch(url('/api/cancel-pending'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, sessionId: targetSessionRef.current }),
       });
     } catch {}
   }, []);
@@ -579,9 +568,22 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
     window.location.href = (basePath() || '/') as string;
   }, [logout]);
 
+  // Spawn the viewed session's pi process on demand (status card "Load").
+  const handleActivateSession = useCallback(() => {
+    const sid = urlSessionId || sessionState.sessionId;
+    if (!sid) return;
+    fetch(url('/api/sessions/switch-by-id'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: sid, spawn: true }),
+    }).then((r) => r.json()).then((d) => {
+      if (d.success && d.data) applyBootstrap(d.data);
+    }).catch(() => {});
+  }, [urlSessionId, sessionState.sessionId, applyBootstrap]);
+
   const handleRestart = useCallback(async () => {
     setRestarting(true);
-    try { await fetch(url('/api/restart'), { method: 'POST' }); } catch {}
+    try { await fetch(url('/api/restart'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) }); } catch {}
   }, [setRestarting]);
 
   const handleRestartBackend = useCallback(async () => {
@@ -593,12 +595,12 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   }, [setRestartingBackend, sseDisconnect, sseConnect]);
 
   const handleAbort = useCallback(async () => {
-    try { await fetch(url('/api/abort'), { method: 'POST' }); } catch {}
+    try { await fetch(url('/api/abort'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) }); } catch {}
   }, []);
 
   const handleCompact = useCallback(async () => {
     try {
-      const res = await fetch(url('/api/compact'), { method: 'POST' });
+      const res = await fetch(url('/api/compact'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) });
       const data = await res.json();
       if (!data.success) setSessionError(data.error || 'Failed to compact');
     } catch (err) {
@@ -610,7 +612,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   const handleAbortCompaction = useCallback(async () => {
     // Confirm lives at the button (SessionModal) — this handler must fire directly.
     try {
-      const res = await fetch(url('/api/abort-compaction'), { method: 'POST' });
+      const res = await fetch(url('/api/abort-compaction'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) });
       const data = await res.json();
       if (!data.success) setSessionError(data.error || 'Failed to abort compaction');
     } catch (err) {
@@ -619,15 +621,15 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
     }
   }, []);
 
-  const handleNewSession = useCallback((personaId?: string | null) => {
+  const handleNewSession = useCallback((personaId?: string | null, sessionName?: string) => {
     setCreatingSession(true);
     setSessionError(null);
     fetch(url('/api/new-session'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        // Name generated HERE — browser locale + timezone are authoritative
-        sessionName: uiSessionName(),
+        // The modal form prefills this — browser locale + timezone stay authoritative
+        sessionName: (sessionName || '').trim() || uiSessionName(),
         locale: navigator.language,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         ...(personaId ? { personaId } : {}),
@@ -704,12 +706,11 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
       <Header
         statusType={statusType}
         statusText={statusText}
-        sessionId={urlSessionId || sessionState.sessionId}
+        sessionId={targetSessionRef.current}
         sessionName={sessionState.sessionName}
         activeView={activeView}
         onViewChange={handleSetView}
         onStatusClick={handleStatusClick}
-        workingExternal={sessionState.externalActivity}
         isActive={sessionState.isStreaming || sessionState.compacting}
         userRole={userRole}
       />
@@ -733,11 +734,15 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
             onRestartBackend={handleRestartBackend}
             onLogout={handleLogout}
             persona={sessionState.persona}
+            sessionActive={availableSessions.find((x) => x.id === (urlSessionId || sessionState.sessionId))?.active ?? true}
+            onActivateSession={handleActivateSession}
+            onCompact={handleCompact}
+            compacting={sessionState.compacting}
           />
         </div>
-        <div className={`chat-wrapper${sessionState.externalActivity ? ' chat-external-activity' : ''}`}>
+        <div className="chat-wrapper">
           {activeView === 'chat' && (
-            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} externalActivity={sessionState.externalActivity} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={sessionState.sessionId} />
+            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={urlSessionId || sessionState.sessionId} />
           )}
           {activeView === 'settings' && (
             <SettingsCard sseConnected={sseConnected} />
@@ -747,7 +752,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
           )}
           {activeView === 'edits' && (
             <div className="card edits-card">
-              <ChangesPage sessionId={urlSessionId || sessionState.sessionId} />
+              <EditsPage sessionId={targetSessionRef.current} userRole={userRole} />
             </div>
           )}
           {activeView === 'users' && (
@@ -764,11 +769,9 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         sessionName={sessionState.sessionName}
         compacting={sessionState.compacting}
         isStreaming={sessionState.isStreaming}
-        isActive={sessionState.isStreaming || sessionState.compacting}
         onAbort={handleAbort}
         onAbortCompaction={handleAbortCompaction}
         onNewSession={handleNewSession}
-        onCompact={handleCompact}
         onSwitchSession={handleSwitchSession}
       />
 

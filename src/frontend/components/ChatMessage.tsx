@@ -274,7 +274,9 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
           ))}
         </div>
       )}
-      {isLong && (
+      {/* Call-only toolCall (active execution): body is empty, expansion
+          happens via the command header — a footer toggle would be dead */}
+      {isLong && !isCallOnly && (
         <div
           className="stream-text-truncated"
           onClick={() => setExpanded((prev) => !prev)}

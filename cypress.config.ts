@@ -88,11 +88,35 @@ export default defineConfig({
           return true;
         },
 
+        /** Write a minimal seeded session jsonl (idle session with history) */
+        seedSession({ id, name }: { id: string; name?: string }): boolean {
+          const envsDir = process.env.AUTERE_E2E_ENVS_DIR;
+          if (!envsDir) return false;
+          const dir = join(envsDir, 'admin', 'sessions', '--tmp-e2e--');
+          mkdirSync(dir, { recursive: true });
+          const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const now = new Date().toISOString();
+          const file = join(dir, `${stamp}_${id}.jsonl`);
+          const lines = [
+            JSON.stringify({ type: 'session', version: 3, id, timestamp: now, cwd: envsDir }),
+            JSON.stringify({ type: 'session_info', id: 'seedinfo1', parentId: null, timestamp: now, name: name || `seeded ${id.slice(0, 8)}` }),
+            JSON.stringify({ type: 'message', id: 'seedu1', parentId: null, timestamp: now, message: { role: 'user', content: [{ type: 'text', text: 'seeded question' }] } }),
+            JSON.stringify({ type: 'message', id: 'seeda1', parentId: 'seedu1', timestamp: now, message: { role: 'assistant', content: [{ type: 'text', text: 'seeded answer' }], model: '9router/seed-model' } }),
+          ];
+          writeFileSync(file, lines.join('\n') + '\n');
+          return true;
+        },
+
         /** Create the agent scratch dir; returns its absolute path */
         makeScratchDir(): string {
           rmSync(scratchDir, { recursive: true, force: true });
           mkdirSync(scratchDir, { recursive: true });
           return scratchDir;
+        },
+
+        /** Does a file exist (post-delete assertions) */
+        fileExists(path: string): boolean {
+          return existsSync(path);
         },
 
         /** Remove the agent scratch dir */
