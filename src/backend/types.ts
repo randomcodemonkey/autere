@@ -50,6 +50,8 @@ export interface SessionInfo {
   /** Live flags stamped by ProcessManager.listSessions */
   active?: boolean;
   streaming?: boolean;
+  /** Compact in progress */
+  compacting?: boolean;
 }
 
 // ── Stream history types ──

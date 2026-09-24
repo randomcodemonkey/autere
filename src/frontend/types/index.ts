@@ -108,7 +108,7 @@ export interface AvailableModel {
 export interface SettingField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel';
+  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel' | 'folderIgnores';
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;
@@ -151,6 +151,8 @@ export interface SessionInfo {
   /** Live flags: its pi process is running / its turn is in flight */
   active?: boolean;
   streaming?: boolean;
+  /** Compact in progress */
+  compacting?: boolean;
 }
 
 export type SSEEventType =

@@ -130,19 +130,19 @@ describe('Edits feature', () => {
 
     // e2e-a has 2 surviving changes (created + modified), e2e-b has 1
     cy.contains('.changes-file', 'e2e-a.txt').find('.changes-file-count').should('have.text', '2');
-    cy.contains('.changes-file', 'e2e-b.txt').find('.changes-file-count').should('not.exist');
+    cy.contains('.changes-file', 'e2e-b.txt').find('.changes-file-count').should('have.text', '1');
 
     // Latest file (e2e-a) is pre-selected and its latest change auto-expanded
     cy.get('.changes-file.selected').should('contain', 'e2e-a.txt');
-    cy.get('.changes-mod.expanded', { timeout: 10000 }).should('have.length', 1);
-    cy.get('.changes-mod.expanded').should('contain', 'goodbye a');
-    cy.get('.changes-mod.expanded .changes-badge-modified').should('have.text', 'modified');
+    cy.get('.changes-mod.selected', { timeout: 10000 }).should('have.length', 1);
+    cy.get('.changes-mod.selected').should('contain', 'goodbye a');
+    cy.get('.changes-mod.selected .changes-badge-modified').should('have.text', 'modified');
 
     cy.get('.changes-mod .changes-badge-created').should('have.length', 1);
     cy.get('.changes-mod .changes-badge-modified').should('have.length', 1);
 
     cy.contains('.changes-file', 'e2e-b.txt').click();
-    cy.get('.changes-mod.expanded', { timeout: 10000 }).should('contain', 'hello b');
+    cy.get('.changes-mod.selected', { timeout: 10000 }).should('contain', 'hello b');
 
     cy.get('.changes-search').type('e2e-a');
     cy.get('.changes-files-list .changes-file').should('have.length', 1);
@@ -176,10 +176,10 @@ describe('Edits feature', () => {
       cy.get('.changes-files-list').should('contain', 'e2e-agent-b.txt');
 
       cy.get('.changes-file.selected').should('contain', 'e2e-agent-a.txt');
-      cy.get('.changes-mod.expanded', { timeout: 10000 }).should('contain', 'gamma');
+      cy.get('.changes-mod.selected', { timeout: 10000 }).should('contain', 'gamma');
 
       cy.contains('.changes-file', 'e2e-agent-b.txt').click();
-      cy.get('.changes-mod.expanded', { timeout: 10000 }).should('contain', 'beta');
+      cy.get('.changes-mod.selected', { timeout: 10000 }).should('contain', 'beta');
     });
   });
 });

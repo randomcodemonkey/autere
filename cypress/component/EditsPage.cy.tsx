@@ -118,6 +118,27 @@ describe('EditsPage — Files tab', () => {
   it('shows the Changes tab with the per-session history', () => {
     mountWith('admin');
     cy.get('.edits-tabs').contains('Changes').click();
-    cy.get('.changes-page').should('exist');
+    cy.get('.changes-files').should('exist');
+  });
+
+  it('search filters the tree to matches and their ancestor chain', () => {
+    mountWith('chat');
+    cy.get('.files-row', { timeout: 15000 }).should('have.length', 3);
+    // Only src/index.ts matches — root + src ancestors shown, hello.txt hidden
+    cy.get('.files-search').type('index');
+    cy.get('.files-row', { timeout: 10000 }).should('have.length', 3);
+    cy.get('.files-row').should('contain', 'index.ts');
+    cy.get('.files-row.files-matched').should('contain', 'index.ts');
+    cy.get('.files-row').should('not.contain', 'hello.txt');
+    // Folder matches render as folders (they can be re-opened after clearing)
+    cy.get('.files-search').clear().type('src');
+    cy.get('.files-row', { timeout: 10000 }).should('contain', 'src');
+    // Trailing-slash: everything under folders named 'src' — subtree shown
+    cy.get('.files-search').clear().type('src/');
+    cy.get('.files-row', { timeout: 10000 }).should('have.length', 3);
+    cy.get('.files-row').should('contain', 'index.ts');
+    // Clearing restores the full tree
+    cy.get('.files-search').clear();
+    cy.get('.files-row', { timeout: 10000 }).should('contain', 'hello.txt');
   });
 });

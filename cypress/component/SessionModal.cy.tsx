@@ -1,5 +1,5 @@
 import React from 'react';
-import { SessionModal, formatSessionTime } from '../../src/frontend/components/SessionModal';
+import { SessionView, formatSessionTime } from '../../src/frontend/components/SessionModal';
 import type { SessionSearchResult } from '../../src/frontend/types';
 import '../../src/frontend/styles.scss';
 
@@ -9,11 +9,9 @@ const SESSIONS: SessionSearchResult[] = [
   { id: 'cccc3333-0000', sessionFile: '/s/cccc.jsonl', sessionName: 'Idle one', parentSession: null, createdAt: 1, lastActivity: Date.now() - 120000, cwd: null, active: false },
 ];
 
-function mountModal(props: Partial<Parameters<typeof SessionModal>[0]> = {}) {
+function mountModal(props: Partial<Parameters<typeof SessionView>[0]> = {}) {
   cy.mount(
-    <SessionModal
-      open={true}
-      onClose={cy.stub()}
+    <SessionView
       statusType="connected"
       sessionId="aaaa1111-0000"
       sessionName="First"
@@ -91,9 +89,9 @@ describe('SessionModal', () => {
     mountModal();
     cy.wait('@sessions');
     cy.get('.btn-primary').contains('New Session').click();
-    // The form replaced the listing
-    cy.get('.session-item').should('not.exist');
-    cy.get('.modal-header h3').should('contain', 'New session');
+    // The form opens inside an inner modal; the listing stays on the page
+    cy.get('.session-item').should('have.length', 3);
+    cy.get('.modal:visible .modal-header h3').should('contain', 'New session');
     // Prefilled (auto-name pattern), editable
     cy.get('#session-new-name').invoke('val').should('match', /^\[ui\] - /);
     cy.get('#session-new-name').clear().type('My custom name');
@@ -103,11 +101,11 @@ describe('SessionModal', () => {
     cy.get('@onNewSession').should('have.been.calledWith', 'p1', 'My custom name');
   });
 
-  it('back to listing returns from the form to the session list', () => {
+  it('closing the new-session modal returns to the listing', () => {
     mountModal();
     cy.wait('@sessions');
     cy.get('.btn-primary').contains('New Session').click();
-    cy.get('.session-back-btn').click();
+    cy.get('.modal-close:visible').click();
     cy.get('.session-item').should('have.length', 3);
     cy.get('@onNewSession').should('not.have.been.called');
   });
@@ -166,15 +164,6 @@ describe('SessionModal', () => {
     cy.get('.session-item').contains('bbbb2222-0000').should('not.exist');
   });
 
-  it('does not jump: modal height is stable while sessions load', () => {
-    mountModal();
-    cy.get('.session-empty').should('contain', 'Loading sessions…');
-    let before = 0;
-    cy.get('.modal').then(($m) => { before = $m.height()!; });
-    cy.wait('@sessions');
-    cy.get('.session-item').should('have.length', 3);
-    cy.get('.modal').then(($m) => { expect($m.height()).to.equal(before); });
-  });
 
   it('persona select: disabled "Loading personas" until personas arrive', () => {
     cy.intercept('GET', '**/api/personas', {

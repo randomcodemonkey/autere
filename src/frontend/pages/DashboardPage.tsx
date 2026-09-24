@@ -8,7 +8,7 @@ import { EditsPage } from '../components/EditsPage';
 import { UsersCard } from '../components/UsersCard';
 import { StreamCard } from '../components/StreamCard';
 import { Modal } from '../components/Modal';
-import { SessionModal } from '../components/SessionModal';
+import { SessionView } from '../components/SessionModal';
 import { url, basePath } from '../base-path';
 import { uiSessionName } from '../session-name';
 import type {
@@ -73,7 +73,7 @@ export function DashboardPage({
   // View switching (chat / status / settings). On desktop the status card is
   // always visible on the left and the selection swaps the right pane; on
   // mobile each view is a full-screen card (CSS).
-  const activeView: ViewId = view === 'settings' ? 'settings' : view === 'status' ? 'status' : view === 'tasks' ? 'tasks' : view === 'edits' ? 'edits' : view === 'users' && userRole === 'admin' ? 'users' : 'chat';
+  const activeView: ViewId = view === 'settings' ? 'settings' : view === 'status' ? 'status' : view === 'sessions' ? 'sessions' : view === 'tasks' ? 'tasks' : view === 'edits' ? 'edits' : view === 'users' && userRole === 'admin' ? 'users' : 'chat';
   const handleSetView = useCallback((v: ViewId) => {
     if (!urlSessionId) return;
     navigate(v === 'chat' ? `/session/${urlSessionId}` : `/session/${urlSessionId}/${v}`);
@@ -106,6 +106,33 @@ export function DashboardPage({
   const [extensions, setExtensions] = useState<ExtensionInfo[]>([]);
   const [models, setModels] = useState<AvailableModel[]>([]);
   const [availableSessions, setAvailableSessions] = useState<SessionInfo[]>([]);
+
+  // Header quick-switch tabs need fresh active/streaming flags; 'sessions'
+  // SSE broadcasts only fire on some actions, so poll the session list.
+  useEffect(() => {
+    if (!authenticated) return;
+    let timer: number | undefined;
+    const poll = () => {
+      fetch(url('/api/sessions')).then(r => r.json()).then(d => {
+        if (d.success) setAvailableSessions(d.data);
+      }).catch(() => {});
+      timer = window.setTimeout(poll, 5000);
+    };
+    poll();
+    return () => clearTimeout(timer);
+  }, [authenticated]);
+  // Correctness guard for backend-death staleness: when the SSE base status
+  // settles on 'disconnected' (backend killed, restart pending), no one can
+  // ever deliver agent_end/compaction_end anymore — so the last-known
+  // isStreaming/compacting flags would show a phantom blue 'Compacting' chip
+  // forever. Clear them; nothing can be in progress without a backend.
+  const prevBaseStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (baseStatusType === 'disconnected' && prevBaseStatusRef.current !== 'disconnected') {
+      setSessionState((prev: any) => (prev.isStreaming || prev.compacting) ? { ...prev, isStreaming: false, compacting: false } : prev);
+    }
+    prevBaseStatusRef.current = baseStatusType;
+  }, [baseStatusType]);
   // UI state
   const [restartingBackend, setRestartingBackend] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
@@ -115,7 +142,6 @@ export function DashboardPage({
   // Label distinguishes a user-initiated switch ("Switching session…") from
   // a load-time restore via URL / reload ("Loading session…").
   const [switchLabel, setSwitchLabel] = useState('Switching session…');
-  const [showSessionModal, setShowSessionModal] = useState(false);
 
   // SSE message handler
   // Guards fetch responses and status events against session changes: a
@@ -293,9 +319,22 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
       case 'history_remove': {
         const viewed = viewedSessionRef.current;
         if (msg.sessionId && viewed && msg.sessionId !== viewed) break;
-        const ids = new Set((msg.data || []) as string[]);
-        if (ids.size === 0) break;
-        setStreamHistory((prev) => prev.filter((m) => !m.id || !ids.has(m.id)));
+        // Items may be plain ids (legacy) or {id, role, text} objects — the
+        // text form lets the client also drop snapshot copies that were
+        // rendered under a different id namespace (disk 'd…' ids from before
+        // a backend restart, or a prior process's e-seq).
+        const items = (msg.data || []) as any[];
+        const ids = new Set(items.map((it) => typeof it === 'string' ? it : it?.id).filter(Boolean));
+        const texts = items.map((it) => typeof it === 'object' ? it?.text : undefined).filter(Boolean) as string[];
+        if (ids.size === 0 && texts.length === 0) break;
+        setStreamHistory((prev) => prev.filter((m) => {
+          if (m.id && ids.has(m.id)) return false;
+          // Text fallback only for user entries: identical user texts are
+          // otherwise legitimate, but a move/remove of a queued user message
+          // must also catch its snapshot twin. Never match streaming entries.
+          if (texts.length > 0 && m.role === 'user' && !m.streaming && texts.some((t) => m.text === t || m.text.startsWith(t))) return false;
+          return true;
+        }));
         break;
       }
       case 'stream_delta': {
@@ -354,11 +393,15 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
     setStats(d.sessionStats ?? EMPTY_STATS);
     setActiveTools(d.activeTools ?? []);
     setRecentTools(d.recentTools ?? []);
+    // Optimistic pending copies belong to the OUTGOING session — drop them
+    // whenever a bootstrap applies, regardless of history ownership. Leaving
+    // them tied to the history-ownership guard made A's un-retired optimistic
+    // copies (mid-turn sends) render inside every other session visited.
+    setPendingUser([]);
     // Apply history only if it belongs to the session being viewed
     const viewed = viewedSessionRef.current;
     if (!viewed || !d.historySessionId || d.historySessionId === viewed) {
       setStreamHistory(d.streamHistory ?? []);
-      setPendingUser([]);
     }
     setAvailableSessions(d.availableSessions ?? []);
     setModels(d.availableModels ?? []);
@@ -478,7 +521,6 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   // id-alias resolution after programmatic navigation) must NOT close a
   // modal the user has open — that made the sessions modal blink shut on
   // devices whenever a background re-sync raced with opening it.
-  const modalSwitchRef = useRef<boolean>(false);
 
   // When URL changes (browser back/forward, direct navigation, or programmatic
   // navigate), send a switch request. React Router handles the URL — we just
@@ -518,10 +560,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         setSwitchingSession(false);
         // Close the sessions modal only when the switch was user-initiated
         // from within it (see modalSwitchRef above).
-        if (modalSwitchRef.current) {
-          modalSwitchRef.current = false;
-          setShowSessionModal(false);
-        }
+
         // The backend may resolve an id alias (e.g. a stale filename id)
         // to the canonical session id — sync the URL to it.
         const resolved = data.data.sessionState?.sessionId;
@@ -556,10 +595,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   // Badge click: on desktop the status card lives in the always-visible left
   // column — scroll it into view and flash it so the click gives visible
   // feedback. (On mobile onViewChange('status') shows the card full-screen.)
-  const handleStatusClick = useCallback(() => {
-    setShowSessionModal(true);
-  }, []);
-
+  const handleStatusClick = useCallback(() => {}, []);
   const handleLogout = useCallback(async () => {
     await logout();
     // Full reload to index: resets all SPA state (session view, SSE, modals)
@@ -641,8 +677,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
           const newId = data.navigateUrl.split('/').pop();
           // Navigate directly from the response — no SSE broadcast needed
           setCreatingSession(false);
-          setShowSessionModal(false);
-          // Apply the fresh session state returned by the backend. The SSE
+                // Apply the fresh session state returned by the backend. The SSE
           // status broadcast for the new session is dropped while we're still
           // on the old URL (stale-snapshot guard), and the URL-change effect
           // early-returns because sessionId was set optimistically — so this
@@ -668,7 +703,6 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
     setSessionError(null);
     // Mark the upcoming (navigation-triggered) switch as user-initiated so
     // its completion closes the sessions modal. Automatic switches don't.
-    modalSwitchRef.current = true;
     // Navigate to the target session — the URL 'view' param defaults to chat,
     // so no explicit view change is needed. (Calling handleSetView('chat')
     // here would navigate BACK to the previous urlSessionId and swallow the
@@ -684,7 +718,11 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   // response returns, so the optimistic copy is created after the real one
   // and no upsert ever targets it again.
   const visiblePendingUser = pendingUser.filter(
-    (p) => !streamHistory.some((m) => m.role === 'user' && !m.streaming && m.text === p.text),
+    // Retire by prefix too: queued sends get an attachment note appended
+    // server-side, so committed text can be pending text + note (same rule
+    // the stream_history snapshot retirement uses). Exact match alone kept
+    // those copies visible forever.
+    (p) => !streamHistory.some((m) => m.role === 'user' && !m.streaming && (m.text === p.text || m.text.startsWith(p.text))),
   );
   const { type: statusType, text: statusText } = computeStatus(baseStatusType, baseStatusText, sessionState);
 
@@ -704,13 +742,15 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   return (
     <div id="main-app" className={`authenticated view-${activeView}`}>
       <Header
+        sessionState={sessionState}
         statusType={statusType}
         statusText={statusText}
         sessionId={targetSessionRef.current}
         sessionName={sessionState.sessionName}
         activeView={activeView}
         onViewChange={handleSetView}
-        onStatusClick={handleStatusClick}
+        runningSessions={availableSessions}
+        onRunningSessionClick={handleSwitchSession}
         isActive={sessionState.isStreaming || sessionState.compacting}
         userRole={userRole}
       />
@@ -738,13 +778,29 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
             onActivateSession={handleActivateSession}
             onCompact={handleCompact}
             compacting={sessionState.compacting}
+            onAbort={handleAbort}
+            isStreaming={sessionState.isStreaming}
           />
         </div>
         <div className="chat-wrapper">
+          {activeView === 'sessions' && (
+            <SessionView
+              statusType={statusType}
+              sessionId={sessionState.sessionId}
+              sessionName={sessionState.sessionName}
+              compacting={sessionState.compacting}
+              isStreaming={sessionState.isStreaming}
+              onAbort={handleAbort}
+              onAbortCompaction={handleAbortCompaction}
+              onNewSession={handleNewSession}
+              onSwitchSession={handleSwitchSession}
+              switching={switchingSession}
+            />
+          )}
           {activeView === 'chat' && (
             <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={urlSessionId || sessionState.sessionId} />
           )}
-          {activeView === 'settings' && (
+                    {activeView === 'settings' && (
             <SettingsCard sseConnected={sseConnected} />
           )}
           {activeView === 'tasks' && (
@@ -761,19 +817,6 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         </div>
       </div>
 
-      <SessionModal
-        open={showSessionModal}
-        onClose={() => setShowSessionModal(false)}
-        statusType={statusType}
-        sessionId={sessionState.sessionId}
-        sessionName={sessionState.sessionName}
-        compacting={sessionState.compacting}
-        isStreaming={sessionState.isStreaming}
-        onAbort={handleAbort}
-        onAbortCompaction={handleAbortCompaction}
-        onNewSession={handleNewSession}
-        onSwitchSession={handleSwitchSession}
-      />
 
       {switchingSession && (
         <div

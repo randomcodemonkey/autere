@@ -43,9 +43,8 @@ describe('autere — session flow', () => {
     it('switches to a different session via the sessions modal', function() {
       this.timeout(30000);
 
-      // Open the sessions modal
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
+      // Open the sessions page
+      openSessionsModal();
 
       // Wait for sessions to load
       cy.get('.session-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
@@ -60,9 +59,8 @@ describe('autere — session flow', () => {
     it('can switch sessions via URL', function() {
       this.timeout(30000);
 
-      // Open the sessions modal
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
+      // Open the sessions page
+      openSessionsModal();
 
       // Get a session ID from the list
       cy.get('.session-item', { timeout: 5000 }).should('have.length.greaterThan', 0);

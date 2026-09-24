@@ -16,28 +16,23 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { Type } from "typebox";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, isAbsolute, join, resolve } from "node:path";
-// ponytail: delegates to the stock openai-completions stream with a swapped
-// fetch. Drop the whole streamfix block when upstream (OpenRouter streamed
-// usage accounting) fixes image token counting.
-import { stream as stockStream } from "@earendil-works/pi-ai/api/openai-completions";
-
 const MAX_IMAGE_EDIT_BYTES = 8 * 1024 * 1024;
 
 /**
  * Resolve a user-supplied image path: absolute as-is; relative against cwd,
  * falling back to the pi-env uploads dir (autere attachments) and the shared
- * pi-images output dir (generated/edited images).
+ * pi-env images output dir (generated/edited images).
  */
 function resolvePath(p: string): string {
 	if (isAbsolute(p)) return p;
 	const candidates = [
 		resolve(process.cwd(), p),
 		join(piAgentDir(), "uploads", p),
-		join(homedir(), ".autere", "pi-images", p),
+		join(piAgentDir(), "images", p),
 	];
 	return candidates.find((c) => existsSync(c)) ?? candidates[0];
 }
@@ -49,6 +44,17 @@ const REQUEST_TIMEOUT_MS = 120_000;
 // OpenRouter's streamed "estimated" usage recount tokenizes base64 data-URLs
 // as text (~4x prompt inflation, image_tokens: 0); the non-streamed path
 // relays the provider's vision-correct usage. IMAGE_STREAM_FIX=0 disables.
+//
+// Provider-independent: installs ONE global fetch wrapper (idempotent, once
+// per process) that intercepts OpenAI-style chat-completions bodies at the
+// wire level for ANY provider/router — instead of re-registering the 9router
+// provider with a vendored pi-ai stream, which pinned this extension to
+// pi-ai 0.85.1 and broke tool calls entirely on pi >= 0.86 (stream contract
+// changed to TranscriptContext). The wire contract (JSON body in, Response
+// out) is stable across pi versions (0.84→0.87+), so this cannot introduce
+// that class of breakage again. Bodies that don't parse as OpenAI-style chat
+// completions (Anthropic Messages etc.) pass through byte-identical.
+
 const STREAM_FIX_RAW = String(process.env.IMAGE_STREAM_FIX ?? "").toLowerCase();
 const STREAM_FIX_ENABLED = STREAM_FIX_RAW !== "0" && STREAM_FIX_RAW !== "false";
 
@@ -86,8 +92,25 @@ function sseFromJson(j: any): Uint8Array {
 	return sseEnc.encode(out);
 }
 
+let streamFixInstalled = false;
+// Fetch captured at install time; direct calls (smoke test) fall back to the
+// current global. Inner sub-requests must use the PRE-install fetch so the
+// demoted non-streaming request bypasses the wrapper (no recursive re-entry).
+let prevFetch: typeof globalThis.fetch | null = null;
+
+function installStreamFix(): void {
+	if (streamFixInstalled) return;
+	streamFixInstalled = true;
+	prevFetch = globalThis.fetch.bind(globalThis);
+	globalThis.fetch = ((url: any, init?: any) => scrubFetch(url, init)) as typeof globalThis.fetch;
+}
+
+/** Fetch target: pre-install fetch in the live agent; current global otherwise (smoke tests). */
+const fetchTarget = (): typeof globalThis.fetch => prevFetch ?? globalThis.fetch;
+
 /** fetch wrapper: image requests go out non-streaming (JSON re-served as SSE); also scrubs reasoning_effort:"none" (upstream 400s on it). */
 const scrubFetch: typeof globalThis.fetch = async (url, init) => {
+	const prev = fetchTarget();
 	try {
 		if (typeof init?.body === "string" && init.body.includes('"messages"')) {
 			const body = JSON.parse(init.body);
@@ -164,8 +187,10 @@ const scrubFetch: typeof globalThis.fetch = async (url, init) => {
 						if (lk !== "accept" && !lk.startsWith("x-stainless")) headers[k] = String(v);
 					}
 				}
-				headers.accept = "application/json";
-				const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+			headers.accept = "application/json";
+				// prev, never globalThis.fetch: the wrapper IS the global during a
+				// session, so recursing into it would re-enter the transform.
+				const resp = await prev(url, { method: "POST", headers, body: JSON.stringify(body) });
 				const ct = resp.headers.get("content-type") ?? "";
 				if (resp.ok && ct.includes("json")) {
 					const j = await resp.json();
@@ -179,15 +204,15 @@ const scrubFetch: typeof globalThis.fetch = async (url, init) => {
 			}
 			// Untouched request: pass the original string through - no
 			// re-serialization cost for the (common) image-free case.
-			return mutated ? fetch(url, { ...init, body: JSON.stringify(body) }) : fetch(url, init);
+			return mutated ? prev(url, { ...init, body: JSON.stringify(body) }) : prev(url, init);
 		}
 	} catch {
 		/* fall through to plain fetch */
 	}
-	return fetch(url, init);
+	return prev(url, init);
 };
 
-// Named re-export so smoke-test.mjs can exercise the wrapper directly.
+// Named export so smoke-test.mjs can exercise the wrapper directly.
 export { scrubFetch };
 
 interface RouterConfig {
@@ -361,14 +386,10 @@ async function generateViaImagesApi(
 
 export default function (pi: ExtensionAPI) {
 	if (STREAM_FIX_ENABLED) {
-		// Re-register the 9router provider with a stream wrapper: image-bearing
-		// requests go out non-streamed. Registration merges over pi-9router-ext's
-		// (which loads later without a streamSimple, so ours survives).
-		pi.registerProvider("9router", {
-			api: "openai-completions",
-			streamSimple: (model, context, options) =>
-				stockStream(model as any, context, { ...options, fetch: scrubFetch } as any),
-		});
+		// Global wire-level interception: works for every provider/router and
+		// every pi version, no provider re-registration (which used to pin a
+		// vendored 0.85.x pi-ai stream and break tools on pi >= 0.86).
+		installStreamFix();
 	}
 
 	/**
@@ -382,11 +403,13 @@ export default function (pi: ExtensionAPI) {
 	const persistImages = (images: { data: string; mimeType: string }[], prefix: string): string[] => {
 		const savedPaths: string[] = [];
 		if (images.length === 0) return savedPaths;
-		const dir = join(homedir(), ".autere", "pi-images");
+		// Per-user env dir (multi-user service): ~/.autere/pi-envs/<user>/images
+		const dir = join(piAgentDir(), "images");
 		mkdirSync(dir, { recursive: true });
 		for (const [i, img] of images.entries()) {
 			const ext = img.mimeType.split("/")[1]?.replace("jpeg", "jpg") || "png";
-			const file = join(dir, `${prefix}-${Date.now()}-${i + 1}.${ext}`);
+			// randomBytes suffix: parallel calls can share one ms timestamp
+			const file = join(dir, `${prefix}-${Date.now()}-${randomBytes(4).toString("hex")}-${i + 1}.${ext}`);
 			writeFileSync(file, Buffer.from(img.data, "base64"));
 			savedPaths.push(file);
 			// Copy into the uploads dir under the hist-* name served by

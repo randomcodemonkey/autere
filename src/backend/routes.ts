@@ -16,7 +16,7 @@ import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword } from
 import { withDedupSections, withJanitorSections } from './extension-handlers.js';
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionHistory, filterScopedModels } from './utils.js';
-import { getScopedModelCatalog } from './model-catalog.js';
+import { getEnabledModelEntries, scopeModelsForSession } from './utils.js';
 import { getPiEnvDir } from './pi-env.js';
 import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
@@ -40,7 +40,8 @@ function activeToolsSnapshot(session: { state: { activeTools: Map<string, any> }
   return out;
 }
 
-import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths } from './user-settings.js';
+import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths, getFolderIgnores } from './user-settings.js';
+import { validateSandboxImage } from './pi-env.js';
 import {
   Scheduler,
   listTasks, getTask, saveTask, deleteTask, validateTaskInput,
@@ -298,9 +299,19 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       else sendJSON(res, { success: true, data: r.data });
     };
     if (url.pathname === '/api/browse/roots' && req.method === 'GET') {
-      sendBrowse({ data: userFileRoots(user) });
+      // Files-view ignores: drop roots and entries matching [files] entries so
+      // the tree (and the Files search walk) never sees them. Read/delete stay
+      // unfiltered — hidden files remain reachable by absolute path.
+      const filesIgnore = getFolderIgnores(user).filter((e) => e.files).map((e) => e.path);
+      sendBrowse({ data: userFileRoots(user).filter((r) => !pathIsIgnored(r.path, filesIgnore)) });
     } else if (url.pathname === '/api/browse/list' && req.method === 'GET') {
-      sendBrowse(browseList(user, url.searchParams.get('path') || ''));
+      const filesIgnore = getFolderIgnores(user).filter((e) => e.files).map((e) => e.path);
+      const r = browseList(user, url.searchParams.get('path') || '');
+      if ('data' in r) {
+        const dir = url.searchParams.get('path') || '';
+        r.data = r.data.filter((e) => !pathIsIgnored(`${dir}/${e.name}`, filesIgnore));
+      }
+      sendBrowse(r);
     } else if (url.pathname === '/api/browse/read' && req.method === 'GET') {
       sendBrowse(browseRead(user, url.searchParams.get('path') || ''));
     } else if (url.pathname === '/api/browse/write' && req.method === 'POST') {
@@ -477,7 +488,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
             for (let i = raw.length - 1; i >= 0; i--) {
               const m: any = (raw[i] as any).message;
               if (m?.role === 'assistant' && m.model) {
-                model = { provider: String(m.model).split('/')[0] || '9router', id: m.model, name: String(m.model).replace(/^[a-z0-9-]+\//i, '') };
+                model = { provider: String(m.model).split('/')[0] || '', id: m.model, name: String(m.model).replace(/^[a-z0-9-]+\//i, '') };
                 break;
               }
             }
@@ -501,7 +512,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           streamHistory,
           historySessionId: disk.id,
           availableSessions: pm.listSessions(user, viewed),
-          availableModels: [],
+          availableModels: getEnabledModelEntries(),
           extensions: extensionsState,
         };
       }
@@ -526,7 +537,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         streamHistory,
         historySessionId: st?.sessionId ?? null,
         availableSessions: pm.listSessions(user, viewed),
-        availableModels: sess?.state.availableModels ?? [],
+        availableModels: sess
+          ? scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model)
+          : getEnabledModelEntries(),
         extensions: extensionsState,
       };
     };
@@ -592,21 +605,24 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     }
     if (url.pathname === '/api/models') {
       const t = await resolveTarget(url.searchParams.get('sessionId'));
-      if (t && t.state.availableModels.length === 0) {
-        try {
-          const models = await t.rpc.getAvailableModels();
-          const scoped = filterScopedModels(models);
-          t.state.availableModels = scoped.map((m: any) => ({
-            provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
-          }));
-        } catch (err) {
-          log.http.error('Failed to fetch models on demand:', err);
+      let data: any[] = [];
+      if (t) {
+        if (t.state.availableModels.length === 0) {
+          try {
+            const models = await t.rpc.getAvailableModels();
+            t.state.availableModels = models.map((m: any) => ({
+              provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
+            }));
+          } catch (err) {
+            log.http.error('Failed to fetch models on demand:', err);
+          }
         }
+        // Active session: pi's models, scoped — current session model always shown.
+        data = scopeModelsForSession(t.state.availableModels, t.state.sessionState.model);
+      } else {
+        // Idle session (lazy spawn): no pi process to ask — enabled models only.
+        data = getEnabledModelEntries();
       }
-      let data = t?.state.availableModels ?? [];
-      // Idle session (lazy spawn): no process to ask — serve the router's
-      // catalog filtered by the scoped patterns instead of an empty list.
-      if (data.length === 0) data = await getScopedModelCatalog(user, provider);
       sendJSON(res, { success: true, data });
       return;
     }
@@ -1117,6 +1133,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
             routerConfig = { baseUrl: String(envConfig.baseUrl).replace(/\/+$/, ''), apiKey: String(envConfig.apiKey || '') };
           }
         } catch {}
+        if (!routerConfig.baseUrl) {
+          sendJSON(res, { success: false, error: 'No model router configured' }, 400);
+          return;
+        }
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 120_000);
         try {
@@ -1193,6 +1213,20 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           }
           // Save user settings
           const prev = getAllUserSettings(user);
+          // Changing the sandbox image is only useful if it can actually
+          // run pi — validate before saving (docker may pull, so this can
+          // take a while the first time).
+          if (settings.piSandboxImage !== undefined && String(settings.piSandboxImage).trim() !== prev.piSandboxImage) {
+            const image = String(settings.piSandboxImage).trim();
+            if (/^(off|none|disabled)$/i.test(image) && !isRegisteredUser(user) && getUserRole(user) !== 'admin') {
+              sendJSON(res, { success: false, error: 'Disabling the sandbox is admin-only' }, 400);
+              return;
+            }
+            if (image && !/^(off|none|disabled)$/i.test(image)) {
+              const err = await validateSandboxImage(image);
+              if (err) { sendJSON(res, { success: false, error: err }, 400); return; }
+            }
+          }
           saveUserSettings(user, settings);
           // Reserve % and janitor sweep policy are applied live by their pi
           // extensions (mtime-cached config reads, per model/call — no

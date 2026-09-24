@@ -24,10 +24,12 @@ export function getRouterConfig(): RouterConfig {
 				return { baseUrl: String(data.baseUrl).replace(/\/+$/, ''), apiKey: String(data.apiKey || '') };
 			}
 		} catch {
-			// fall through to defaults
+			// fall through to not-configured
 		}
 	}
-	return { baseUrl: 'http://localhost:20128', apiKey: process.env.NINE_ROUTER_API_KEY || '' };
+	// ponytail: no hardcoded router URL — 9router is optional; callers treat
+	// empty baseUrl as "not configured". Add defaults if a fixed target is wanted.
+	return { baseUrl: '', apiKey: process.env.NINE_ROUTER_API_KEY || '' };
 }
 
 export interface ImageModelInfo {

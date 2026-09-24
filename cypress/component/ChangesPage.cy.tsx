@@ -12,7 +12,7 @@ const mountPage = () => {
   cy.intercept('GET', '**/file-changes', { success: true, data: changes });
   // Height-constrained wrapper: gives .changes-mods a real overflow context.
   cy.mount(
-    <div style={{ height: '400px', display: 'flex' }}>
+    <div style={{ height: '400px', display: 'flex', flexDirection: 'column' }}>
       <ChangesPage sessionId="s1" />
     </div>
   );
@@ -33,19 +33,17 @@ describe('ChangesPage file selection', () => {
     cy.get('@scrollTo').should('have.been.calledWith', 0, 0);
   });
 
-  it('deselects on second click — diff hidden, list takes full height', () => {
+  it('deselects on second click — empty state in the detail pane', () => {
     mountPage();
     cy.get('.changes-file').contains('src/long.ts').click();
-    cy.get('.changes-mods').should('exist');
+    cy.get('.changes-mods .changes-mod').should('exist');
 
-    // Click the already-selected file: diff hides, list expands.
+    // Click the already-selected file: detail pane shows the empty state.
     cy.get('.changes-file').contains('src/long.ts').click();
-    cy.get('.changes-mods').should('not.exist');
-    cy.get('.changes-page').should('have.class', 'no-selection');
+    cy.get('.changes-mods').should('contain', 'Select a file to view its changes');
 
     // Selecting again restores the diff pane.
     cy.get('.changes-file').contains('src/long.ts').click();
-    cy.get('.changes-mods').should('exist');
-    cy.get('.changes-page').should('not.have.class', 'no-selection');
+    cy.get('.changes-mods .changes-mod').should('exist');
   });
 });

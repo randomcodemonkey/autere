@@ -21,6 +21,33 @@ export function filterScopedModels(models: any[]): any[] {
   return filterModelsByPatterns(models, getEnabledModelPatterns());
 }
 
+/**
+ * Filter to enabled models, always keeping the session's actual current model
+ * (visible even if it isn't in the enabled list).
+ */
+export function scopeModelsForSession(models: any[], current?: { provider?: string; id?: string; name?: string } | null): any[] {
+  const scoped = filterScopedModels(models).map((m: any) => ({
+    provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
+  }));
+  if (current?.id && !scoped.some((m: any) => m.id === current.id && m.provider === (current.provider || ''))) {
+    scoped.unshift({ provider: current.provider || '', id: current.id, name: current.name || current.id, thinkingLevel: undefined });
+  }
+  return scoped;
+}
+
+/**
+ * Enabled models for sessions with no running pi process (no RPC to ask).
+ * enabledModels entries are "provider/model" or bare "model" strings; no
+ * richer metadata is available without a router dependency.
+ */
+export function getEnabledModelEntries(): any[] {
+  return getEnabledModelPatterns().map((p) => {
+    const slash = p.indexOf('/');
+    if (slash > 0) return { provider: p.slice(0, slash), id: p.slice(slash + 1), name: p.slice(slash + 1), thinkingLevel: undefined };
+    return { provider: '', id: p, name: p, thinkingLevel: undefined };
+  });
+}
+
 // ── JSON response ──
 
 export function sendJSON(res: ServerResponse, data: any, status = 200) {

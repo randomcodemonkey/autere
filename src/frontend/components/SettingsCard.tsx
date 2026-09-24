@@ -4,6 +4,8 @@ import { PersonasSettingsSection } from './Personas';
 import { url } from '../base-path';
 import type { SettingSection, SettingField } from '../types';
 
+interface FolderIgnoreEntry { path: string; edits: boolean; files: boolean }
+
 interface SettingsCardProps {
   sseConnected: boolean;
 }
@@ -20,6 +22,34 @@ const FieldShell: React.FC<{ field: SettingField; children: React.ReactNode }> =
   </div>
 );
 
+// "Add folder" input row: enter a path, then submit — no phantom empty row.
+// Duplicate paths are rejected (the backend also dedupes).
+const FolderIgnoreAdd: React.FC<{ onAdd: (path: string) => void; items: FolderIgnoreEntry[] }> = ({ onAdd, items }) => {
+  const [path, setPath] = useState('');
+  const submit = () => {
+    const p = path.trim().replace(/\/+$/, '');
+    if (!p || items.some((it) => it.path === p)) return;
+    onAdd(p);
+    setPath('');
+  };
+  return (
+    <div className="sortable-list-add">
+      <input
+        className="sortable-list-input"
+        type="text"
+        value={path}
+        spellCheck={false}
+        placeholder="Add folder…"
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+        onChange={(e) => setPath(e.target.value)}
+      />
+      <button className="btn btn-primary sortable-list-add-btn" type="button" disabled={!path.trim()} onClick={submit}>
+        Add folder
+      </button>
+    </div>
+  );
+};
+
 export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   const [schema, setSchema] = useState<SettingSection[]>([]);
   const [settings, setSettings] = useState<Record<string, any>>({});
@@ -32,6 +62,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   // Settings as loaded / last saved — the baseline the floating Save button
   // compares against (shown only while something actually differs).
   const baselineRef = useRef('{}');
+  const [activeSection, setActiveSection] = useState<string>('');
 
   // Reset saved state when SSE reconnects after backend restart
   useEffect(() => {
@@ -48,7 +79,11 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       fetch(url('/api/extensions/packages')).then(r => r.json()).catch(() => null),
     ]).then(([schemaRes, settingsRes, pkgsRes]) => {
       if (pkgsRes?.success) setAvailablePackages(pkgsRes.data.available || []);
-      if (schemaRes.success) setSchema(schemaRes.data);
+      if (schemaRes.success) {
+        // Sort once here, before render: menu + validation effect + default
+        // selection all see the same alphabetical order
+        setSchema([...schemaRes.data].sort((a, b) => a.label.localeCompare(b.label)));
+      }
       if (settingsRes.success) {
         setSettings(settingsRes.data);
         baselineRef.current = JSON.stringify(settingsRes.data);
@@ -59,6 +94,13 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       setLoading(false);
     });
   }, []);
+
+  // Keep the active menu item valid once the schema has loaded (empty
+  // schema still allows the always-present Personas item).
+  useEffect(() => {
+    const ids = [...schema.map((s) => s.id), '__personas'];
+    if (!loading && !ids.includes(activeSection)) setActiveSection(ids[0]);
+  }, [schema, activeSection, loading]);
 
   const handleChange = useCallback((key: string, value: any) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -175,6 +217,43 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       );
     }
 
+    if (field.type === 'folderIgnores') {
+      const items: FolderIgnoreEntry[] = Array.isArray(value) ? value : [];
+      // An entry with neither flag is useless — auto-drop the row
+      const setItem = (i: number, patch: Partial<FolderIgnoreEntry>) =>
+        handleChange(field.key, items
+          .map((it, j) => (j === i ? { ...it, ...patch } : it))
+          .filter((it) => it.edits || it.files));
+      return (
+        <FieldShell key={field.key} field={field}>
+          <div className="sortable-list">
+            {items.map((it, i) => (
+              <div key={i} className="sortable-list-item">
+                <input
+                  className="sortable-list-input"
+                  type="text"
+                  value={it.path}
+                  spellCheck={false}
+                  onChange={(e) => setItem(i, { path: e.target.value })}
+                />
+                <label className="settings-ig-toggle" title="Hide from edit cards and the Changes list">
+                  <input type="checkbox" checked={!!it.edits} onChange={(e) => setItem(i, { edits: e.target.checked })} /> edits
+                </label>
+                <label className="settings-ig-toggle" title="Hide from the Files file browser">
+                  <input type="checkbox" checked={!!it.files} onChange={(e) => setItem(i, { files: e.target.checked })} /> files
+                </label>
+                <button className="sortable-list-remove" onClick={() => handleChange(field.key, items.filter((_, j) => j !== i))} title="Remove">✕</button>
+              </div>
+            ))}
+            <FolderIgnoreAdd
+              items={items}
+              onAdd={(p) => handleChange(field.key, [...items, { path: p, edits: true, files: true }])}
+            />
+          </div>
+        </FieldShell>
+      );
+    }
+
     if (field.type === 'textarea') {
       return (
         <FieldShell key={field.key} field={field}>
@@ -257,6 +336,12 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
 
   const dirty = JSON.stringify(settings) !== baselineRef.current;
 
+  // Side-menu items: schema sections + the Personas section, alphabetically
+  const menuItems = [
+    ...schema.map((s) => ({ id: s.id, label: s.label })),
+    { id: '__personas', label: 'Personas' },
+  ].sort((a, b) => a.label.localeCompare(b.label));
+
   return (
     <div className="card settings-card">
       <div className="card-header">
@@ -274,33 +359,62 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
 
       {loading ? (
         <div className="settings-loading">Loading settings…</div>
-      ) : schema.length === 0 ? (
+      ) : menuItems.length === 1 ? (
         <div className="settings-empty">No settings available for your enabled extensions.</div>
       ) : (
-        <>
-          <div className="settings-sections">
-            {schema.map((section) => (
-              <div key={section.id} className="settings-section">
-                <h3 className="settings-section-title">{section.label}</h3>
-                <div className="settings-section-fields">
-                  {section.fields.map(renderField)}
-                </div>
-              </div>
-            ))}
-            <PersonasSettingsSection />
-          </div>
+        <div className="settings-layout">
+          <div className="settings-side">
+            {/* Mobile: the category list collapses to a native dropdown
+                (see styles.scss — .settings-menu-btn is hidden <=768px) */}
+            <select
+              className="settings-menu-select"
+              value={activeSection}
+              onChange={(e) => setActiveSection(e.target.value)}
+              aria-label="Settings category"
+            >
+              {menuItems.map((item) => (
+                <option key={item.id} value={item.id}>{item.label}</option>
+              ))}
+            </select>
 
-          {/* Floating save action: only while there are unsaved changes —
-              fixed position keeps it visible no matter how far the page is
-              scrolled (the in-flow button at the page end was easy to miss). */}
-          {dirty && !loading && (
-            <div className="settings-save-float">
-              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            <nav className="settings-menu" aria-label="Settings categories">
+              {menuItems.map((item) => (
+                <button
+                  key={item.id}
+                  className={`settings-menu-btn${activeSection === item.id ? ' active' : ''}`}
+                  onClick={() => setActiveSection(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+
+            {/* Save action sits inside the side menu: always in the same
+                place regardless of how far the form is scrolled */}
+            {dirty && (
+              <button className="btn btn-primary settings-save-btn" onClick={handleSave} disabled={saving}>
                 {saving ? 'Saving…' : 'Save Settings'}
               </button>
-            </div>
-          )}
-        </>
+            )}
+          </div>
+
+          <div className="settings-content">
+            {activeSection === '__personas' ? (
+              <PersonasSettingsSection />
+            ) : (
+              schema
+                .filter((section) => section.id === activeSection)
+                .map((section) => (
+                  <div key={section.id} className="settings-section">
+                    <h3 className="settings-section-title">{section.label}</h3>
+                    <div className="settings-section-fields">
+                      {section.fields.map(renderField)}
+                    </div>
+                  </div>
+                ))
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

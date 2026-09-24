@@ -20,7 +20,7 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [expandedChange, setExpandedChange] = useState<number | null>(null);
+  const [selectedChange, setSelectedChange] = useState<number | null>(null);
   const modsRef = useRef<HTMLDivElement>(null);
 
   // Switching files swaps the diff content under the (persistent) scroll
@@ -92,10 +92,10 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
     return filtered.filter((c) => c.path === selectedFile);
   }, [filtered, selectedFile]);
 
-  // Auto-expand latest change when file selection changes
+  // Pre-select the newest change of the selected file
   useEffect(() => {
-    if (fileChanges.length > 0) setExpandedChange(fileChanges.length - 1);
-    else setExpandedChange(null);
+    if (fileChanges.length > 0) setSelectedChange(fileChanges.length - 1);
+    else setSelectedChange(null);
   }, [selectedFile, fileChanges.length]);
 
   if (!sessionId) {
@@ -103,14 +103,14 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
   }
 
   return (
-    <div className={`changes-page${selectedFile ? '' : ' no-selection'}`}>
-      {/* File browser — capped height, scrollable */}
+    <>
+      {/* File list — left card on desktop, capped strip on mobile */}
       <div className="changes-files">
         <div className="changes-files-bar">
           <input
             className="changes-search"
             type="text"
-            placeholder="Search files…"
+            placeholder="Search.."
             value={search}
             onChange={(e) => { setSearch(e.target.value); setSelectedFile(null); }}
           />
@@ -133,48 +133,41 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
                 onClick={() => setSelectedFile(selectedFile === path ? null : path)}
               >
                 <span className="changes-file-name">{path}</span>
-                {count > 1 && <span className="changes-file-count">{count}</span>}
+                <span className="changes-file-count">{count}</span>
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Modifications — fills remaining height, scrollable. Hidden entirely
-          when no file is selected: the list then uses the full height. */}
-      {selectedFile && (
+      {/* Change history for the selected file — the selected change's diff is
+          shown inline; the newest change is pre-selected. */}
       <div ref={modsRef} className="changes-mods">
-        {selectedFile ? (
-          fileChanges.length > 0 ? (
-            fileChanges.map((c, i) => {
-              const isOpen = expandedChange === i;
-              return (
-                <div key={i} className={`changes-mod${isOpen ? ' expanded' : ''}`}>
-                  <div className="changes-mod-header" onClick={() => setExpandedChange(isOpen ? null : i)}>
-                    <span className={`changes-badge changes-badge-${c.change}`}>{c.change}</span>
-                    <span className="changes-mod-tool">{c.tool}</span>
-                    <span className="changes-mod-time">{new Date(c.ts).toLocaleTimeString()}</span>
-                    <span className="changes-mod-chevron">{isOpen ? '▾' : '▸'}</span>
-                  </div>
-                  {isOpen && (
-                    <div className="changes-mod-diff">
-                      {renderEditDiff(c.diff, false, 9999)}
-                    </div>
-                  )}
+        {selectedFile && fileChanges.length > 0 ? (
+          fileChanges.map((c, i) => {
+            const isSel = i === selectedChange;
+            return (
+              <div key={i} className={`changes-mod${isSel ? ' selected' : ''}`}>
+                <div className="changes-mod-header" onClick={() => setSelectedChange(i)}>
+                  <span className={`changes-badge changes-badge-${c.change}`}>{c.change}</span>
+                  <span className="changes-mod-tool">{c.tool}</span>
+                  <span className="changes-mod-time">{new Date(c.ts).toLocaleTimeString()}</span>
                 </div>
-              );
-            })
-          ) : (
-            <div className="changes-empty">No changes for this file</div>
-          )
+                {isSel && (
+                  <div className="changes-mod-diff">
+                    {renderEditDiff(c.diff, false, 9999)}
+                  </div>
+                )}
+              </div>
+            );
+          })
         ) : (
           <div className="changes-empty changes-empty-detail">
             <div className="changes-empty-icon">📝</div>
-            <div>No changes for this file</div>
+            <div>{selectedFile ? 'No changes for this file' : 'Select a file to view its changes'}</div>
           </div>
         )}
       </div>
-      )}
-    </div>
+    </>
   );
 };

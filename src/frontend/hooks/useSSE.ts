@@ -128,8 +128,13 @@ export function useSSE(options: UseSSEOptions = {}) {
     if (!connected && reconnectAttempts > 0) {
       const timeout = Math.min(2000 * reconnectAttempts, 10000);
       const timer = setTimeout(() => {
-        if (reconnectAttempts >= MAX_SILENT_ATTEMPTS) setConnecting(false); // give up silently → show Disconnected
+        // Give up showing 'Loading': connecting flag by the matched attempts.
+        // connect() sets connecting=true itself — order matters, or the
+        // batched update wins and the badge stays blue 'Loading…' forever
+        // instead of surfacing Disconnected (backend killed, no respawn).
+        const silent = reconnectAttempts >= MAX_SILENT_ATTEMPTS;
         connect();
+        if (silent) setConnecting(false);
       }, timeout);
       return () => clearTimeout(timer);
     }

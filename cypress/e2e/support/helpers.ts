@@ -28,17 +28,10 @@ export function modelsSection(): Cypress.Chainable<JQuery<HTMLElement>> {
   return cy.get('.settings-section:has(.settings-section-title:contains("Models"))');
 }
 
-/** Open the sessions modal, retrying when a freshly-opened modal closes
- *  itself (rare headless-browser race). Fails for real if it never opens. */
+/** Open the sessions page via the header view menu. */
 export function openSessionsModal(): void {
-  cy.get('body').then(($body) => {
-    const modalVisible = $body.find('.modal-session.open, .modal-overlay.open .modal-session').length > 0
-      && $body.find('.modal-session').is(':visible');
-    if (!modalVisible) {
-      cy.get('.session-badge').click();
-    }
-  });
-  cy.get('.modal-session', { timeout: 5000 }).should('be.visible');
+  cy.get('.view-btn-sessions', { timeout: 5000 }).click();
+  cy.get('.sessions-page', { timeout: 5000 }).should('be.visible');
 }
 
 /** Write a minimal idle session jsonl into the e2e env (no pi spawn). */

@@ -27,6 +27,9 @@ interface StatusCardProps {
   /** Compact-context action, shown in the Usage card */
   onCompact?: () => void;
   compacting?: boolean;
+  /** Abort the running operation — shown in the Usage card */
+  onAbort?: () => void;
+  isStreaming?: boolean;
   // System / user
   username: string | null;
   userRole: string | null;
@@ -83,6 +86,8 @@ export const StatusCard: React.FC<StatusCardProps> = ({
   onActivateSession,
   onCompact,
   compacting,
+  onAbort,
+  isStreaming,
   username,
   userRole,
   restarting,
@@ -145,6 +150,8 @@ export const StatusCard: React.FC<StatusCardProps> = ({
         onCompact={onCompact}
         compactDisabled={compacting || statusType !== 'connected'}
         compacting={compacting}
+        onAbort={onAbort}
+        isStreaming={isStreaming}
       />
       )}
 

@@ -167,12 +167,9 @@ describe('autere — settings', () => {
     cy.get('.settings-save-float .btn-primary').should('contain', 'Save Settings');
   });
 
-  it('session badge opens the sessions modal', () => {
-    openSettings();
-    cy.get('.session-badge').should('exist');
-    cy.get('.session-badge').click();
-    cy.get('.modal-session').should('be.visible');
-    cy.get('.modal-session .modal-close').click();
+  it('Sessions view button opens the sessions page', () => {
+    cy.get('.view-btn-sessions').click();
+    cy.get('.sessions-page').should('be.visible');
   });
 
   it('settings view replaces the chat card', () => {

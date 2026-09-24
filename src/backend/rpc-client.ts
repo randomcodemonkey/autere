@@ -38,6 +38,8 @@ export interface RpcImage {
 
 // ── Types ──
 
+import { SandboxMount } from './pi-env.js';
+
 export interface RpcClientOptions {
   /** Working directory for pi */
   cwd?: string;
@@ -57,6 +59,15 @@ export interface RpcClientOptions {
   imagePreviewQuality?: ImagePreviewQuality | 'full';
   /** Non-streamed upstream requests for image-bearing chats (pi-images env) */
   imageStreamFix?: boolean;
+  /** Run pi inside a docker container (this image name) instead of on the host.
+   *  '' / undefined = disabled. Only the home volume + a tmpfs /tmp are
+   *  visible; --network host keeps the model router reachable. */
+  sandboxImage?: string;
+  /** Planned sandbox mounts (pi-env.planSandboxMounts): pi env dir path-
+   *  plus master-npm and the user's work area, at fixed container paths. */
+  sandboxMounts?: SandboxMount[];
+  /** Container cwd (-w); undefined = fallback /home/slop. */
+  sandboxWorkingDir?: string;
 }
 
 export type RpcEventListener = (event: JsonAgentSessionEvent) => void;
@@ -136,6 +147,60 @@ export class MonitorRpcClient {
    * ponytail: catches parse errors only — runtime import failures inside a
    * broken extension still kill pi; a real fix needs pi-side lazy loading.
    */
+  /**
+   * Build the docker argv that runs pi inside the configured sandbox image.
+   *
+   * Mirrors the manually-verified setup:
+   *   docker run --rm -i --network host --tmpfs /tmp \
+   *     -v slopbox_home:/home/slop \
+   *     --entrypoint bash <image> -c 'env ... pi --mode rpc ...'
+   *
+   * - The home is a NAMED docker volume (not a bind path): the daemon resolves
+   *   plain paths on the HOST, so a volume must be referenced by name.
+   * - Mount at the identical /home/slop path: session files record host
+   *   paths (/home/slop/...) as cwd — they must stay valid inside.
+   * - --network host: the model router (9router) is on the host's localhost.
+     */
+  private buildSandboxCommand(piArgs: string[]): string[] {
+    const image = this.options.sandboxImage!;
+    const mounts = this.options.sandboxMounts;
+    if (!mounts || mounts.length === 0) throw new Error('pi sandbox requested but no mounts were planned');
+
+    const specs = mounts.map((m) => m.subpath !== undefined && m.subpath !== ''
+      ? ['--mount', `type=volume,src=${m.volume},dst=${m.dst},volume-subpath=${m.subpath}`]
+      : ['-v', `${m.volume}:${m.dst}`]).flat();
+    const cwd = this.options.sandboxWorkingDir || '/home/slop';
+    // Escape-proofing: the sandbox NEVER runs as root (root in-container +
+    // mounted docker.sock = host root via `docker run -v /:/host`). Force the
+    // backend's own uid — it matches the volume ownership already; images
+    // wanting a different non-root user are not supported (ponytail: add a
+    // per-setting runAsUser if an image ever needs one). no-new-privileges
+    // blocks setuid/sudo escape paths (sudo/setuid/file-caps all fail).
+    const uid = process.getuid?.() ?? 1001;
+    const gid = process.getgid?.() ?? uid;
+    // No shell quoting in the inner script: env vars go through docker -e
+    // (verbatim argv) and pi args travel as bash positional params.
+    const out = [
+      'docker', 'run',
+      '-w', cwd,
+      '--rm', '-i', '--init', '--network', 'host', '--user', `${uid}:${gid}`,
+      '--security-opt', 'no-new-privileges',
+      '--tmpfs', '/tmp:rw,size=512m',
+      ...specs.map((s) => s.split(' ')).flat(),
+      ...(this.options.agentDir ? [['-e', `PI_CODING_AGENT_DIR=${this.options.agentDir}`], ['-e', `PI_MEMORY_DIR=${join(this.options.agentDir, 'memory')}`]].flat() : []),
+      ...(this.options.editIgnorePaths?.length ? [['-e', `EDIT_IGNORE_PATHS=${this.options.editIgnorePaths.join(':')}`]].flat() : []),
+      ...(this.options.sendImagesToChatModel !== undefined ? [['-e', `IMAGE_SEND_PREVIEWS=${this.options.sendImagesToChatModel ? '1' : '0'}`]].flat() : []),
+      ...(this.options.imagePreviewQuality && this.options.imagePreviewQuality !== 'full' ? [['-e', `IMAGE_PREVIEW_QUALITY=${JSON.stringify(this.options.imagePreviewQuality)}`]].flat() : []),
+      ...(this.options.imageStreamFix !== undefined ? [['-e', `IMAGE_STREAM_FIX=${this.options.imageStreamFix ? '1' : '0'}`]].flat() : []),
+      // pi tools may manage docker themselves — forward the socket if present
+      '--entrypoint', 'bash',
+      image,
+      '-c', 'exec pi --mode rpc "$@"', '--',
+      ...piArgs,
+    ];
+    return out;
+  }
+
   private quarantineBrokenExtensions(): void {
     const dir = this.options.agentDir ? join(this.options.agentDir, 'extensions') : null;
     if (!dir || !existsSync(dir)) return;
@@ -199,8 +264,14 @@ export class MonitorRpcClient {
 
     log.rpc.info('Starting pi RPC process:', args.join(' '));
 
-    const childProcess = spawn('pi', args, {
-      cwd: this.options.cwd,
+    const piCommand = this.options.sandboxImage
+      ? this.buildSandboxCommand(args)
+      : null;
+    const childProcess = spawn(
+      piCommand ? piCommand[0] : 'pi',
+      piCommand ? piCommand.slice(1) : args,
+      {
+        cwd: this.options.cwd,
       env: {
         ...process.env,
         ...(this.options.agentDir ? { PI_CODING_AGENT_DIR: this.options.agentDir } : {}),

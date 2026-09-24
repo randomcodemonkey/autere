@@ -33,9 +33,9 @@ describe('SettingsCard select fields', () => {
     stubFetch({ imageModel: '' });
     cy.mount(<SettingsCard sseConnected={true} />);
     cy.get('select.settings-input').should('exist');
-    cy.get('select option').should('have.length', 3);
-    cy.get('select option').first().should('contain', 'Auto (first available)');
-    cy.get('select option').eq(1).should('contain', 'Model A');
+    cy.get('select.settings-input option').should('have.length', 3);
+    cy.get('select.settings-input option').first().should('contain', 'Auto (first available)');
+    cy.get('select.settings-input option').eq(1).should('contain', 'Model A');
   });
 
   it('shows the selected value', () => {
@@ -169,5 +169,94 @@ describe('SettingsCard number fields', () => {
     cy.wrap(null).should(() => {
       expect(savedBody).to.deep.equal({ reserveTokensPercent: '30' });
     });
+  });
+});
+
+describe('SettingsCard side menu', () => {
+  const twoSectionSchema = [
+    { id: 'images', label: 'Images', fields: [ { key: 'imageModel', label: 'Image Model', type: 'select' as const, options: [] } ] },
+    { id: 'sandbox', label: 'Sandbox', fields: [ { key: 'piSandboxImage', label: 'Sandbox Image', type: 'text' as const } ] },
+  ];
+
+  function stubTwo(putSpy?: (args: any) => void) {
+    cy.window({ log: false }).then((win) => {
+      win.fetch = (input: any, init: any) => {
+        const u = String(input);
+        let data: any = { success: true };
+        if (u.includes('/api/settings/schema')) data = { success: true, data: twoSectionSchema };
+        else if (u.includes('/api/settings')) {
+          if (init?.method === 'POST') { putSpy?.(init); return Promise.resolve({ json: () => Promise.resolve({ success: true, data }) } as any); }
+          data = { success: true, data: { imageModel: '' } };
+        } else if (u.includes('/api/extensions/packages')) data = { success: true, data: { available: [] } };
+        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
+      };
+    });
+  }
+
+  it('renders category side menu and shows only the active section', () => {
+    stubTwo();
+    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.get('.settings-menu-btn').should('have.length', 3); // 2 sections + Personas
+    cy.get('.settings-menu-btn').first().should('have.class', 'active');
+    cy.get('.settings-content select.settings-input').should('exist');
+    cy.get('.settings-menu-btn').eq(2).click(); // alphabetical: Images, Personas, Sandbox
+    cy.get('.settings-content input.settings-input').should('exist');
+    cy.contains('.settings-content', 'Sandbox Image').should('exist');
+    cy.contains('.settings-content', 'Image Model').should('not.exist');
+  });
+
+  it('shows the save button under the categories only when dirty; saves', () => {
+    const post = (args: any) => (window as any).__post = args;
+    stubTwo(post);
+    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.get('.settings-save-btn').should('not.exist');
+    cy.get('.settings-menu-btn').eq(2).click();
+    cy.get('.settings-content input.settings-input').type('img-x');
+    cy.get('.settings-save-btn').should('exist');
+    cy.get('.settings-save-btn').click();
+    cy.get('.settings-save-btn').should('not.exist');
+    cy.contains('.settings-saved', 'Restarting').should('exist');
+  });
+});
+
+describe('SettingsCard folderIgnores fields', () => {
+  const folderSchema = [
+    {
+      id: 'files',
+      label: 'Files',
+      fields: [
+        { key: 'folderIgnores', label: 'Ignored folders', type: 'folderIgnores' as const },
+      ],
+    },
+  ];
+
+  // The folderIgnores schema lives inside the shared stub schema — patch it.
+  beforeEach(() => { (schema as any).length = 0; schema.push({ id: 'files', label: 'Files', fields: [ { key: 'folderIgnores', label: 'Ignored folders', type: 'folderIgnores' as const } ] }); });
+
+  it('renders rows with edits/files toggles', () => {
+    stubFetch({ folderIgnores: [
+      { path: '/tmp', edits: true, files: false },
+      { path: 'node_modules', edits: true, files: true },
+    ] });
+    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.get('.sortable-list-item').should('have.length', 2);
+    cy.get('.sortable-list-item').first().find('input[type=text]').should('have.value', '/tmp');
+    cy.get('.sortable-list-item').first().find('input[type=checkbox]').first().should('be.checked');
+    cy.get('.sortable-list-item').first().find('input[type=checkbox]').eq(1).should('not.be.checked');
+  });
+
+  it('unchecking the last flag removes the row and adding appends', () => {
+    stubFetch({ folderIgnores: [{ path: '.git', edits: true, files: true }] });
+    cy.mount(<SettingsCard sseConnected={true} />);
+    // uncheck both flags on the row → row is dropped
+    cy.get('.sortable-list-item input[type=checkbox]').first().uncheck();
+    cy.get('.sortable-list-item input[type=checkbox]').last().uncheck();
+    cy.get('.sortable-list-item').should('not.exist');
+    // Add: type a path then submit — a new row with both flags on appears
+    cy.get('.sortable-list-add .sortable-list-input').type('node_modules');
+    cy.contains('Add folder').click();
+    cy.get('.sortable-list-item').should('have.length', 1);
+    cy.get('.sortable-list-item input[type=checkbox]').should('be.checked').and('have.length', 2);
+    cy.get('.sortable-list-add .sortable-list-input').should('have.value', '');
   });
 });

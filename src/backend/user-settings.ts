@@ -13,6 +13,7 @@
  * 6. Default value
  */
 
+import { getUserRole } from './users.js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { randomUUID } from 'crypto';
@@ -31,7 +32,7 @@ interface UserSettings {
 export interface SettingField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel';
+  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel' | 'folderIgnores';
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;
@@ -232,6 +233,10 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
       renameSync(tmp, configPath);
       invalidateCache(configPath);
     }
+    // Force-image input overrides → envDir/models.json (pi modelOverrides)
+    if ('visionByModel' in settings || 'enabledModels' in settings) {
+      writeVisionOverrides(user, envDir);
+    }
     // Reserve-context policy file for the pi-token-reserve extension
     if ('reserveTokensPercent' in settings || 'reserveTokensPercentByModel' in settings) {
       writeReserveTokensConfig(user);
@@ -246,16 +251,115 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
 }
 
 /**
+ * Rebuild the env's models.json modelOverrides from the vision per-model setting.
+ * Entries marked 'on' get input:['text','image'] forced; everything else falls
+ * back to whatever pi's metadata resolution decides. Preserves the rest of an
+ * existing models.json (other providers, custom models); stale overrides (model
+ * removed from enabledModels or turned off) are pruned. Called from
+ * applySettingsToPiEnv when visionByModel or enabledModels changes; pi reads
+ * models.json at process start, so the settings-save restart keeps them live.
+ */
+function writeVisionOverrides(user: string, envDir: string): void {
+  const modelsPath = join(envDir, 'models.json');
+  let current: any = {};
+  if (existsSync(modelsPath)) {
+    try { current = JSON.parse(readFileSync(modelsPath, 'utf-8')); } catch {}
+  }
+  const settings = getAllUserSettings(user);
+  const vision = settings.visionByModel && typeof settings.visionByModel === 'object' && !Array.isArray(settings.visionByModel)
+    ? settings.visionByModel : {};
+  const models = Array.isArray(settings.enabledModels) ? settings.enabledModels : [];
+  const piSettings = readJsonCached(join(envDir, 'settings.json')) || {};
+  const next = mergeVisionOverrides(current, models, vision, piSettings.defaultProvider);
+  const tmp = join(envDir, `.models-tmp-${randomUUID()}`);
+  writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf-8');
+  renameSync(tmp, modelsPath);
+  invalidateCache(modelsPath);
+}
+
+/**
+ * Pure merge (tested): recomputes overrides for enabledModels only, keyed by
+ * provider under models.json's providers map ("provider/model" entries; bare
+ * ids go under defaultProvider). Old entries not re-derived are dropped.
+ */
+export function mergeVisionOverrides(
+  existing: Record<string, any>,
+  enabledModels: string[],
+  vision: Record<string, unknown>,
+  defaultProvider?: string,
+): Record<string, any> {
+  const providers: Record<string, any> = { ...existing.providers };
+  // Preserve existing override fields from BEFORE pruning so the rebuild
+  // below can re-attach them (pruning only drops our forced-input entries).
+  const priorOverrides: Record<string, Record<string, any>> = {};
+  for (const [pKey, prov] of Object.entries(providers)) {
+    if (prov && typeof prov === 'object' && prov.modelOverrides) {
+      priorOverrides[pKey] = { ...prov.modelOverrides };
+      for (const [id, ov] of Object.entries(prov.modelOverrides)) {
+        if (ov && typeof ov === 'object' && typeof ov.input === 'object' && (ov.input as string[]).length === 2 && (ov.input as string[]).includes('image')) {
+          delete prov.modelOverrides[id];
+        }
+      }
+      if (Object.keys(prov.modelOverrides).length === 0) delete prov.modelOverrides;
+    }
+  }
+  for (const entry of enabledModels) {
+    if (vision[entry] !== 'on') continue;
+    const slash = entry.indexOf('/');
+    const provider = slash > 0 ? entry.slice(0, slash) : (defaultProvider || '');
+    const id = slash > 0 ? entry.slice(slash + 1) : entry;
+    if (!provider || !id) continue;
+    const prov = providers[provider] = providers[provider] || {};
+    const ov = priorOverrides[provider]?.[id] || {};
+    prov.modelOverrides = { ...(prov.modelOverrides || {}), [id]: { ...ov, input: ['text', 'image'] } };
+  }
+  for (const [k, v] of Object.entries(providers)) {
+    if (v && typeof v === 'object' && Object.keys(v).length === 0) delete providers[k];
+  }
+  return { ...existing, providers };
+}
+
+/**
  * Chat history limit (messages kept in the buffer and shown in the chat).
  * Stored as the user setting 'historyLimit'; clamped to 10-500, default 50.
  * Snapshot per UserSession construction — settings saves restart the pi
  * process, so a new session picks up the new value.
  */
+export interface FolderIgnore { path: string; edits: boolean; files: boolean }
+
+// Defaults per spec: /tmp is edits-only; the dev-artifact folders are
+// hidden from both the Files browser and the edit/changes pipelines.
+const DEFAULT_FOLDER_IGNORES: FolderIgnore[] = [
+  { path: '/tmp', edits: true, files: false },
+  { path: 'node_modules', edits: true, files: true },
+  { path: '.git', edits: true, files: true },
+  { path: '.cache', edits: true, files: true },
+];
+
+export function getFolderIgnores(user: string): FolderIgnore[] {
+  // Migration from the retired Chat → "Ignored folders for edit cards"
+  // (editIgnorePaths): every legacy entry was an unconditional edit ignore.
+  const raw = readUserSettingsFile(user)['folderIgnores'];
+  let entries = Array.isArray(raw) ? raw : null;
+  if (!entries) {
+    const legacy = readUserSettingsFile(user)['editIgnorePaths'];
+    entries = Array.isArray(legacy) && legacy.length > 0
+      ? legacy.map((p: any) => ({ path: p, edits: true, files: false }))
+      : DEFAULT_FOLDER_IGNORES;
+  }
+  const seen = new Set<string>();
+  const out: FolderIgnore[] = [];
+  for (const e of entries) {
+    const path = typeof e?.path === 'string' ? e.path.trim().replace(/\/+$/, '') : '';
+    if (!path || seen.has(path) || (!e?.edits && !e?.files)) continue;
+    seen.add(path);
+    out.push({ path, edits: !!e.edits, files: !!e.files });
+  }
+  return out;
+}
+
 export function getEditIgnorePaths(user: string): string[] {
-  const raw = getUserSetting(user, 'editIgnorePaths', ['/tmp']);
-  if (!Array.isArray(raw)) return ['/tmp'];
-  const list = raw.filter((p: any) => typeof p === 'string' && p.trim()).map((p: string) => p.trim().replace(/\/+$/, ''));
-  return list.length > 0 ? list : ['/tmp'];
+  return getFolderIgnores(user).filter((e) => e.edits).map((e) => e.path);
 }
 
 export function getHistoryLimit(user: string): number {
@@ -557,6 +661,10 @@ function getUserSettingsDefaults(user: string): UserSettings {
   defaults.janitorKeepRecentTurns = 3;
   defaults.janitorWarmGapMultiplier = 2;
 
+  // Files view + edit-cards ignore folders (default seeded into the UI;
+  // runtime getters migrate this from the retired editIgnorePaths entry)
+  defaults.folderIgnores = getFolderIgnores(user);
+
   // Pi settings defaults
   defaults.enabledModels = readJsonCached(join(PI_DIR, 'settings.json'))?.enabledModels || [];
   defaults.packages = getEnabledPackages(user);
@@ -571,6 +679,20 @@ function getUserSettingsDefaults(user: string): UserSettings {
  */
 export async function getUserSettingsSchema(user: string): Promise<SettingSection[]> {
   const sections: SettingSection[] = [];
+
+  // Docker sandbox — backend-level, always shown
+  sections.push({
+    id: 'sandbox',
+    label: 'Sandbox',
+    fields: [
+      {
+        key: 'piSandboxImage',
+        label: 'Docker Image',
+        type: 'text',
+        placeholder: 'randomcodemonkey.org/slopbox:latest',
+                        description: `Run every pi agent session inside this docker container instead of on the host. The image must provide pi, bash and a user with uid 1001, and is validated on save. Empty = the default slopbox image.${getUserRole(user) === 'admin' ? ' off/none/disabled = run pi on the host (no isolation) — admin exit hatch for when something breaks.' : ''}`,      },
+    ],
+  });
 
   // Always include 9router settings if the extension is enabled
   const packages = getUserSetting(user, 'packages', []) as string[];
@@ -691,14 +813,6 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
         description: "Fallback reserve for models without a per-model value (see Models). This percentage of the model's context window cannot be used (0-90; 0 = pi default of 16384 tokens) — usable context shrinks accordingly, so automatic compaction triggers earlier. Applies to the running session without a pi restart.",
       },
       {
-        key: 'editIgnorePaths',
-        label: 'Ignored folders for edit cards',
-        type: 'list',
-        listPlaceholder: '/tmp',
-        listAddLabel: 'Add folder',
-        description: 'Bash-driven file changes under these folders are not shown as edit cards (default: /tmp). Applies after a pi restart.',
-      },
-      {
         key: 'sendImagesToChatModel',
         label: 'Send images to chat model',
         type: 'toggle',
@@ -780,7 +894,33 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
         label: 'Reserved context per model (%)',
         type: 'perModel',
         perModel: { control: 'number', min: 0, max: 90 },
-        description: "Per-model compaction reserve as % of that model's context window (0-90). Overrides the default in Chat; empty = use the default. Applies to the running session without a pi restart.",
+      },
+      {
+        key: 'visionByModel',
+        label: 'Image input per model',
+        type: 'perModel',
+        perModel: {
+          control: 'select',
+          options: [
+            { value: '', label: 'metadata' },
+            { value: 'on', label: 'image' },
+          ],
+        },
+        description: 'Force image input on, bypassing what the provider metadata reports (writes pi models.json modelOverrides.input). Use for models whose registry entry wrongly lacks image support — e.g. 9router combo ids, which currently resolve to a text-only metadata entry. Saving restarts the agent.',
+      },
+    ],
+  });
+
+  // Files section — ignore folders for the Files browser + edit/changes pipelines
+  sections.push({
+    id: 'files',
+    label: 'Files',
+    fields: [
+      {
+        key: 'folderIgnores',
+        label: 'Ignored folders',
+        type: 'folderIgnores',
+        description: 'Folders hidden from the Files browser and/or the edit cards + Changes list. Path segments: relative entries (node_modules) match at any depth, absolute entries (/tmp) anchor at the root.',
       },
     ],
   });

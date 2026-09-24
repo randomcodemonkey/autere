@@ -274,6 +274,7 @@ export class ProcessManager {
       const running = !!session && session.isRunning;
       s.active = running || this.syntheticCache.get(user)?.has(s.sessionFile) || false;
       s.streaming = running ? session!.state.sessionState.isStreaming || session!.state.sessionState.compacting : false;
+      s.compacting = running && session!.state.sessionState.compacting;
     }
     return sessions;
   }

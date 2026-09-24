@@ -112,6 +112,8 @@ export function startBackend(): Promise<void> {
         AUTERE_PI_ENVS_DIR: testEnvsDir,
         // Users registry must not seed the real ~/.autere/monitor-users.json
         AUTERE_USERS_FILE: join(testEnvsDir, 'monitor-users.json'),
+        // sandbox points at docker + the real home volume — off for tests
+        PI_SANDBOX_IMAGE: 'off',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,

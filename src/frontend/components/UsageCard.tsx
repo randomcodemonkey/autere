@@ -15,9 +15,12 @@ interface UsageCardProps {
   onCompact?: () => void;
   compactDisabled?: boolean;
   compacting?: boolean;
+  /** Abort the running operation — shown in the Usage card */
+  onAbort?: () => void;
+  isStreaming?: boolean;
 }
 
-export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount, stats, onCompact, compactDisabled, compacting }) => {
+export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount, stats, onCompact, compactDisabled, compacting, onAbort, isStreaming }) => {
   const { collapsed, toggle } = useCardState('usage');
   const [showCostInfo, setShowCostInfo] = useState(false);
 
@@ -101,6 +104,15 @@ export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount
           <button className="btn btn-compact" onClick={onCompact} disabled={compactDisabled}>
             {compacting ? '⏳ Compacting…' : '🗜 Compact Context'}
           </button>
+          {onAbort && (
+            <button
+              className="btn btn-abort"
+              style={{ display: isStreaming ? 'block' : 'none' }}
+              onClick={onAbort}
+            >
+              ⏹ Abort Operation
+            </button>
+          )}
         </div>
       )}
     </div>

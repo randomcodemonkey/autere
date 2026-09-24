@@ -214,7 +214,20 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
     }) as any[];
   // Custom 'file_saved' entries become 'file' pseudo-entries (downloadable
   // file cards) — same treatment images get from splitImageEntry.
-  return out;
+  // Retry residue: pi's auto-retry re-runs a failed request, persisting the
+  // dead attempt's thinking (and possibly stub text) before the retry's own
+  // assistant message. Adjacent failed/partial assistant fragments are
+  // merged so a retried step doesn't render its thinking twice.
+  const merged: any[] = [];
+  for (const e of out) {
+    const last = merged[merged.length - 1];
+    if (e.role === 'thinking' && last?.role === 'thinking') {
+      last.text = (last.text + '\n\n' + e.text).trim();
+    } else {
+      merged.push(e);
+    }
+  }
+  return merged;
 }
 
 function buildOneEntry(

@@ -11,7 +11,7 @@ import { createHash } from 'crypto';
 import { MonitorRpcClient } from './rpc-client.js';
 import { filterScopedModels, autoSessionName, readSessionUsage } from './utils.js';
 import { log, userLog } from './logger.js';
-import { ensurePiEnv } from './pi-env.js';
+import { ensurePiEnv, ensureSandboxHomeVolume, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage } from './pi-env.js';
 import { getEditIgnorePaths, getHistoryLimit, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost, writeReserveTokensConfig, annotateContextUsage } from './user-settings.js';
 import { deliverToSession } from './client-hub.js';
 import { getActivePersona } from './personas.js';
@@ -37,7 +37,8 @@ export interface UserSessionState {
   availableModels: any[];
   extensionsState: any[];
   currentStreamText: string;
-  activeStreamId: string | null;
+  activeAssistantId: string | null;
+  activeThinkingId: string | null;
   currentThinkingText: string;
   isThinking: boolean;
 }
@@ -76,7 +77,8 @@ function createInitialState(): UserSessionState {
     availableModels: [],
     extensionsState: [],
     currentStreamText: '',
-    activeStreamId: null,
+    activeAssistantId: null,
+    activeThinkingId: null,
     currentThinkingText: '',
     isThinking: false,
   };
@@ -162,7 +164,7 @@ export class UserSession {
     this.broadcast({ type: 'stats', data: { ...this.state.sessionStats } });
   }
 
-  constructor(user: string, sessionFile: string | null, rpcOptions: { provider?: string; model?: string; args?: string[] }, idleTimeoutMs: number = 30 * 60 * 1000) {
+  constructor(user: string, sessionFile: string | null, rpcOptions: { provider?: string; model?: string; args?: string[]; cwd?: string }, idleTimeoutMs: number = 30 * 60 * 1000) {
     this.user = user;
     this.sessionFile = sessionFile;
     // Chat history buffer size (messages). Settings saves restart the pi
@@ -184,7 +186,27 @@ export class UserSession {
       this.resumedExistingSession = true;
       this.resumedSessionFile = sessionFile;
     }
-    this.rpc = new MonitorRpcClient({ ...rpcOptions, args, agentDir: piEnvDir, editIgnorePaths: getEditIgnorePaths(user), sendImagesToChatModel: getSendImagesToChatModel(user), imagePreviewQuality: getImagePreviewQuality(user), imageStreamFix: getImageStreamFix(user) });
+    // Default: sandbox every session (slopbox image). Disable via the
+    // piSandboxImage setting or PI_SANDBOX_IMAGE env (= off | none | disabled).
+    const sandboxImage = resolveSandboxImage(user, getUserSetting(user, 'piSandboxImage', ''), process.env.PI_SANDBOX_IMAGE);
+    this.rpc = new MonitorRpcClient({
+      ...rpcOptions, args, agentDir: piEnvDir,
+      editIgnorePaths: getEditIgnorePaths(user),
+      sendImagesToChatModel: getSendImagesToChatModel(user),
+      imagePreviewQuality: getImagePreviewQuality(user),
+      imageStreamFix: getImageStreamFix(user),
+      ...(sandboxImage ? (() => {
+        // Sandbox startup: copy the master agent dir's shared pieces
+        // (skills, extensions, bin, tmp) into the env dir so nothing outside
+        // the env dir and the work area needs to be mounted, then plan the
+        // mounts. Sessions spawn with the backend's cwd (sessions.ts has no
+        // per-session cwd plumbing), so that is what gets translated.
+        prepareSandboxEnvDir(piEnvDir);
+        const homeVolume = ensureSandboxHomeVolume(user, sandboxImage);
+        const plan = planSandboxMounts(user, rpcOptions.cwd || process.cwd(), piEnvDir, homeVolume);
+        return { sandboxImage, sandboxMounts: plan.mounts, sandboxWorkingDir: plan.cwd, args };
+      })() : {}),
+    });
     this.state = createInitialState();
     this._idleTimeoutMs = idleTimeoutMs;
   }
@@ -527,8 +549,7 @@ export class UserSession {
       // start() resolves; the /api/models endpoint fetches on demand anyway).
       this.rpc.getAvailableModels()
         .then((models) => {
-          const scoped = filterScopedModels(models);
-          this.state.availableModels = scoped.map((m: any) => ({
+          this.state.availableModels = filterScopedModels(models).map((m: any) => ({
             provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
           }));
         })
@@ -728,6 +749,12 @@ export class UserSession {
         case 'auto_retry_start':
           log.userSession.forSession(s.sessionState.sessionId).warn(
             `auto retry ${event.attempt}/${event.maxAttempts} scheduled in ${event.delayMs}ms`);
+          // The failed attempt already streamed into the buffer (thinking +
+          // partial assistant text) — pi drops that message from its state and
+          // re-runs the request, so the leftovers must go too or the retry's
+          // fresh thinking/text render as a duplicate (thinking shown twice,
+          // assistant split into a stub + the full message).
+          this.discardFailedAttempt(s);
           // Flatten the retry gap: the failed turn already hit agent_end
           // (isStreaming = false), but from the UI's point of view the turn is
           // still in progress — keep streaming status instead of blinking idle
@@ -777,7 +804,8 @@ export class UserSession {
     const rpc = this.rpc;
 
     // Reset streaming state — a new session has begun
-    s.activeStreamId = null;
+    s.activeAssistantId = null;
+    s.activeThinkingId = null;
     s.currentStreamText = '';
     s.currentThinkingText = '';
 
@@ -839,6 +867,30 @@ export class UserSession {
     }
   }
 
+  /**
+   * Drop the failed attempt's partial output from the history buffer:
+   * trailing thinking + assistant entries streamed during the request that
+   * pi is about to retry. The `system` error entry pushed by handleMessageEnd
+   * is kept so the retry remains visible to the user.
+   */
+  private discardFailedAttempt(s: any): void {
+    const buf = this.history();
+    const removable = new Set(['thinking', 'assistant']);
+    const remove: string[] = [];
+    for (let i = buf.length - 1; i >= 0; i--) {
+      if (!removable.has(buf[i].role)) break;
+      remove.push(buf[i].id);
+      buf.splice(i, 1);
+    }
+    s.activeAssistantId = null;
+    s.activeThinkingId = null;
+    s.currentStreamText = '';
+    s.currentThinkingText = '';
+    if (remove.length > 0) {
+      this.broadcast({ type: 'history_remove', sessionId: s.sessionState.sessionId, data: remove });
+    }
+  }
+
   private handleMessageUpdate(event: any): void {
     const s = this.state;
     const evt = event.assistantMessageEvent;
@@ -851,24 +903,32 @@ export class UserSession {
     const buf = this.history();
     const sessionId = s.sessionState.sessionId;
 
+    // Separate trackers per role: GLM/z-ai-style requests emit thinking
+    // blocks INTERLEAVED with text (think → few words → think → continue)
+    // within ONE assistant message. Each transition must switch which
+    // streaming entry it updates WITHOUT finalizing the other role's entry —
+    // otherwise mid-message thinking shatters the message into a stub
+    // assistant + a trailing thinking block, and message_end then stamps the
+    // full text onto the last fragment (the "thinking twice + short assistant
+    // between" artifact).
     if (evt.type === 'thinking_start') {
       s.isThinking = true;
       s.currentThinkingText = '';
+      if (s.activeThinkingId) {
+        const prev = buf.find((m: any) => m.id === s.activeThinkingId);
+        if (prev && prev.streaming) { prev.streaming = false; this.broadcastHistoryUpsert([prev]); }
+        s.activeThinkingId = null;
+      }
     } else if (evt.type === 'thinking_delta') {
       s.currentThinkingText += evt.delta || '';
-      // Track the streaming entry by stable id, NOT index — trimHistory
-      // shifts the buffer mid-turn and a numeric index goes stale (leaving
-      // the old thinking entry streaming forever + spawning a duplicate).
-      const cur = s.activeStreamId ? buf.find((m: any) => m.id === s.activeStreamId) : undefined;
-      if (!cur || cur.role !== 'thinking') {
-        if (cur) {
-          cur.streaming = false;
-          this.broadcastHistoryUpsert([cur]); // finalize prior stream
-        }
+      // Track streaming entries by stable id, NOT index — trimHistory shifts
+      // the buffer mid-turn and a numeric index goes stale.
+      const cur = s.activeThinkingId ? buf.find((m: any) => m.id === s.activeThinkingId) : undefined;
+      if (!cur) {
         const entry = this.tagEntry({ role: 'thinking', text: s.currentThinkingText, streaming: true, timestamp: Date.now() });
         buf.push(entry);
         this.broadcastHistoryUpsert([entry]);
-        s.activeStreamId = entry.id;
+        s.activeThinkingId = entry.id;
       } else {
         cur.text = s.currentThinkingText;
       }
@@ -879,34 +939,29 @@ export class UserSession {
     } else if (evt.type === 'thinking_end') {
       s.isThinking = false;
       const text = evt.content || s.currentThinkingText;
-      // Find the last thinking entry and finalize it
-      for (let i = buf.length - 1; i >= 0; i--) {
-        if (buf[i].role === 'thinking' && buf[i].streaming) {
-          buf[i].streaming = false;
-          if (text) buf[i].text = text;
-          this.broadcastHistoryUpsert([buf[i]]);
-          break;
-        }
+      const cur = s.activeThinkingId ? buf.find((m: any) => m.id === s.activeThinkingId) : undefined;
+      if (cur && cur.role === 'thinking') {
+        cur.streaming = false;
+        if (text) cur.text = text;
+        this.broadcastHistoryUpsert([cur]);
       }
-      s.activeStreamId = null;
+      s.activeThinkingId = null;
       s.currentThinkingText = '';
     } else if (evt.type === 'text_delta') {
       const delta = evt.delta;
-      const cur = s.activeStreamId ? buf.find((m: any) => m.id === s.activeStreamId) : undefined;
-      if (!cur || cur.role !== 'assistant') {
-        if (cur) {
-          cur.streaming = false;
-          this.broadcastHistoryUpsert([cur]); // finalize prior stream
-        }
+      let cur = s.activeAssistantId ? buf.find((m: any) => m.id === s.activeAssistantId) : undefined;
+      if (!cur) {
+        // New text block in a NEW message: reset accumulation. (Interleaved
+        // continuation reuses the existing entry without resetting — text
+        // deltas are incremental across the thinking gap.)
         s.currentStreamText = '';
-        const entry = this.tagEntry({ role: 'assistant', text: '', streaming: true, timestamp: Date.now() });
-        buf.push(entry);
-        this.broadcastHistoryUpsert([entry]);
-        s.activeStreamId = entry.id;
+        cur = this.tagEntry({ role: 'assistant', text: '', streaming: true, timestamp: Date.now() });
+        buf.push(cur);
+        this.broadcastHistoryUpsert([cur]);
+        s.activeAssistantId = cur.id;
       }
       s.currentStreamText += delta || '';
-      const active = buf.find((m: any) => m.id === s.activeStreamId)!;
-      active.text = s.currentStreamText;
+      cur.text = s.currentStreamText;
       this.broadcast({ type: 'stream_delta', sessionId, data: { role: 'assistant', text: s.currentStreamText } });
     }
 
@@ -932,6 +987,10 @@ export class UserSession {
 
     if (rawRole === 'assistant') {
       const stop = event.message.stopReason;
+      // Retire the assistant stream trackers — a stale id here would make the
+      // NEXT message's first text_delta append to this (finalized) entry.
+      s.activeAssistantId = null;
+      s.currentStreamText = '';
       // Each finalized assistant message is one LLM request (matches the
       // readSessionUsage/pi getSessionStats seeding semantics).
       s.sessionState.requestCount++;
@@ -966,7 +1025,11 @@ export class UserSession {
           if (moved) buf.splice(idx, 1);
           buf.push(entry);
           if (moved) {
-            this.broadcast({ type: 'history_remove', sessionId: s.sessionState.sessionId, data: [entry.id] });
+            // Remove carries the text too: a client that rendered this entry
+            // from a snapshot under a DIFFERENT id namespace (disk 'd…' ids,
+            // or a previous backend process's e-seq) can't match the id —
+            // text matching is the only reliable key for user messages.
+            this.broadcast({ type: 'history_remove', sessionId: s.sessionState.sessionId, data: [{ id: entry.id, role: 'user', text: entry.text }] });
           }
           this.broadcastHistoryUpsert([entry]);
         }

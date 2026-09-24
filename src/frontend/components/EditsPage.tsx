@@ -205,6 +205,113 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
   const selAccess = selected ? accessFor(selected) : 'read';
   const editable = canWrite && selAccess === 'rw';
 
+  // Search: parallel BFS from the roots. Plain query → name substring hits;
+  // trailing-slash query ('autere/', 'autere/code/') → every folder whose
+  // path ends with those segments is matched and its ENTIRE subtree is shown.
+  // Matches render as a flat tree with their full ancestor chain, streaming in
+  // progressively while the walk runs. Bounded (CAP dirs, node_modules/.git
+  // pruned) — ponytail: a background indexer per root would remove the cap.
+  const [search, setSearch] = useState('');
+  const [matches, setMatches] = useState<Set<string> | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [selfMatches, setSelfMatches] = useState<Set<string>>(new Set()); // own-name hits (highlighted)
+  const [searchDirs, setSearchDirs] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!search.trim()) { setMatches(null); setSearchDirs(new Set()); setScanning(false); return; }
+    // New query: clear stale results, mark the walk as running right away —
+    // "No matches" only shows once the walk completes with zero hits.
+    setMatches(new Set());
+    setSelfMatches(new Set());
+    setScanning(true);
+    const raw = search.toLowerCase();
+    const dirMode = raw.endsWith('/');
+    const qd = dirMode ? raw.replace(/\/+$/, '') : '';
+    const qName = dirMode ? '' : raw;
+    let alive = true;
+    const t = setTimeout(async () => {
+      if (dirMode && !qd) { setMatches(null); return; }
+      const found = new Set<string>();
+      const selfHits = new Set<string>();
+      const matchedDirs = new Set<string>();
+      const dirs = new Set<string>();
+      let visited = 0, running = 0;
+      const CONC = 8, CAP = 10000;
+      const isDirMatch = (p: string) => p.toLowerCase() === qd || p.toLowerCase().endsWith('/' + qd);
+      const queue: string[] = roots.map((r) => r.path);
+      await new Promise<void>((resolve) => {
+        const pump = () => {
+          if (running === 0 && (queue.length === 0 || visited >= CAP)) return resolve();
+          while (running < CONC && queue.length > 0 && visited < CAP) {
+            const dir = queue.shift()!;
+            visited++; running++;
+            fetchDir(dir);
+          }
+        };
+        const fetchDir = async (dir: string) => {
+          let list: DirEntry[] = [];
+          try { list = await api(`/api/browse/list?path=${encodeURIComponent(dir)}`); } catch { /* unreadable dir — skip */ }
+          if (alive) {
+            // Stash listings so the normal tree benefits from the walk too
+            setChildren((prev) => new Map(prev).set(dir, list));
+            let inherit = false;
+            if (dirMode && (matchedDirs.has(dir) || isDirMatch(dir))) {
+              matchedDirs.add(dir); found.add(dir); selfHits.add(dir); inherit = true;
+            }
+            for (const e of list) {
+              const p = `${dir}/${e.name}`;
+              const nameHit = !dirMode && e.name.toLowerCase().includes(raw);
+              if (inherit || nameHit) found.add(p);
+              if (nameHit) selfHits.add(p);
+              // Prune the heavy, low-signal dirs that would eat the whole cap
+              if (e.type === 'dir') {
+                if (inherit) matchedDirs.add(p);
+                if (e.name !== 'node_modules' && e.name !== '.git') queue.push(p);
+              }
+            }
+            dirs.add(dir);
+            setSearchDirs(new Set([...dirs, ...matchedDirs]));
+            setMatches(new Set(found));
+            setSelfMatches(selfHits);
+          }
+          running--;
+          pump();
+        };
+        pump();
+      });
+      if (alive) setScanning(false);
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, roots]);
+
+  // Search rows: every match plus all of its ancestors, depth sorted
+  const searchRows = useMemo<TreeRow[] | null>(() => {
+    if (matches === null) return null;
+    const out: TreeRow[] = [];
+    const seen = new Set<string>();
+    for (const m of matches) {
+      const root = roots.find((r) => m === r.path || m.startsWith(r.path + '/'));
+      if (!root) continue;
+      const segs = m.slice(root.path.length).split('/').filter(Boolean);
+      for (let k = 0; k <= segs.length; k++) {
+        const p = k === 0 ? root.path : `${root.path}/${segs.slice(0, k).join('/')}`;
+        if (seen.has(p)) continue;
+        seen.add(p);
+        const isLeaf = k === segs.length;
+        out.push({
+          path: p,
+          name: p === root.path ? p : p.slice(p.lastIndexOf('/') + 1),
+          type: p === root.path ? 'root' : !isLeaf || searchDirs.has(m) ? 'dir' : 'file',
+          depth: k,
+          access: accessFor(p),
+          expanded: true,
+        });
+      }
+    }
+    return out.sort((a, b) => a.path.localeCompare(b.path));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matches, searchDirs, roots, accessFor]);
+
   // Session-change paths are recorded relative to the agent cwd → match by suffix
   const modified = useMemo(() => new Set(changedPaths), [changedPaths]);
   const isModified = useCallback(
@@ -212,22 +319,43 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
     [modified],
   );
 
+  const searching = matches !== null;
+  const viewRows = searchRows ?? rows;
+
   return (
-    <div className="files-page">
+    <>
       <div className="files-tree">
-        {roots.length === 0 && !error && <div className="files-empty-sm">Loading…</div>}
-        {rows.map((r) => (
-          <div
-            key={r.path}
-            className={`files-row files-${r.type}${selected === r.path ? ' selected' : ''}${isModified(r.path) ? ' files-modified' : ''}`}
-            style={{ paddingLeft: `${0.6 + r.depth * 0.45}rem` }}
-            onClick={() => (r.type === 'file' ? openFile(r.path) : toggleDir(r.path))}
-          >
+        {/* Reuses the changes bar styles — identical search chrome */}
+        <div className="changes-files-bar">
+          <input
+            className="changes-search files-search"
+            type="text"
+            placeholder="Search.."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {scanning ? <span className="search-scan" /> : searching && matches!.size > 0 && <span className="changes-count">{matches!.size}</span>}
+        </div>
+        <div className="files-tree-list">
+          {roots.length === 0 && !searching && !error && <div className="files-empty-sm">Loading…</div>}
+          {viewRows.length === 0 && searching && !scanning && <div className="files-empty-sm">No matches</div>}
+          {viewRows.map((r) => (
+            <div
+              key={r.path}
+              className={`files-row files-${r.type}${selected === r.path ? ' selected' : ''}${isModified(r.path) ? ' files-modified' : ''}${searching && selfMatches.has(r.path) ? ' files-matched' : ''}`}
+              style={{ paddingLeft: `${0.6 + r.depth * 0.45}rem` }}
+              onClick={() => {
+                if (r.type === 'file') { openFile(r.path); return; }
+                if (searching) setSearch(''); // searching → jump to it expanded
+                toggleDir(r.path);
+              }}
+            >
             <span className="files-chev">{r.type !== 'file' ? (r.expanded ? '▾' : '▸') : ''}</span>
             <span className="files-name">{r.name}{isModified(r.path) && <span className="files-mod-dot" title="Modified this session">•</span>}</span>
             {r.type === 'root' && <span className={`files-access files-access-${r.access}`}>{r.access}</span>}
-          </div>
-        ))}
+            </div>
+          ))}
+        </div>
       </div>
       <div className="files-main">
         {selected && (
@@ -269,7 +397,7 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
           <div className="files-empty">{selected ? error || 'No file selected' : 'Select a file to view or edit'}</div>
         )}
       </div>
-    </div>
+    </>
   );
 };
 

@@ -18,6 +18,8 @@ interface AgentCardProps {
   onCompact?: () => void;
   compactDisabled?: boolean;
   compacting?: boolean;
+  onAbort?: () => void;
+  isStreaming?: boolean;
 }
 
 /**
@@ -30,7 +32,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   messageCount, requestCount, stats,
   extensions,
   persona,
-  onCompact, compactDisabled, compacting,
+  onCompact, compactDisabled, compacting, onAbort, isStreaming,
 }) => {
   const { collapsed, toggle } = useCardState('agent');
 
@@ -45,7 +47,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
 
       <PersonaSection persona={persona} />
       <ExtensionsCard extensions={extensions} />
-      <UsageCard messageCount={messageCount} requestCount={requestCount} stats={stats} onCompact={onCompact} compactDisabled={compactDisabled} compacting={compacting} />
+      <UsageCard messageCount={messageCount} requestCount={requestCount} stats={stats} onCompact={onCompact} compactDisabled={compactDisabled} compacting={compacting} onAbort={onAbort} isStreaming={isStreaming} />
     </div>
   );
 };

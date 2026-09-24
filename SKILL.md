@@ -84,11 +84,16 @@ src/frontend/
     Personas.tsx        # PersonaSection (Agent card) + PersonasSettingsSection
                         # ExtensionsCard fetches /api/extensions for per-user stats —
                         # the shared state copy carries only zero placeholders
+                        # SettingsCard renders schema-driven sections; 'Files' →
+                        # folderIgnores (per-folder [edits]/[files] toggles;
+                        # filters FileBrowser + Changes server-side, getEditIgnorePaths
+                        # derived for the pi env)
     ChangesPage.tsx, LoginScreen.tsx,
-    EditsPage.tsx         # Edits view: FileBrowser (allowedDirs-rooted lazy tree +
-                          # Monaco editor; save/delete gated to control/admin +
-                          # rw dirs, backend-enforced) + ChangesPage under the
-                          # Changes tab
+    EditsPage.tsx         # Edits view: two-pane — Files/Changes tabbed list card
+                          # on the left, detail on the right (Monaco editor /
+                          # diffs). FileBrowser: allowedDirs-rooted lazy tree;
+                          # save/delete gated to control/admin + rw dirs,
+                          # backend-enforced. Mobile: stacked panes.
   hooks/useSSE.ts, useAuth.ts, useCardState.ts
   styles.scss          # Single global stylesheet (~3600 lines)
   types/index.ts       # Shared frontend types incl. SSEEventType
@@ -173,6 +178,23 @@ npm run build        # build frontend to dist/
 npm run typecheck    # backend + frontend tsc
 npm start            # backend only
 ```
+
+## Docker sandbox
+
+`piSandboxImage` user setting (Settings → Sandbox) runs every pi agent
+session inside a docker container (default suggestion: the project's own
+slopbox image). Only the needed volume subpaths are mounted
+(current user's pi-env dir + session cwd, via --mount volume-subpath at
+their original paths — never the whole home volume, which would expose
+other users' pi-envs); /tmp is tmpfs; never mounted: docker.sock.
+The container is forced --user <backend uid>:<gid> with
+no-new-privileges (no root, no sudo/setuid escalation); sandbox image
+defaults to randomcodemonkey.org/slopbox:latest (off via
+PI_SANDBOX_IMAGE=off — set in the e2e backend). \$HOME is a persistent
+per-user volume (autere-home-<user>, created lazily, empty and
+chowned to the sandbox uid) so ~/.cache etc. survive spawns., host network keeps the
+model router on localhost, docker.sock is forwarded when present. Backend
+wiring: rpc-client.buildSandboxCommand + user-session spawn options.
 
 ## Testing
 
