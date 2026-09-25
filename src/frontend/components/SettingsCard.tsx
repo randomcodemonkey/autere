@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SortableList } from './SortableList';
 import { PersonasSettingsSection } from './Personas';
+import { ApiTokensSection } from './ApiTokensSection';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 import type { SettingSection, SettingField } from '../types';
 
 interface FolderIgnoreEntry { path: string; edits: boolean; files: boolean }
@@ -74,15 +76,15 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
 
   useEffect(() => {
     Promise.all([
-      fetch(url('/api/settings/schema')).then(r => r.json()),
-      fetch(url('/api/settings')).then(r => r.json()),
-      fetch(url('/api/extensions/packages')).then(r => r.json()).catch(() => null),
+      fetch(url(API.settings.schema)).then(r => r.json()),
+      fetch(url(API.settings.root)).then(r => r.json()),
+      fetch(url(API.extensions.packages)).then(r => r.json()).catch(() => null),
     ]).then(([schemaRes, settingsRes, pkgsRes]) => {
       if (pkgsRes?.success) setAvailablePackages(pkgsRes.data.available || []);
       if (schemaRes.success) {
         // Sort once here, before render: menu + validation effect + default
         // selection all see the same alphabetical order
-        setSchema([...schemaRes.data].sort((a, b) => a.label.localeCompare(b.label)));
+        setSchema([...schemaRes.data]);
       }
       if (settingsRes.success) {
         setSettings(settingsRes.data);
@@ -95,10 +97,12 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
     });
   }, []);
 
-  // Keep the active menu item valid once the schema has loaded (empty
-  // schema still allows the always-present Personas item).
+  // Keep the active menu item valid once the schema has loaded. Custom
+  // sections (Personas / API Tokens) are always valid — without them the
+  // validity check reset the selection back to the first schema section
+  // every time one was clicked.
   useEffect(() => {
-    const ids = [...schema.map((s) => s.id), '__personas'];
+    const ids = [...schema.map((s) => s.id), '__personas', '__apitokens'];
     if (!loading && !ids.includes(activeSection)) setActiveSection(ids[0]);
   }, [schema, activeSection, loading]);
 
@@ -111,8 +115,8 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(url('/api/settings'), {
-        method: 'POST',
+      const res = await fetch(url(API.settings.root), {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings),
       });
@@ -120,6 +124,9 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       if (data.success) {
         baselineRef.current = JSON.stringify(settings);
         setSaved(data.deferred ? 'deferred' : true);
+        // Banner is transient — the SSE-reconnect reset below only covers
+        // backend restarts; a non-deferred save would otherwise stick forever.
+        setTimeout(() => setSaved(null), data.deferred ? 8000 : 4000);
       } else {
         setError(data.error || 'Failed to save settings');
       }
@@ -336,11 +343,13 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
 
   const dirty = JSON.stringify(settings) !== baselineRef.current;
 
-  // Side-menu items: schema sections + the Personas section, alphabetically
+  // Side menu: schema sections in the backend-provided order, then the two
+  // frontend-only sections. No client-side sorting.
   const menuItems = [
     ...schema.map((s) => ({ id: s.id, label: s.label })),
     { id: '__personas', label: 'Personas' },
-  ].sort((a, b) => a.label.localeCompare(b.label));
+    { id: '__apitokens', label: 'API Tokens' },
+  ];
 
   return (
     <div className="card settings-card">
@@ -401,6 +410,8 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
           <div className="settings-content">
             {activeSection === '__personas' ? (
               <PersonasSettingsSection />
+            ) : activeSection === '__apitokens' ? (
+              <ApiTokensSection />
             ) : (
               schema
                 .filter((section) => section.id === activeSection)

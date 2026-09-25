@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 import type { StreamMessage, AvailableModel } from '../types';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
@@ -89,7 +90,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     // Fetch while the list is empty — the backend serves the scoped catalog
     // for idle sessions, but an earlier open may have raced a spawn.
     if (modelsList.length === 0) {
-      fetch(url('/api/models'))
+      fetch(url(API.session.models))
         .then((res) => res.json())
         .then((data) => {
           if (data.success && data.data?.length > 0) onModelsFetched?.(data.data);
@@ -100,8 +101,8 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   const selectModel = useCallback(async (provider: string, modelId: string) => {
     setModelOpen(false);
     try {
-      const res = await fetch(url('/api/set-model'), {
-        method: 'POST',
+      const res = await fetch(url(API.session.model), {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, modelId, sessionId }),
       });

@@ -295,7 +295,8 @@ export function mergeVisionOverrides(
   for (const [pKey, prov] of Object.entries(providers)) {
     if (prov && typeof prov === 'object' && prov.modelOverrides) {
       priorOverrides[pKey] = { ...prov.modelOverrides };
-      for (const [id, ov] of Object.entries(prov.modelOverrides)) {
+      for (const [id, ovRaw] of Object.entries(prov.modelOverrides)) {
+        const ov = ovRaw as Record<string, any> | null;
         if (ov && typeof ov === 'object' && typeof ov.input === 'object' && (ov.input as string[]).length === 2 && (ov.input as string[]).includes('image')) {
           delete prov.modelOverrides[id];
         }
@@ -360,6 +361,20 @@ export function getFolderIgnores(user: string): FolderIgnore[] {
 
 export function getEditIgnorePaths(user: string): string[] {
   return getFolderIgnores(user).filter((e) => e.edits).map((e) => e.path);
+}
+
+// ── Git repositories (Repositories view) ──
+
+export function getGitRepos(user: string): string[] {
+  const raw = readUserSettingsFile(user)['gitRepos'];
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of raw) {
+    const path = typeof p === 'string' ? p.trim().replace(/\/+$/, '') : '';
+    if (path && !seen.has(path)) { seen.add(path); out.push(path); }
+  }
+  return out;
 }
 
 export function getHistoryLimit(user: string): number {
@@ -664,6 +679,7 @@ function getUserSettingsDefaults(user: string): UserSettings {
   // Files view + edit-cards ignore folders (default seeded into the UI;
   // runtime getters migrate this from the retired editIgnorePaths entry)
   defaults.folderIgnores = getFolderIgnores(user);
+  defaults.gitRepos = getGitRepos(user);
 
   // Pi settings defaults
   defaults.enabledModels = readJsonCached(join(PI_DIR, 'settings.json'))?.enabledModels || [];
@@ -922,8 +938,18 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
         type: 'folderIgnores',
         description: 'Folders hidden from the Files browser and/or the edit cards + Changes list. Path segments: relative entries (node_modules) match at any depth, absolute entries (/tmp) anchor at the root.',
       },
+      {
+        key: 'gitRepos',
+        label: 'Repositories',
+        type: 'list',
+        description: 'Folders treated as git repositories in the Repositories view — absolute paths, or paths relative to $HOME. Must be inside your file roots.',
+        listPlaceholder: '/home/user/code/project',
+        listAddLabel: 'Add Repository',
+      },
     ],
   });
 
-  return sections;
+  // Canonical display order is decided here — the frontend renders sections
+  // in the given order (plus its own fixed sections) without re-sorting.
+  return sections.sort((a, b) => a.label.localeCompare(b.label));
 }

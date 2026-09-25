@@ -26,6 +26,7 @@ import {
   extractImages,
 } from './stream-history.js';
 import { formatToolArgs } from '../shared/format.js';
+import { API } from '../shared/api-paths.js';
 
 // ── Per-user state types ──
 
@@ -284,7 +285,7 @@ export class UserSession {
             mkdirSync(join(this.piEnvDir, 'uploads'), { recursive: true });
             writeFileSync(file, Buffer.from(img.data, 'base64'));
           }
-          return { mimeType: img.mimeType, url: `/api/images/${name}` };
+          return { mimeType: img.mimeType, url: API.images(name) };
         } catch (err) {
           log.userSession.error('failed to persist history image:', err);
           return { mimeType: img.mimeType, data: img.data }; // fall back to inline
@@ -294,7 +295,7 @@ export class UserSession {
     return e;
   }
 
-  /** This user's pi environment dir (used by the /api/images route) */
+  /** This user's pi environment dir (used by the images API route) */
   getEnvDir(): string {
     return this.piEnvDir;
   }
@@ -311,7 +312,7 @@ export class UserSession {
       text: '',
       streaming: false,
       timestamp: Date.now(),
-      images: [{ mimeType: mimeType || 'image/png', url: `/api/images/${name}` }],
+      images: [{ mimeType: mimeType || 'image/png', url: API.images(name) }],
     });
     const buf = this.history();
     buf.push(imgEntry);
@@ -697,7 +698,7 @@ export class UserSession {
               text: '',
               streaming: false,
               timestamp: Date.now(),
-              images: [{ mimeType: entry.data.mimeType, url: `/api/files/${encodeURIComponent(entry.data.savedName)}` }],
+              images: [{ mimeType: entry.data.mimeType, url: API.files(entry.data.savedName) }],
             } : {
               role: 'file',
               text: '',

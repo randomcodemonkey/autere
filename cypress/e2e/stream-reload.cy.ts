@@ -6,6 +6,8 @@
  * a reload the client had no streaming entry — every stream_delta was
  * dropped and the streaming message vanished from view.
  */
+import { waitForBackend, warmUpSession, openSessionsModal } from './support/helpers';
+
 const totalLen = ($els: JQuery) => {
   // Entries render truncated (e.g. "▸ 1234 more characters - click to
   // expand") — sum rendered text + the hidden remainder for the real size.
@@ -28,7 +30,7 @@ describe('mid-stream reload keeps the streaming message', () => {
     const seedId = `seed-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     let switchBackId = '';
 
-    cy.intercept('POST', '**/sessions/switch-by-id').as('switch');
+    cy.intercept('POST', '**/api/v1/sessions/*/activate').as('switch');
     cy.visit('/');
     cy.get('.chat-input', { timeout: 15000 }).should('exist');
 
@@ -57,28 +59,26 @@ describe('mid-stream reload keeps the streaming message', () => {
       // Idle second session to switch to (lazy: viewing it spawns nothing)
       cy.task('seedSession', { id: seedId, name: 'switch target' }).should('eq', true);
 
-      // Away to the seeded idle session (modal click path)
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
+      // Away to the seeded idle session (sessions page click path)
+      openSessionsModal();
       cy.get('.session-item').contains('switch target').click();
       cy.wait('@switch');
+      cy.get('.sessions-page').should('not.exist');
       cy.get('.stream-msg:has(.stream-role-user)', { timeout: 15000 }).should('contain', 'seeded question');
 
       // Back — the pre-turn history (turn 1) must still be on screen. The
-      // modal closes when the switch response lands (asserted, not assumed —
-      // otherwise its late close races the reopen below).
-      cy.get('.modal-session').should('not.be.visible');
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
+      // sessions view closes when the switch response lands (asserted, not
+      // assumed — otherwise its late close races the reopen below).
+      openSessionsModal();
       cy.get('.session-item .session-item-id').contains(switchBackId).click();
       cy.wait('@switch');
-      cy.get('.modal-session').should('not.be.visible');
+      cy.get('.sessions-page').should('not.exist');
       cy.get('.stream-msg:has(.stream-role-user)', { timeout: 15000 }).contains('marker one').should('exist');
       cy.get('.stream-msg:has(.stream-role-user)').contains('oak trees').should('exist');
       cy.get('.status-badge').should('have.class', 'status-streaming');
 
       // Cleanup: abort the essay turn so the run ends idle.
-      cy.request('POST', `/api/abort?sessionId=${switchBackId}`);
+      cy.request('POST', `/api/v1/session/abort?sessionId=${switchBackId}`);
       cy.get('.status-badge', { timeout: 120000 }).should('not.have.class', 'status-streaming');
     });
   });

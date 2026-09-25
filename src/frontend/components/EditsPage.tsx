@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
+import { renderEditDiff } from './ChatMessage';
 // Editor core + Monarch syntax highlighting for all bundled basic languages,
 // WITHOUT the semantic language-service contribs (ts/json/css/html) — their
 // workers crash in monaco 0.56 (unhandled rejections). Highlighting is
@@ -9,6 +10,7 @@ import * as monaco from 'monaco-editor/editor/editor.api.js';
 import 'monaco-editor/basic-languages/monaco.contribution.js';
 import editorWorker from 'monaco-editor/editor/editor.worker.js?worker';
 import { url } from '../base-path';
+import { API, API_PREFIX } from '../api-paths';
 import { ChangesPage } from './ChangesPage';
 
 // Self-hosted monaco (no CDN). Language workers beyond the base editor
@@ -37,6 +39,9 @@ function langFor(name: string): string {
 
 interface FileRoot { path: string; access: 'read' | 'rw' }
 interface DirEntry { name: string; type: 'file' | 'dir'; size: number; mtime: number }
+interface RepoEntry extends FileRoot { isRepo: boolean }
+interface Commit { hash: string; short: string; author: string; date: number; subject: string }
+interface RepoDetail { root: string; branch: string; changed: { x: string; y: string; path: string }[]; remotes: { name: string; url: string }[]; commits: Commit[]; hasMore: boolean }
 
 interface TreeRow {
   path: string;
@@ -56,9 +61,24 @@ async function api(rel: string, opts?: RequestInit): Promise<any> {
 
 const parentDir = (p: string) => p.slice(0, p.lastIndexOf('/')) || p;
 
-// ── Files tab: lazy file tree + Monaco viewer/editor ──
-const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ canWrite, changedPaths }) => {
+// Repositories mode lists through the git scope (configured folders are
+// reachable even outside the allowedDirs file roots), Files through browse.
+// A plain function taking reposMode as an argument — passing it as a
+// component callback would keep the Files-tab value through tab switches
+// (FileBrowser is reconciled in place, deps-[] callbacks never re-capture).
+const listUrl = (reposMode: boolean | undefined, dir: string) =>
+  reposMode ? API.git.list(dir) : API.browse.list(dir);
+
+// ── Files/Repositories tab: lazy file tree + Monaco viewer/editor ──
+// Repositories view (reposMode): roots come from the configured git
+// folders and the detail pane shows repo status/remotes/log for the root,
+// plus a Commits tab per file.
+const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[]; reposMode?: boolean }> = ({ canWrite, changedPaths, reposMode }) => {
   const [roots, setRoots] = useState<FileRoot[]>([]);
+  const rootIsRepo = useMemo(
+    () => new Map(reposMode ? (roots as RepoEntry[]).map((r) => [r.path, r.isRepo]) : []),
+    [roots, reposMode],
+  );
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [children, setChildren] = useState<Map<string, DirEntry[]>>(new Map());
   const [selected, setSelected] = useState<string | null>(null);
@@ -68,24 +88,88 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // Repositories view: detail pane state. Root click → repo detail + folder
+  // opens; file click → editor + Commits tabs.
+  const [detailRoot, setDetailRoot] = useState<string | null>(null);
+  const [repoDetail, setRepoDetail] = useState<RepoDetail | null>(null);
+  // repo root → worktree changes (fetched on view load, refreshed when stale;
+  // lastFetched ref guards the 30s cache without re-renders)
+  const [rootStatus, setRootStatus] = useState<Map<string, RepoDetail['changed']>>(new Map());
+  const statusFetchedAt = useRef<Map<string, number>>(new Map());
+  const [repoError, setRepoError] = useState<string | null>(null);
+  const [logCount, setLogCount] = useState(10);
+  const [fileCommits, setFileCommits] = useState<Commit[] | null>(null);
+  const [diffText, setDiffText] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<'editor' | 'commits' | 'diff'>('editor');
+
+  const loadRepoDetail = useCallback(async (root: string, count: number) => {
+    setDetailRoot(root);
+    setLogCount(count);
+    setRepoError(null);
+    try {
+      const d = await api(`${API.git.detail(root)}&count=${count}`);
+      setRepoDetail(d);
+      statusFetchedAt.current.set(root, Date.now());
+      setRootStatus((prev) => new Map(prev).set(root, d.changed || []));
+    } catch (e: any) {
+      setRepoDetail(null);
+      setRepoError(e.message);
+    }
+  }, []);
+
+  // Non-repo root selected → offer clone/init actions (control users only)
+  const runRepoAction = useCallback(async (root: string, action: 'clone' | 'init', remote: string) => {
+    setRepoError(null);
+    try {
+      await api(`${API_PREFIX}/git/repos/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: root, remote: remote || undefined }),
+      });
+      setRoots((prev) => prev.map((r) => (r.path === root ? { ...r, isRepo: true } : r)));
+      await loadRepoDetail(root, 10);
+    } catch (e: any) {
+      setRepoError(e.message);
+    }
+  }, [loadRepoDetail]);
+
+  // Fetch worktree status for the given repo roots in the background; entries
+  // newer than STATUS_TTL are skipped unless force. Trees show change markers
+  // from the moment the Repositories view loads.
+  const STATUS_TTL = 30_000;
+  const refreshStatuses = useCallback((rootsToFetch: string[], force = false) => {
+    const now = Date.now();
+    for (const root of rootsToFetch) {
+      if (!force && now - (statusFetchedAt.current.get(root) ?? 0) < STATUS_TTL) continue;
+      statusFetchedAt.current.set(root, now);
+      api(`${API.git.detail(root)}&count=1`)
+        .then((d: RepoDetail) => setRootStatus((prev) => new Map(prev).set(root, d.changed || [])))
+        .catch(() => {
+          statusFetchedAt.current.delete(root);
+          setRootStatus((prev) => { const n = new Map(prev); n.delete(root); return n; });
+        });
+    }
+  }, []);
+
   useEffect(() => {
-    api('/api/browse/roots').then((r) => {
+    const src = reposMode ? API.git.repos : API.browse.roots;
+    api(src).then((r) => {
       setRoots(r);
+      if (reposMode) refreshStatuses(r.filter((x: RepoEntry) => x.isRepo).map((x: RepoEntry) => x.path));
       // Auto-expand the sole fallback root ($HOME) so the tree isn't empty
       if (r.length === 1) toggleDir(r[0].path);
     }).catch((e) => setError(e.message));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [reposMode]);
 
   const loadDir = useCallback(async (dir: string) => {
     try {
-      const list = await api(`/api/browse/list?path=${encodeURIComponent(dir)}`);
+      const list = await api(listUrl(reposMode, dir));
       setChildren((prev) => new Map(prev).set(dir, list));
     } catch (e: any) {
       // Surface load failures on the directory row itself
       setChildren((prev) => new Map(prev).set(dir, [{ name: `⚠ ${e.message}`, type: 'file', size: 0, mtime: 0 }]));
     }
-  }, []);
+  }, [reposMode]); // reposMode flips without a remount (in-place reconcile) — must re-capture
 
   const toggleDir = useCallback((dir: string) => {
     setExpanded((prev) => {
@@ -108,8 +192,12 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
   const openFile = useCallback(async (p: string) => {
     setSelected(p);
     setError(null);
+    setRepoDetail(null);
+    setDetailRoot(null);
+    setFileCommits(null);
+    setDetailTab('editor');
     try {
-      const d = await api(`/api/browse/read?path=${encodeURIComponent(p)}`);
+      const d = await api(API.browse.read(p));
       setReadInfo({ binary: d.binary, truncated: d.truncated });
       setContent(d.binary ? '' : d.content);
       setBaseline(d.binary ? '' : d.content);
@@ -117,7 +205,116 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
       setError(e.message);
       setBaseline(null);
     }
-  }, []);
+    // Opening a file counts as repo interaction — refresh its repo's status
+    // in the background if the cache is stale
+    const root = roots.find((r) => p === r.path || p.startsWith(r.path + '/'));
+    if (reposMode && root) refreshStatuses([root.path]);
+  }, [reposMode, roots, refreshStatuses]);
+
+  // Git status (repositories view): full absolute path → 'modified'|'removed'|'created'
+  // from the worktree status letter. Ancestor dirs inherit the status of their
+  // contents so a collapsed folder still marks the tree.
+  const rootsFrom = (p: string): string[] => {
+    const out: string[] = [];
+    for (const root of statusMap.keys()) {
+      let dir = p.slice(0, p.lastIndexOf('/'));
+      while (dir.length >= root.length && dir.startsWith(root)) {
+        out.push(dir);
+        dir = dir.slice(0, dir.lastIndexOf('/'));
+      }
+    }
+    return out;
+  };
+
+  // Tree status markers: background-fetched status for every configured repo
+  // (refreshed on demand, e.g. after save/delete), plus the open detail pane's
+  // fresher copy. Root rows are repos, so paths are repo-root-prefixed.
+  const statusMap = useMemo(() => {
+    const m = new Map<string, RepoDetail['changed']>();
+    for (const [root, chs] of rootStatus) m.set(root, chs);
+    if (repoDetail && rootStatus.get(repoDetail.root) !== repoDetail.changed) m.set(repoDetail.root, repoDetail.changed);
+    return m;
+  }, [rootStatus, repoDetail]);
+
+  const changeStatus = useMemo(() => {
+    const m = new Map<string, string>();
+    const kind = (ch: { x: string; y: string }) => {
+      const c = ch.y === ' ' ? ch.x : ch.y;
+      if (c === 'D') return 'removed';
+      if (c === 'A' || c === '?') return 'created';
+      return 'modified';
+    };
+    for (const [root, changed] of statusMap) {
+      for (const ch of changed) {
+        const p = `${root}/${ch.path}`;
+        m.set(p, kind(ch));
+        for (const dir of rootsFrom(p)) if (!m.has(dir)) m.set(dir, kind(ch));
+      }
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusMap]);
+
+  // A file changed under a repo → refresh that repo's tree markers (force:
+  // the change is known to be new, bypass the TTL). No arg = all repo roots.
+  const queueStatusReload = useCallback((root?: string) => {
+    refreshStatuses(root ? [root] : roots.filter((r) => (r as RepoEntry).isRepo).map((r) => r.path), true);
+  }, [roots, refreshStatuses]);
+
+  const gitStatusFor = useCallback((rowPath: string) => {
+    return changeStatus.get(rowPath) || null;
+  }, [changeStatus]);
+
+  // Repositories view: file click → editor + Diff (changed files) + Commits
+  const openFileInRepo = useCallback(async (p: string) => {
+    const changed = gitStatusFor(p) !== null;
+    setDetailTab('editor');
+    setDiffText(null);
+    openFile(p);
+    if (changed) {
+      // Changed file → the Diff tab becomes the default view
+      setDetailTab('diff');
+      try { const d = (await api(API.git.diff(p))).diff; setDiffText(typeof d === 'string' ? d : null); } catch { setDiffText(null); }
+    }
+    try {
+      setFileCommits(await api(API.git.commits(p)));
+    } catch (e: any) {
+      setFileCommits([]);
+      setError(e.message);
+    }
+  }, [openFile, gitStatusFor]);
+
+  const toggleRoot = useCallback((root: string) => {
+    // Root click = plain expand/collapse (repo details live behind a
+    // dedicated Status button so browsing the tree never hijacks the pane)
+    // Refresh that repo's markers too — if the view-onload status fetch
+    // failed transiently, expansion is the natural recovery point.
+    if (rootIsRepo.get(root)) refreshStatuses([root]);
+    setSelected(null);
+    setBaseline(null);
+    setReadInfo(null);
+    setFileCommits(null);
+    setDiffText(null);
+    setDetailTab('editor');
+    toggleDir(root);
+  }, [toggleDir, rootIsRepo, refreshStatuses]);
+
+  // Status button: open the repo details pane; refresh its status in the
+  // background if the cache is older than the TTL
+  const openRepoStatus = useCallback((root: string) => {
+    refreshStatuses([root]);
+    setSelected(null);
+    setBaseline(null);
+    setReadInfo(null);
+    setFileCommits(null);
+    setDiffText(null);
+    setDetailTab('editor');
+    if (rootIsRepo.get(root)) loadRepoDetail(root, 10);
+    else { setDetailRoot(root); setRepoDetail(null); setRepoError(null); }
+  }, [rootIsRepo, loadRepoDetail, refreshStatuses]);
+
+  // True while a repo pane (details or clone/init actions) owns the content area
+  const showRepoPane = reposMode && !!detailRoot && (rootIsRepo.get(detailRoot) ? !!repoDetail : true);
 
   const refreshDir = useCallback((dir: string) => {
     setChildren((prev) => {
@@ -126,7 +323,12 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
       return next;
     });
     loadDir(dir);
-  }, [loadDir]);
+    // A file changed under a repo → that repo's tree markers need a refresh
+    if (reposMode) {
+      const root = roots.find((r) => dir === r.path || dir.startsWith(r.path + '/'));
+      if (root) queueStatusReload(root.path);
+    }
+  }, [loadDir, reposMode, roots, queueStatusReload]);
 
   const dirty = baseline !== null && content !== baseline;
 
@@ -135,7 +337,7 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
     setSaving(true);
     setError(null);
     try {
-      await api('/api/browse/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: selected, content }) });
+      await api(API.browse.write, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: selected, content }) });
       setBaseline(content);
       refreshDir(parentDir(selected));
     } catch (e: any) {
@@ -151,7 +353,7 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
     setSaving(true);
     setError(null);
     try {
-      await api('/api/browse/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: selected }) });
+      await api(API.browse.remove(selected), { method: 'DELETE' });
       refreshDir(parentDir(selected));
       setSelected(null);
       setBaseline(null);
@@ -170,7 +372,7 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
     if (!name) return;
     const p = name.startsWith('/') ? name : `${dir}/${name}`;
     try {
-      const existing = await api(`/api/browse/read?path=${encodeURIComponent(p)}`);
+      const existing = await api(API.browse.read(p));
       // Already exists — just open it
       setReadInfo({ binary: existing.binary, truncated: existing.truncated });
       setSelected(p);
@@ -197,7 +399,9 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
           if (isDir && expanded.has(p)) walk(p, depth + 1);
         }
       };
-      walk(r.path, 1);
+      // Root rows only render their children while expanded — an unguarded
+      // walk() here made the top-level repository impossible to collapse.
+      if (expanded.has(r.path)) walk(r.path, 1);
     }
     return out;
   }, [roots, children, expanded, accessFor]);
@@ -249,7 +453,7 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
         };
         const fetchDir = async (dir: string) => {
           let list: DirEntry[] = [];
-          try { list = await api(`/api/browse/list?path=${encodeURIComponent(dir)}`); } catch { /* unreadable dir — skip */ }
+          try { list = await api(listUrl(reposMode, dir)); } catch { /* unreadable dir — skip */ }
           if (alive) {
             // Stash listings so the normal tree benefits from the walk too
             setChildren((prev) => new Map(prev).set(dir, list));
@@ -282,7 +486,7 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
     }, 250);
     return () => { alive = false; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, roots]);
+  }, [search, roots, reposMode]);
 
   // Search rows: every match plus all of its ancestors, depth sorted
   const searchRows = useMemo<TreeRow[] | null>(() => {
@@ -319,6 +523,8 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
     [modified],
   );
 
+
+
   const searching = matches !== null;
   const viewRows = searchRows ?? rows;
 
@@ -337,22 +543,36 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
           {scanning ? <span className="search-scan" /> : searching && matches!.size > 0 && <span className="changes-count">{matches!.size}</span>}
         </div>
         <div className="files-tree-list">
-          {roots.length === 0 && !searching && !error && <div className="files-empty-sm">Loading…</div>}
+          {roots.length === 0 && !searching && !error && (
+            <div className="files-empty-sm">{reposMode ? 'No repository folders configured — add them in Settings → Files → Repositories' : 'Loading…'}</div>
+          )}
           {viewRows.length === 0 && searching && !scanning && <div className="files-empty-sm">No matches</div>}
           {viewRows.map((r) => (
             <div
               key={r.path}
-              className={`files-row files-${r.type}${selected === r.path ? ' selected' : ''}${isModified(r.path) ? ' files-modified' : ''}${searching && selfMatches.has(r.path) ? ' files-matched' : ''}`}
+              className={`files-row files-${r.type}${selected === r.path ? ' selected' : ''}${!reposMode && isModified(r.path) ? ' files-modified' : ''}${searching && selfMatches.has(r.path) ? ' files-matched' : ''}`}
               style={{ paddingLeft: `${0.6 + r.depth * 0.45}rem` }}
               onClick={() => {
-                if (r.type === 'file') { openFile(r.path); return; }
+                if (r.type === 'file') { (reposMode ? openFileInRepo : openFile)(r.path); return; }
+                if (r.type === 'root' && reposMode) { toggleRoot(r.path); return; } // plain expand/collapse
                 if (searching) setSearch(''); // searching → jump to it expanded
                 toggleDir(r.path);
               }}
             >
             <span className="files-chev">{r.type !== 'file' ? (r.expanded ? '▾' : '▸') : ''}</span>
-            <span className="files-name">{r.name}{isModified(r.path) && <span className="files-mod-dot" title="Modified this session">•</span>}</span>
-            {r.type === 'root' && <span className={`files-access files-access-${r.access}`}>{r.access}</span>}
+            <span className={`files-name${gitStatusFor(r.path) ? ` files-git-${gitStatusFor(r.path)}` : ''}`}>{r.name}{!reposMode && isModified(r.path) && <span className="files-mod-dot" title="Modified this session">•</span>}</span>
+            {r.type === 'root' && (
+              <>
+                {/* ReposMode roots: Status opens the details pane (repo details
+                    or clone/init offer) without collapsing the tree */}
+                {reposMode && rootIsRepo.get(r.path) !== undefined && (
+                  <span className="repo-row-actions" onClick={(e) => e.stopPropagation()}>
+                    <button className="btn repo-row-btn" title={`Show status of ${r.path}`} onClick={() => openRepoStatus(r.path)}>status</button>
+                  </span>
+                )}
+                <span className={`files-access files-access-${r.access}`}>{r.access}</span>
+              </>
+            )}
             </div>
           ))}
         </div>
@@ -372,7 +592,96 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
           </div>
         )}
         {error && <div className="files-error">{error}</div>}
-        {selected && readInfo?.binary ? (
+        {detailRoot && reposMode && !rootIsRepo.get(detailRoot) && (
+          <div className="repo-detail">
+            <div className="repo-detail-title">{detailRoot}</div>
+            {repoError && <div className="files-error">{repoError}</div>}
+            {canWrite && (
+              <div className="repo-actions">
+                <button className="btn" onClick={() => {
+                  const remote = window.prompt('Remote URL to clone:') || '';
+                  if (remote.trim()) void runRepoAction(detailRoot, 'clone', remote.trim());
+                }}>Clone remote…</button>
+                <button className="btn" onClick={() => {
+                  const remote = window.prompt('Optional remote URL for origin:') || '';
+                  void runRepoAction(detailRoot, 'init', remote.trim());
+                }}>git init</button>
+              </div>
+            )}
+          </div>
+        )}
+        {detailRoot && repoDetail && rootIsRepo.get(detailRoot) ? (
+          <div className="repo-detail">
+            <div className="repo-detail-title">{repoDetail.root}</div>
+            <div className="repo-meta">
+              <span className="repo-branch" title="Current branch">⎇ {repoDetail.branch || 'no commits'}</span>
+              <span className="repo-count" title="Uncommitted changes">{repoDetail.changed.length} changed</span>
+            </div>
+            <div className="repo-section">
+              <div className="repo-section-title">Status</div>
+              {repoDetail.changed.length === 0 ? (
+                <div className="repo-remote-empty">Working tree clean</div>
+              ) : (
+                <div className="repo-status-list">
+                  {repoDetail.changed.map((ch, i) => {
+                    const c = ch.y === ' ' ? ch.x : ch.y;
+                    const kind = c === 'D' ? 'removed' : (c === 'A' || c === '?') ? 'created' : 'modified';
+                    return (
+                      <div key={`${ch.path}-${i}`} className={`repo-status-row repo-status-${kind}`} title={`${ch.x}${ch.y} — ${ch.path}`}>{ch.path}</div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="repo-section">
+              <div className="repo-section-title">Remotes</div>
+              {repoDetail.remotes.length === 0 ? (
+                <div className="repo-remote-empty">No remotes</div>
+              ) : (
+                repoDetail.remotes.map((r) => (
+                  <div key={r.name} className="repo-remote-row" title={r.url}><b>{r.name}</b> {r.url}</div>
+                ))
+              )}
+            </div>
+            <div className="repo-section repo-log">
+              <div className="repo-section-title">History</div>
+              {repoDetail.commits.map((cm) => (
+                <div key={cm.hash} className="repo-commit-row" title={`${cm.hash} — ${cm.author}`}>
+                  <span className="repo-commit-hash">{cm.short}</span>
+                  <span className="repo-commit-subject">{cm.subject}</span>
+                  <span className="repo-commit-date">{new Date(cm.date).toLocaleDateString()}</span>
+                </div>
+              ))}
+              {repoDetail.commits.length === 0 && <div className="repo-remote-empty">No commits yet</div>}
+              {repoError && <div className="files-ro">{repoError}</div>}
+              {repoDetail.hasMore && (
+                <button className="btn repo-load-more" onClick={() => loadRepoDetail(detailRoot, logCount + 10)}>Load more</button>
+              )}
+            </div>
+          </div>
+        ) : null}
+        {selected && fileCommits !== null && reposMode && (
+          <div className="files-detail-tabs">
+            <button className={detailTab === 'editor' ? 'active' : ''} onClick={() => setDetailTab('editor')}>Editor</button>
+            {diffText !== null && <button className={detailTab === 'diff' ? 'active' : ''} onClick={() => setDetailTab('diff')}>Diff</button>}
+            <button className={detailTab === 'commits' ? 'active' : ''} onClick={() => setDetailTab('commits')}>Commits</button>
+          </div>
+        )}
+        {detailTab === 'commits' && fileCommits !== null ? (
+          <div className="repo-log repo-file-log">
+            {fileCommits.length === 0 ? (
+              <div className="files-empty">No commits recorded for this file</div>
+            ) : fileCommits.map((cm) => (
+              <div key={cm.hash} className="repo-commit-row" title={cm.hash}>
+                <span className="repo-commit-hash">{cm.short}</span>
+                <span className="repo-commit-subject">{cm.subject}</span>
+                <span className="repo-commit-date">{new Date(cm.date).toLocaleDateString()}</span>
+              </div>
+            ))}
+          </div>
+        ) : detailTab === 'diff' && diffText !== null ? (
+          <div className="files-editor files-diff-editor">{renderEditDiff(diffText, false, 99999)}</div>
+        ) : selected && readInfo?.binary ? (
           <div className="files-empty">Binary file — no preview</div>
         ) : selected && baseline !== null ? (
           <div className="files-editor">
@@ -393,6 +702,8 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[] }> = ({ 
               }}
             />
           </div>
+        ) : showRepoPane ? (
+          error ? <div className="files-error">{error}</div> : null
         ) : (
           <div className="files-empty">{selected ? error || 'No file selected' : 'Select a file to view or edit'}</div>
         )}
@@ -407,15 +718,15 @@ interface EditsPageProps {
 }
 
 /** Edits view: backend-backed file browser + Monaco editor, plus the
- *  per-session change history under a Changes tab. */
+ *  per-session change history under a Session Edits tab. */
 export const EditsPage: React.FC<EditsPageProps> = ({ sessionId, userRole }) => {
-  const [tab, setTab] = useState<'files' | 'changes'>('files');
+  const [tab, setTab] = useState<'files' | 'changes' | 'repos'>('files');
   const canWrite = userRole === 'control' || userRole === 'admin';
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   useEffect(() => {
     // Session-modified files → highlighted in the file tree
     if (!sessionId) { setChangedPaths([]); return; }
-    fetch(url(`/api/sessions/${sessionId}/file-changes`))
+    fetch(url(API.sessions.fileChanges(sessionId)))
       .then((r) => r.json())
       .then((d: any) => setChangedPaths((d.data ?? []).map((e: any) => e.path).filter(Boolean)))
       .catch(() => setChangedPaths([]));
@@ -424,9 +735,10 @@ export const EditsPage: React.FC<EditsPageProps> = ({ sessionId, userRole }) => 
     <div className="edits-page">
       <div className="edits-tabs">
         <button className={tab === 'files' ? 'active' : ''} onClick={() => setTab('files')}>Files</button>
-        <button className={tab === 'changes' ? 'active' : ''} onClick={() => setTab('changes')}>Changes</button>
+        <button className={tab === 'repos' ? 'active' : ''} onClick={() => setTab('repos')}>Repositories</button>
+        <button className={tab === 'changes' ? 'active' : ''} onClick={() => setTab('changes')}>Session Edits</button>
       </div>
-      {tab === 'files' ? <FileBrowser canWrite={canWrite} changedPaths={changedPaths} /> : <ChangesPage sessionId={sessionId} />}
+      {tab === 'files' ? <FileBrowser canWrite={canWrite} changedPaths={changedPaths} /> : tab === 'repos' ? <FileBrowser canWrite={canWrite} changedPaths={changedPaths} reposMode /> : <ChangesPage sessionId={sessionId} />}
     </div>
   );
 };

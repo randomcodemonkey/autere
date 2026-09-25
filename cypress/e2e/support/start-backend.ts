@@ -6,7 +6,7 @@
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,6 +38,19 @@ const TEST_PORT = getAvailablePort();
 export { TEST_PORT };
 
 let backendProcess: ChildProcess | null = null;
+
+// Record of the previous test run's backend group. If a runner is SIGKILLed
+// (no cleanup handlers run), its detached backend lives on — the next run
+// reaps it from here.
+const RUN_RECORD = join(tmpdir(), 'autere-e2e-last-run.json');
+
+function reapPreviousRun(): void {
+  try {
+    const { pids } = JSON.parse(readFileSync(RUN_RECORD, 'utf-8')) as { pids: number[] };
+    killPids(pids, 'SIGKILL');
+  } catch {}
+  try { rmSync(RUN_RECORD, { force: true }); } catch {}
+}
 
 /** Isolated env dir for this run — exposed so run-e2e can pass it to the
  *  cypress process (tests use it to locate/seed per-env data). */
@@ -81,6 +94,9 @@ function killPids(pids: number[], signal: NodeJS.Signals): void {
 
 export function startBackend(): Promise<void> {
   return new Promise((resolve, reject) => {
+    // Kill anything a hard-killed previous run left behind
+    reapPreviousRun();
+
     if (backendProcess) {
       resolve();
       return;
@@ -112,12 +128,22 @@ export function startBackend(): Promise<void> {
         AUTERE_PI_ENVS_DIR: testEnvsDir,
         // Users registry must not seed the real ~/.autere/monitor-users.json
         AUTERE_USERS_FILE: join(testEnvsDir, 'monitor-users.json'),
+        // AUTERE_DIR covers per-user settings (gitRepositories etc.) —
+        // without it e2e writes into the REAL ~/.autere/users/<user>!
+        AUTERE_DIR: join(testEnvsDir, 'autere-state'),
         // sandbox points at docker + the real home volume — off for tests
         PI_SANDBOX_IMAGE: 'off',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
     });
+
+    // Persist the group so the next run can reap it if this one is SIGKILLed
+    if (backendProcess.pid) {
+      try {
+        writeFileSync(RUN_RECORD, JSON.stringify({ pids: [-backendProcess.pid] }));
+      } catch {}
+    }
 
     let started = false;
     const timeout = setTimeout(() => {

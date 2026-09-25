@@ -24,7 +24,7 @@ describe('useSSE', () => {
 
   it('connects to SSE endpoint', () => {
     // Create a mock SSE server
-    cy.intercept('GET', '**/events?*', (req) => {
+    cy.intercept('GET', '**/api/v1/events?*', (req) => {
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
         start(controller) {
@@ -50,7 +50,7 @@ describe('useSSE', () => {
   });
 
   it('disconnects from SSE', () => {
-    cy.intercept('GET', '**/events?*', (req) => {
+    cy.intercept('GET', '**/api/v1/events?*', (req) => {
       const stream = new ReadableStream({
         start(controller) {
           controller.close();

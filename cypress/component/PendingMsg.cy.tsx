@@ -25,7 +25,7 @@ function Harness() {
 describe('Optimistic pending user message', () => {
   it('appears immediately with a pending indicator, then is replaced by the broadcast copy', () => {
     cy.mount(<Harness />);
-    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.intercept('POST', '**/api/v1/session/messages', { success: true }).as('send');
     cy.get('.chat-input').focus().type('hello world');
     cy.get('.chat-send-btn').click();
     cy.wait('@send');

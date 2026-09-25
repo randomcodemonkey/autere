@@ -104,7 +104,7 @@ async function main() {
   scheduler.start();
 
   // Start the HTTP server
-  createMonitorServer(config.port, pm, scheduler, config.piProvider);
+  createMonitorServer(config.port, pm, scheduler);
 
   // A stray rejection in an async handler must never take the server down
   process.on('unhandledRejection', (reason) => {

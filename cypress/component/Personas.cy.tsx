@@ -16,11 +16,11 @@ function stubFetch(overrides: Record<string, any> = {}) {
       try { body = init?.body ? JSON.parse(init.body) : undefined; } catch { body = init?.body; }
       calls.push({ url: u, method, body });
       let data: any = { success: true };
-      if (u.includes('/api/personas') && method === 'GET') data = { success: true, data: overrides.list ?? personas };
-      if (u.includes('/api/personas/generate')) data = overrides.generate ?? { success: true, data: { prompt: 'Generated prompt.' } };
-      if (u.includes('/api/personas') && method === 'POST' && !u.includes('generate')) data = overrides.save ?? { success: true };
-      if (u.includes('/api/personas/delete')) data = { success: true };
-      if (u.includes('/api/set-persona')) data = { success: true };
+      if (u.includes('/api/v1/personas') && method === 'GET') data = { success: true, data: overrides.list ?? personas };
+      if (u.includes('/api/v1/personas/generate')) data = overrides.generate ?? { success: true, data: { prompt: 'Generated prompt.' } };
+      if (u.includes('/api/v1/personas') && method === 'POST' && !u.includes('generate')) data = overrides.save ?? { success: true };
+      if (u.includes('/api/v1/personas/') && method === 'DELETE') data = { success: true };
+      if (u.includes('/api/v1/session/persona')) data = { success: true };
       (win as any).__personaCalls = calls;
       return Promise.resolve({ json: () => Promise.resolve(data), ok: true } as any);
     };
@@ -44,13 +44,13 @@ describe('PersonaSection (Agent card)', () => {
     cy.contains('Active: Code Reviewer').should('exist');
   });
 
-  it('POSTs /api/set-persona when changed', () => {
+  it('PUTs the session persona when changed', () => {
     stubFetch();
     cy.mount(<PersonaSection persona={null} />);
     cy.get('select.settings-input').select('p2');
     cy.window({ log: false }).then((win) => {
       const calls = (win as any).__personaCalls as Array<any>;
-      const set = calls.find((c) => c.url.includes('/api/set-persona'));
+      const set = calls.find((c) => c.url.includes('/api/v1/session/persona'));
       expect(set, 'set-persona called').to.exist;
       expect(set.body).to.deep.equal({ personaId: 'p2' });
     });
@@ -82,13 +82,14 @@ describe('PersonasSettingsSection', () => {
     // Regenerate replaces the textarea content via the generate endpoint
     cy.contains('button', 'Regenerate prompt').click();
     cy.get('.persona-details-prompt').should('have.value', 'Generated prompt.');
-    // Save posts the full persona (id included) with the edited prompt
+    // Save PUTs the full persona (id in the URL) with the edited prompt
     cy.get('.persona-details-prompt').type(' (edited)');
     cy.contains('button', 'Save Changes').click();
     cy.window({ log: false }).then((win) => {
       const calls = (win as any).__personaCalls as Array<any>;
-      const save = calls.find((c) => c.url.endsWith('/api/personas') && c.method === 'POST');
-      expect(save.body.id).to.equal('p1');
+      const save = calls.find((c) => c.url.includes('/api/v1/personas/p') && c.method === 'PUT');
+      expect(save.method).to.equal('PUT');
+      expect(save.url).to.include('/p1');
       expect(save.body.prompt).to.equal('Generated prompt. (edited)');
     });
   });
@@ -105,7 +106,7 @@ describe('PersonasSettingsSection', () => {
     cy.contains('button', 'Generate prompt').click();
     cy.window({ log: false }).then((win) => {
       const calls = (win as any).__personaCalls as Array<any>;
-      const gen = calls.find((c) => c.url.includes('/api/personas/generate'));
+      const gen = calls.find((c) => c.url.includes('/api/v1/personas/generate'));
       expect(gen, 'generate called').to.exist;
       expect(gen.body).to.deep.equal({ text: 'A terse assistant' });
     });
@@ -121,7 +122,7 @@ describe('PersonasSettingsSection', () => {
     cy.contains('button', 'Create Persona').click();
     cy.window({ log: false }).then((win) => {
       const calls = (win as any).__personaCalls as Array<any>;
-      const save = calls.find((c) => c.url.endsWith('/api/personas') && c.method === 'POST');
+      const save = calls.find((c) => c.url.endsWith('/api/v1/personas') && c.method === 'POST');
       expect(save, 'save called').to.exist;
       expect(save.body.name).to.equal('Tester');
       expect(save.body.prompt).to.equal('You test things.');

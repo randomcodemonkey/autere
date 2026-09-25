@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 import { renderEditDiff } from './ChatMessage';
 
 interface FileChange {
@@ -34,7 +35,7 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
     if (!sessionId) return;
     setLoading(true);
     setError(null);
-    fetch(url(`/api/sessions/${sessionId}/file-changes`))
+    fetch(url(API.sessions.fileChanges(sessionId)))
       .then((r) => r.json())
       .then((d) => {
         if (d.success) {

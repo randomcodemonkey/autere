@@ -64,13 +64,13 @@ function stubFetch() {
   // window:before:load don't apply, so stub window.fetch directly.
   cy.window({ log: false }).then((win) => {
     installFetchStub(win, (u) => {
-      if (u.includes('/api/scheduler/tasks') && !u.includes('/run') && !u.includes('/runs/')) {
+      if (u.includes('/api/v1/scheduler/tasks') && !u.includes('/run') && !u.includes('/runs/')) {
         return { success: true, data: responseData };
       }
       if (u.includes('/runs/')) {
         return { success: true, data: RUN_LOG };
       }
-      if (u.includes('/api/models')) {
+      if (u.includes('/api/v1/session/models')) {
         return { success: true, data: [
           { provider: '9router', id: 'mimo-v2.5-all', name: 'Mimo' },
           { provider: '9router', id: 'glm-5.3-flash', name: 'GLM Flash' },
@@ -120,14 +120,14 @@ describe('ScheduledTasksCard', () => {
       let posted: any = null;
       cy.window({ log: false }).then((win) => {
         installFetchStub(win, (u, init) => {
-          if (u.includes('/api/scheduler/tasks') && !u.includes('/run') && !u.includes('/runs/')) {
+          if (u.includes('/api/v1/scheduler/tasks') && !u.includes('/run') && !u.includes('/runs/')) {
             if (init?.method === 'POST') {
               try { posted = JSON.parse(init.body); } catch {}
               return { success: true, data: { ...TASK, ...posted } };
             }
             return { success: true, data: { tasks: [], runs: [] } };
           }
-          if (u.includes('/api/models')) {
+          if (u.includes('/api/v1/session/models')) {
             return { success: true, data: [
               { provider: '9router', id: 'mimo-v2.5-all', name: 'Mimo' },
             ] };
@@ -313,7 +313,7 @@ describe('ScheduledTasksCard', () => {
     it('keeps the form open and shows the server error on failure', () => {
       cy.window({ log: false }).then((win) => {
         installFetchStub(win, (u, init) => {
-          if (u.includes('/api/scheduler/tasks') && init?.method === 'POST') {
+          if (u.includes('/api/v1/scheduler/tasks') && init?.method === 'POST') {
             return { success: false, error: 'Invalid schedule: bad minute field' };
           }
           return { success: true, data: { tasks: [], runs: [] } };
@@ -353,7 +353,7 @@ describe('ScheduledTasksCard', () => {
         (win as any).confirm = () => false;
         const origFetch = win.fetch;
         (win as any).fetch = (input: any, init: any) => {
-          if (String(input).includes('/api/scheduler/tasks/') && init?.method === 'DELETE') {
+          if (String(input).includes('/api/v1/scheduler/tasks/') && init?.method === 'DELETE') {
             deleteRequested = true;
           }
           return origFetch.call(win, input, init);

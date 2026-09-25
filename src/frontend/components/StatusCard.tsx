@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AgentCard } from './AgentCard';
 import { useCardState } from '../hooks/useCardState';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 import type {
   SessionStats,
   ExtensionInfo,
@@ -106,7 +107,7 @@ export const StatusCard: React.FC<StatusCardProps> = ({
   useEffect(() => {
     let cancelled = false;
     const fetchStatus = () => {
-      fetch(url('/api/status'))
+      fetch(url(API.status))
         .then((res) => res.json())
         .then((data) => {
           if (!cancelled && data.success && data.data) {

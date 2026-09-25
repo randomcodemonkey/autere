@@ -82,7 +82,7 @@ describe('ExtensionsCard', () => {
     cy.get('.card').should('have.class', 'collapsed');
   });
 
-  it('polls /api/extensions while the detail modal is open, not when closed', () => {
+  it('polls /api/v1/extensions while the detail modal is open, not when closed', () => {
     cy.clock();
     const stub = cy.stub(window, 'fetch').callsFake(() =>
       Promise.resolve({ json: () => Promise.resolve({ success: true, data: [ext({})] }) } as any));
@@ -96,7 +96,7 @@ describe('ExtensionsCard', () => {
     cy.wrap(null).should(() => expect(stub.callCount).to.eq(afterClose));
   });
 
-  it('shows per-user stats from /api/extensions instead of the zero placeholders', () => {
+  it('shows per-user stats from /api/v1/extensions instead of the zero placeholders', () => {
     const props: ExtensionInfo[] = [{
       name: 'pi-janitor', displayName: 'Janitor', configPath: '', hasConfig: false,
       status: 'neutral', statusText: '', details: {},

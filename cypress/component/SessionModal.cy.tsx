@@ -46,8 +46,8 @@ describe('SessionModal', () => {
   });
 
   beforeEach(() => {
-    cy.intercept('GET', '**/api/sessions/search*', { success: true, data: [] }).as('search');
-    cy.intercept('GET', '**/api/sessions', { success: true, data: SESSIONS }).as('sessions');
+    cy.intercept('GET', '**/api/v1/sessions/search*', { success: true, data: [] }).as('search');
+    cy.intercept('GET', '**/api/v1/sessions', { success: true, data: SESSIONS }).as('sessions');
   });
 
   it('lists sessions with the current one highlighted', () => {
@@ -70,7 +70,7 @@ describe('SessionModal', () => {
   });
 
   it('active-only toggle shows a distinct empty state when nothing is active', () => {
-    cy.intercept('GET', '**/api/sessions', { success: true, data: [SESSIONS[2]] }).as('sessionsIdle');
+    cy.intercept('GET', '**/api/v1/sessions', { success: true, data: [SESSIONS[2]] }).as('sessionsIdle');
     mountModal();
     cy.wait('@sessionsIdle');
     cy.get('.session-active-toggle input[type=checkbox]').check();
@@ -85,7 +85,7 @@ describe('SessionModal', () => {
   });
 
   it('new session form: prefill, persona select and create callback', () => {
-    cy.intercept('GET', '**/api/personas', { success: true, data: [{ id: 'p1', name: 'Pirate', description: '', prompt: '' }] }).as('personas');
+    cy.intercept('GET', '**/api/v1/personas', { success: true, data: [{ id: 'p1', name: 'Pirate', description: '', prompt: '' }] }).as('personas');
     mountModal();
     cy.wait('@sessions');
     cy.get('.btn-primary').contains('New Session').click();
@@ -113,7 +113,7 @@ describe('SessionModal', () => {
   it('searches by name/id via the search endpoint and keeps ranking', () => {
     mountModal();
     cy.wait('@sessions');
-    cy.intercept('GET', '**/api/sessions/search?q=fir*', {
+    cy.intercept('GET', '**/api/v1/sessions/search?q=fir*', {
       success: true,
       data: [{ ...SESSIONS[0], match: 'name' }],
     }).as('ranked');
@@ -127,7 +127,7 @@ describe('SessionModal', () => {
   it('tags content matches with a content-match badge', () => {
     mountModal();
     cy.wait('@sessions');
-    cy.intercept('GET', '**/api/sessions/search?q=needle*', {
+    cy.intercept('GET', '**/api/v1/sessions/search?q=needle*', {
       success: true,
       data: [{ ...SESSIONS[1], match: 'content' }],
     }).as('ranked');
@@ -139,14 +139,14 @@ describe('SessionModal', () => {
   it('shows an empty state when nothing matches', () => {
     mountModal();
     cy.wait('@sessions');
-    cy.intercept('GET', '**/api/sessions/search?q=zzz*', { success: true, data: [] }).as('ranked');
+    cy.intercept('GET', '**/api/v1/sessions/search?q=zzz*', { success: true, data: [] }).as('ranked');
     cy.get('.session-search-input').type('zzz');
     cy.wait('@ranked');
     cy.get('.session-empty').should('contain', 'No matching sessions');
   });
 
   it('deletes a session after confirm()', () => {
-    cy.intercept('POST', '**/api/sessions/delete', { success: true }).as('delete');
+    cy.intercept('DELETE', '**/api/v1/sessions/*', { success: true }).as('delete');
     let accept = false;
     cy.window({ log: false }).then((win) => {
       (win as any).confirm = () => accept;
@@ -166,7 +166,7 @@ describe('SessionModal', () => {
 
 
   it('persona select: disabled "Loading personas" until personas arrive', () => {
-    cy.intercept('GET', '**/api/personas', {
+    cy.intercept('GET', '**/api/v1/personas', {
       delay: 800,
       body: { success: true, data: [{ id: 'p1', name: 'Pirate', description: '', prompt: '' }] },
     }).as('personas');
@@ -179,7 +179,7 @@ describe('SessionModal', () => {
   });
 
   it('persona select: "No personas available" and stays disabled when none exist', () => {
-    cy.intercept('GET', '**/api/personas', { success: true, data: [] }).as('personas');
+    cy.intercept('GET', '**/api/v1/personas', { success: true, data: [] }).as('personas');
     mountModal();
     cy.get('.btn-primary').contains('New Session').click();
     cy.wait('@personas');
@@ -187,7 +187,7 @@ describe('SessionModal', () => {
   });
 
   it('persona select: surfaces a failed load instead of swallowing it', () => {
-    cy.intercept('GET', '**/api/personas', { statusCode: 500, body: 'boom' }).as('personas');
+    cy.intercept('GET', '**/api/v1/personas', { statusCode: 500, body: 'boom' }).as('personas');
     mountModal();
     cy.get('.btn-primary').contains('New Session').click();
     cy.wait('@personas');

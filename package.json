@@ -4,6 +4,9 @@
   "description": "Real-time web dashboard for monitoring pi agent sessions",
   "type": "module",
   "main": "src/backend/index.ts",
+  "bin": {
+    "autere": "cli/autere.js"
+  },
   "scripts": {
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
     "dev:frontend": "cd src/frontend && npx vite",
@@ -20,6 +23,7 @@
     "cy:e2e": "cypress run --e2e",
     "cy:e2e:open": "cypress open --e2e",
     "test:all": "npm run test:component && npm run test:e2e",
+    "test:cli": "bash cli/test/run.sh",
     "test:component": "npm run cy:component",
     "test:e2e": "npm run build && npx tsx cypress/e2e/support/run-e2e.ts",
     "lint": "eslint .",

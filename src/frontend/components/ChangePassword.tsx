@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 
 interface ChangePasswordProps {
   username: string | null;
@@ -24,7 +25,7 @@ export const ChangePasswordScreen: React.FC<ChangePasswordProps> = ({ username, 
     }
     setBusy(true);
     try {
-      const res = await fetch(url('/api/auth/change-password'), {
+      const res = await fetch(url(API.auth.changePassword), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ oldPassword: current, newPassword: next }),

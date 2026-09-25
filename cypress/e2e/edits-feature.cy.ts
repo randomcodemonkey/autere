@@ -44,7 +44,7 @@ describe('Edits feature', () => {
       };
       cy.task('findSessionId', sessionId).then((id) => {
         if (!id) {
-          cy.request('POST', '/api/send', { message: 'Reply with just: ok', type: 'prompt', sessionId });
+          cy.request('POST', '/api/v1/session/messages', { message: 'Reply with just: ok', type: 'prompt', sessionId });
           waitForSessionFile();
         }
       });
@@ -54,7 +54,7 @@ describe('Edits feature', () => {
   after(() => {
     // Restore the default state: no allowedDirs (fallback $HOME roots) —
     // tests must stay net-zero for the rest of the suite.
-    cy.request('POST', '/api/users/admin', { allowedDirs: [] });
+    cy.request('PUT', '/api/v1/users/admin', { allowedDirs: [] });
     cy.task('cleanScratchDir');
   });
 
@@ -69,7 +69,7 @@ describe('Edits feature', () => {
     cy.task<string>('makeScratchDir').then((scratch: string) => {
       cy.writeFile(`${scratch}/save-me.txt`, 'one\n');
       // Grant admin the scratch dir as a rw root (after() restores [])
-      cy.request('POST', '/api/users/admin', { allowedDirs: [{ path: scratch, access: 'rw' }] });
+      cy.request('PUT', '/api/v1/users/admin', { allowedDirs: [{ path: scratch, access: 'rw' }] });
 
       // The sole root auto-expands — its listing shows right away
       cy.visit(`/session/${sessionId}/edits`);
@@ -122,7 +122,7 @@ describe('Edits feature', () => {
     cy.visit(`/session/${sessionId}/edits`);
 
     // The Files tab is the default view — switch to the Changes tab
-    cy.get('.edits-tabs').contains('Changes').click();
+    cy.get('.edits-tabs').contains('Session Edits').click();
 
     cy.get('.changes-files-list .changes-file', { timeout: 10000 }).should('have.length', 2);
     cy.get('.changes-files-list').should('contain', 'e2e-a.txt');
@@ -168,7 +168,7 @@ describe('Edits feature', () => {
       cy.get('.status-badge', { timeout: 240000 }).should('not.have.class', 'status-streaming');
 
       cy.visit(`/session/${sessionId}/edits`);
-      cy.get('.edits-tabs').contains('Changes').click();
+      cy.get('.edits-tabs').contains('Session Edits').click();
       // Long retry window: provider hiccups make pi auto-retry the turn, and
       // the status badge briefly reads idle during retry gaps.
       cy.get('.changes-files-list .changes-file', { timeout: 120000 }).should('have.length', 2);

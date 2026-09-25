@@ -290,7 +290,7 @@ describe('StreamCard', () => {
     // First open gets an empty response (e.g. idle session), second open
     // retries and gets models — the dropdown must recover without a reload.
     let call = 0;
-    cy.intercept('GET', '**/api/models', (req) => {
+    cy.intercept('GET', '**/api/v1/session/models', (req) => {
       call += 1;
       req.reply(call === 1
         ? { success: true, data: [] }

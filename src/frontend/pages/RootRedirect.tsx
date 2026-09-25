@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 import { uiSessionName } from '../session-name';
 
 export function RootRedirect() {
@@ -9,7 +10,7 @@ export function RootRedirect() {
 
   useEffect(() => {
     // Try to find the last active session, then navigate to it
-    fetch(url('/api/sessions'))
+    fetch(url(API.sessions.list))
       .then(res => res.json())
       .then(data => {
         if (data.success && data.data && data.data.length > 0) {
@@ -18,7 +19,7 @@ export function RootRedirect() {
           navigate(`/session/${latest.id}`, { replace: true });
         } else if (data.success) {
           // No sessions available — create one and go to it
-          fetch(url('/api/new-session'), {
+          fetch(url(API.sessions.list), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

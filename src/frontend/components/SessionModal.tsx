@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Modal } from './Modal';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 import { uiSessionName } from '../session-name';
 import type { SessionSearchResult, Persona } from '../types';
 
@@ -67,7 +68,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
 
   // Persona choices for the new-session form
   useEffect(() => {
-    fetch(url('/api/personas'))
+    fetch(url(API.personas.root))
       .then((res) => res.json())
       .then((data) => {
         if (data.success) { setPersonas(data.data || []); setPersonasStatus('ready'); }
@@ -82,8 +83,8 @@ export const SessionView: React.FC<SessionViewProps> = ({
     const timer = setTimeout(() => {
       const q = query.trim();
       const fetchUrl = q.length >= 2
-        ? url(`/api/sessions/search?q=${encodeURIComponent(q)}`)
-        : url('/api/sessions');
+        ? url(API.sessions.search(q))
+        : url(API.sessions.list);
       if (q.length >= 2) setSearching(true);
       fetch(fetchUrl)
         .then((res) => res.json())
@@ -104,8 +105,8 @@ export const SessionView: React.FC<SessionViewProps> = ({
     if (!sessionId) return;
     setNameSaving(true);
     try {
-      await fetch(url('/api/session-name'), {
-        method: 'POST',
+      await fetch(url(API.session.name), {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, sessionId }),
       });
@@ -118,11 +119,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
       return;
     }
     try {
-      await fetch(url('/api/sessions/delete'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: sid }),
-      });
+      await fetch(url(API.sessions.item(sid)), { method: 'DELETE' });
       setResults((prev) => prev.filter((s) => s.id !== sid));
     } catch {}
   }, []);

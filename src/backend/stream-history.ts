@@ -16,6 +16,7 @@ import { existsSync, readFileSync } from 'fs';
 export { isRmCommand, extractRmPaths, accumulateUsage, extractImages } from '../shared/format.js';
 import { isRmCommand, extractRmPaths, extractImages , formatToolArgs } from '../shared/format.js';
 import type { StreamImage } from '../shared/format.js';
+import { API } from '../shared/api-paths.js';
 
 // ── Tool result formatting ──
 
@@ -242,7 +243,7 @@ function buildOneEntry(
       if (msg.customType === 'file_saved' && msg.data?.savedName) {
         // Image files broadcast as 'image' entries (inline preview), others as file cards
         if ((msg.data.mimeType || '').startsWith('image/')) {
-          return [{ role: 'image', text: '', streaming: false, timestamp: entryTimestamp ?? Date.now(), images: [{ mimeType: msg.data.mimeType, url: `/api/files/${encodeURIComponent(msg.data.savedName)}` }] }];
+          return [{ role: 'image', text: '', streaming: false, timestamp: entryTimestamp ?? Date.now(), images: [{ mimeType: msg.data.mimeType, url: API.files(msg.data.savedName) }] }];
         }
         return [{ role: 'file', text: '', streaming: false, timestamp: entryTimestamp ?? Date.now(), file: msg.data }];
       }
@@ -250,7 +251,7 @@ function buildOneEntry(
         return [{ role: 'edit', text: msg.data.diff, streaming: false, timestamp: entryTimestamp ?? Date.now() }];
       }
       if (msg.customType === 'image_saved' && msg.data?.name) {
-        return [{ role: 'image', text: '', streaming: false, timestamp: entryTimestamp ?? Date.now(), images: [{ mimeType: msg.data.mimeType || 'image/png', url: `/api/images/${msg.data.name}` }] }];
+        return [{ role: 'image', text: '', streaming: false, timestamp: entryTimestamp ?? Date.now(), images: [{ mimeType: msg.data.mimeType || 'image/png', url: API.images(msg.data.name) }] }];
       }
       const role = msg.role || '';
       const timestamp = msg.timestamp

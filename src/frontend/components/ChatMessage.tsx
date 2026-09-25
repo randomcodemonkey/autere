@@ -11,6 +11,7 @@ import DOMPurify from 'dompurify';
 import type { StreamMessage, StreamImage } from '../types';
 import { ZoomableImage } from './ZoomableImage';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 
 marked.setOptions({
   gfm: true,
@@ -224,7 +225,7 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
             </div>
             <a
               className="file-dl"
-              href={url(`/api/files/${encodeURIComponent(msg.file.savedName)}`)}
+              href={url(API.files(msg.file.savedName))}
               download={msg.file.name}
               target="_blank"
               rel="noopener noreferrer"
@@ -232,7 +233,7 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
                 // Route through Web Share / Blob download — never navigate
                 // (iOS PWA preview otherwise covers the app, no way back).
                 e.preventDefault();
-                void saveImage(msg.file!.mimeType || 'application/octet-stream', url(`/api/files/${encodeURIComponent(msg.file!.savedName)}`), msg.file!.name)
+                void saveImage(msg.file!.mimeType || 'application/octet-stream', url(API.files(msg.file!.savedName)), msg.file!.name)
                   .catch((err) => console.error('File download failed:', err));
               }}
             >

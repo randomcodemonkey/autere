@@ -1,8 +1,14 @@
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { homedir } from 'os';
 
 export const PI_DIR = join(homedir(), '.pi', 'agent');
-export const AUTERE_DIR = join(homedir(), '.autere');
+
+// Root for all autere state (auth tokens, users, per-user settings,
+// deleted sessions). Overridable so isolated test/sandbox runs never touch
+// the shared ~/.autere.
+export const AUTERE_DIR = process.env.AUTERE_DIR
+  ? resolve(process.env.AUTERE_DIR)
+  : join(homedir(), '.autere');
 export const AUTH_TOKENS_FILE = join(AUTERE_DIR, 'monitor-auth-tokens.json');
 export const AUTH_TOKEN_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 // Admin-managed user registry (overridable for e2e isolation)

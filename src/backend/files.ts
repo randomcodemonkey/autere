@@ -53,7 +53,7 @@ function joinSafe(a: string, b: string): string {
  * specific (deepest) matching root wins, so a rw subdir can override a
  * read-only parent.
  */
-function resolveInRoots(user: string, path: string): { abs: string; access: 'read' | 'rw' } | { error: string; status: number } {
+export function resolveInRoots(user: string, path: string): { abs: string; access: 'read' | 'rw' } | { error: string; status: number } {
   if (typeof path !== 'string' || !path.startsWith('/') || path.includes('\0')) {
     return { error: 'Invalid path', status: 400 };
   }

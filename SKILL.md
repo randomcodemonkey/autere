@@ -53,7 +53,11 @@ code — keep it up to date when architecture or workflows change.**
 ```
 src/backend/
   index.ts              # Entry point — HTTP server, ProcessManager init
-  routes.ts             # API routes + SSE broadcaster; /api/send image validation
+  routes.ts             # Route table (method + path + role + handler), SSE
+                        # broadcaster, static files; /session/messages image
+                        # validation
+  openapi.ts            # OpenAPI 3 spec generated from the route table,
+                        # served at GET /api/v1/openapi.json
   rpc-client.ts         # pi RPC wrapper (prompt/steer/followUp, image blocks)
   user-session.ts       # Per-user pi process, state, history buffers, SSE fanout
   process-manager.ts    # Spawning/stopping/tracking pi processes — ONE per
@@ -300,3 +304,64 @@ personas.json, persona-active.json, persona-markers.json, dedup-stats.json),
   pin. Keep tap targets stable across layout changes, avoid disable-induced
   focus loss mid-tap, and set `-webkit-text-size-adjust: 100%` is already in
   place (don't reintroduce landscape font inflation).
+
+### HTTP API conventions (mandatory, every change)
+
+The API is versioned under **`/api/v1`** and documented with OpenAPI 3.
+These rules apply to EVERY new endpoint, rename, or behavior change:
+
+1. **Paths live in exactly one file: `src/shared/api-paths.ts`.** It is the
+   single source of truth shared by the backend, the web UI and the TUI.
+   - Never hardcode an API path string anywhere else — not in components,
+     hooks, the TUI, or tests that can import it.
+   - Web UI: import `{ API } from '../api-paths'` (re-export) and wrap with
+     `url(...)` for the reverse-proxy base path.
+   - TUI: import `{ API } from './api.js'` (re-export of the shared module).
+   - Backend regex matchers are built from `API_PREFIX` in routes.ts.
+   - Backend-emitted URLs that reach the frontend (stream-history image/file
+     URLs) must also come from `API.images(...)` / `API.files(...)`.
+2. **REST verbs and resources**
+   - `GET` read, `POST` create or execute an action, `PUT` replace a
+     subresource, `DELETE` remove. No verb-in-path endpoints (`/x/delete`,
+     `/set-y`) — use `DELETE /x/{id}`, `PUT /y`.
+   - Plural collections (`/api/v1/sessions`), singular for the VIEWED
+     session's operations (`/api/v1/session/...`, target selected by a
+     `sessionId` body field or query param).
+   - Path params in the table as regex groups; OpenAPI templates use
+     `{param}` placeholders.
+3. **Status codes**
+   - 200 default; 201 for creates (POST .../tokens, .../personas,
+     .../users, POST /sessions); 202 for accepted async work.
+   - 400 invalid input (incl. malformed JSON — `readBody` rejects with
+     `statusCode`), 401 unauthenticated, 403 insufficient role, 404 missing,
+     405 wrong method (the dispatcher adds an `Allow` header), 409 state
+     conflict (e.g. no viewed session, compaction already running),
+     413 oversized body, 500 failure, 503 dependency unavailable.
+   - Unauthenticated callers get 401 before 404/405 — paths are not
+     enumerable without a session.
+4. **Response envelope**: every JSON response is `application/json` and
+   either `{ success: true, data?..., ... }` or
+   `{ success: false, error }`. No HTML error bodies on API routes.
+5. **Route registration**: add to the route table in `routes.ts` via
+   `route({ method, path, template, role, tag, summary, status?, handler })`.
+   `role` is one of `chat < control < admin` (declared per route; auth.ts
+   owns only the hierarchy). `tag` + `summary` feed the OpenAPI document —
+   write them for an external API consumer. Public (no-auth) routes set
+   `isPublic: true` and must be limited to auth + docs endpoints.
+6. **OpenAPI**: served automatically at `GET /api/v1/openapi.json` from the
+   route table — registering a route with a good `template`/`summary` is
+   what documents it. Keep them accurate when changing behavior.
+7. **Auth model**: `POST /api/v1/auth/login` sets an HttpOnly cookie AND
+   returns a bearer token (non-browser clients); API requests authenticate
+   with cookie or `Authorization: Bearer`. CORS allows the
+   `Authorization` + `X-Autere-Client-Id` headers.
+8. **Tests**: update cypress specs through the same constants (import from
+   `src/shared/api-paths` where possible) and adjust methods
+   (`PUT`/`DELETE`) alongside the frontend.
+
+Checklist for a new endpoint:
+- [ ] constant in `src/shared/api-paths.ts`
+- [ ] `route({...})` entry in `routes.ts` (verb, role, tag, summary)
+- [ ] frontend/TUI callers use the constant + correct verb
+- [ ] cypress stubs/intercepts updated
+- [ ] `npm run typecheck` + targeted cypress run

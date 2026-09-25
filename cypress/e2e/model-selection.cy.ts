@@ -34,7 +34,7 @@ describe('autere — model selection', () => {
         cy.wrap(target).click();
       });
 
-      // Selecting closes the dropdown (async /api/set-model round-trip)
+      // Selecting closes the dropdown (async model round-trip)
       cy.get('.chat-model-dropdown', { timeout: 5000 }).should('not.exist');
 
       // Reopen: the selection is now the active model — then restore

@@ -17,7 +17,6 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': 'http://localhost:3456',
-      '/events': 'http://localhost:3456',
     },
   },
 });

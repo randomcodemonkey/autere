@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 
 interface AttachedImage {
   mimeType: string;
@@ -173,7 +174,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
       const timeout = window.setTimeout(() => abort.abort(), 20_000);
       let res: Response;
       try {
-        res = await fetch(url('/api/send'), {
+        res = await fetch(url(API.session.messages), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: text, type, sessionId, ...(images.length > 0 ? { images } : {}) }),

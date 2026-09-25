@@ -10,6 +10,7 @@ import { StreamCard } from '../components/StreamCard';
 import { Modal } from '../components/Modal';
 import { SessionView } from '../components/SessionModal';
 import { url, basePath } from '../base-path';
+import { API } from '../api-paths';
 import { uiSessionName } from '../session-name';
 import type {
   SessionState,
@@ -113,7 +114,7 @@ export function DashboardPage({
     if (!authenticated) return;
     let timer: number | undefined;
     const poll = () => {
-      fetch(url('/api/sessions')).then(r => r.json()).then(d => {
+      fetch(url(API.sessions.list)).then(r => r.json()).then(d => {
         if (d.success) setAvailableSessions(d.data);
       }).catch(() => {});
       timer = window.setTimeout(poll, 5000);
@@ -421,7 +422,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   const refetchBootstrap = useCallback(() => {
     const epoch = ++bootstrapEpochRef.current;
     const sid = viewedSessionRef.current;
-    fetch(url(`/api/bootstrap${sid ? `?sessionId=${encodeURIComponent(sid)}` : ''}`))
+    fetch(url(`${API.bootstrap}${sid ? `?sessionId=${encodeURIComponent(sid)}` : ''}`))
       .then((res) => res.json())
       .then((data) => {
         if (epoch !== bootstrapEpochRef.current || !data.success || !data.data) return;
@@ -432,7 +433,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
         // response is the same payload shape with state recomputed from the
         // session file. No loop: one recovery attempt per bootstrap.
         if (!d.sessionState?.sessionId && sid) {
-          fetch(url('/api/sessions/switch-by-id'), {
+          fetch(url(API.sessions.activate(sid)), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sessionId: sid }),
@@ -545,7 +546,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
     // initial load, not a user-initiated switch.
     setSwitchLabel(sessionState.sessionId ? 'Switching session…' : 'Loading session…');
     setSwitchingSession(true);
-    fetch(url('/api/sessions/switch-by-id'), {
+    fetch(url(API.sessions.activate(sid)), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId: sid }),
@@ -584,8 +585,8 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   const handleCancelPending = useCallback(async (text: string) => {
     setPendingUser((prev) => prev.filter((p) => p.text !== text));
     try {
-      await fetch(url('/api/cancel-pending'), {
-        method: 'POST',
+      await fetch(url(API.session.pending), {
+        method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, sessionId: targetSessionRef.current }),
       });
@@ -608,7 +609,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   const handleActivateSession = useCallback(() => {
     const sid = urlSessionId || sessionState.sessionId;
     if (!sid) return;
-    fetch(url('/api/sessions/switch-by-id'), {
+    fetch(url(API.sessions.activate(sid)), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId: sid, spawn: true }),
@@ -619,24 +620,24 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
 
   const handleRestart = useCallback(async () => {
     setRestarting(true);
-    try { await fetch(url('/api/restart'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) }); } catch {}
+    try { await fetch(url(API.session.restart), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) }); } catch {}
   }, [setRestarting]);
 
   const handleRestartBackend = useCallback(async () => {
     if (!confirm('Restart the entire autere backend? All users will be disconnected.')) return;
     setRestartingBackend(true);
     sseDisconnect();
-    try { await fetch(url('/api/restart-backend'), { method: 'POST' }); } catch {}
+    try { await fetch(url(API.backend.restart), { method: 'POST' }); } catch {}
     setTimeout(() => { sseConnect(); }, 4000);
   }, [setRestartingBackend, sseDisconnect, sseConnect]);
 
   const handleAbort = useCallback(async () => {
-    try { await fetch(url('/api/abort'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) }); } catch {}
+    try { await fetch(url(API.session.abort), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) }); } catch {}
   }, []);
 
   const handleCompact = useCallback(async () => {
     try {
-      const res = await fetch(url('/api/compact'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) });
+      const res = await fetch(url(API.session.compact), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) });
       const data = await res.json();
       if (!data.success) setSessionError(data.error || 'Failed to compact');
     } catch (err) {
@@ -648,7 +649,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   const handleAbortCompaction = useCallback(async () => {
     // Confirm lives at the button (SessionModal) — this handler must fire directly.
     try {
-      const res = await fetch(url('/api/abort-compaction'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) });
+      const res = await fetch(url(API.session.compact), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) });
       const data = await res.json();
       if (!data.success) setSessionError(data.error || 'Failed to abort compaction');
     } catch (err) {
@@ -660,7 +661,7 @@ setPendingUser((prev) => prev.length === 0 ? prev : prev.filter((p) => !(incomin
   const handleNewSession = useCallback((personaId?: string | null, sessionName?: string) => {
     setCreatingSession(true);
     setSessionError(null);
-    fetch(url('/api/new-session'), {
+    fetch(url(API.sessions.list), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -24,7 +24,7 @@ function stubFetch(users: any[], postPath?: string): { calls: Call[]; fetch: any
   const fetch = (url: any, opts?: any) => {
     calls.push({ url: String(url), opts });
     const method = opts?.method || 'GET';
-    if (String(url).endsWith('/api/users') && method === 'GET') {
+    if (String(url).endsWith('/api/v1/users') && method === 'GET') {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true, data: users }) });
     }
     if (postPath && method === 'POST' && String(url).endsWith(postPath)) {
@@ -36,7 +36,7 @@ function stubFetch(users: any[], postPath?: string): { calls: Call[]; fetch: any
 }
 
 describe('UsersCard', () => {
-  it('renders the user list from GET /api/users', () => {
+  it('renders the user list from GET /api/v1/users', () => {
     cy.stub(window, 'fetch').callsFake(stubFetch(USERS).fetch);
     cy.mount(<UsersCard username="admin" />);
     cy.get('.users-row').should('have.length', 2);
@@ -46,8 +46,8 @@ describe('UsersCard', () => {
     cy.get('.users-dirs-count').first().should('contain', '1 dir');
   });
 
-  it('creates a user: POST /api/users with form values, then reloads', () => {
-    const { calls, fetch } = stubFetch(USERS, '/api/users');
+  it('creates a user: POST /api/v1/users with form values, then reloads', () => {
+    const { calls, fetch } = stubFetch(USERS, '/api/v1/users');
     const created = USERS.concat([{ username: 'carol', role: 'chat', mustChangePassword: true, allowedDirs: [{ path: '/srv/carol', access: 'rw' }] }]);
     const f = (url: any, opts?: any) => {
       const r = fetch(url, opts);
@@ -82,15 +82,15 @@ describe('UsersCard', () => {
     cy.get('.users-row').contains('carol');
   });
 
-  it('edits a user: POST /api/users/<name> with role and dirs', () => {
-    const { calls, fetch } = stubFetch(USERS, '/api/users/bob');
+  it('edits a user: PUT /api/v1/users/<name> with role and dirs', () => {
+    const { calls, fetch } = stubFetch(USERS, '/api/v1/users/bob');
     cy.stub(window, 'fetch').callsFake(fetch);
     cy.mount(<UsersCard username="admin" />);
     cy.get('.users-row').contains('bob').parents('.users-row').find('.btn').contains('Edit').click();
     cy.get('.users-field > select').select('control');
     cy.get('.users-form button[type="submit"]').click();
     cy.then(() => {
-      const post = calls.find((c) => c.opts?.method === 'POST' && c.url.endsWith('/api/users/bob'));
+      const post = calls.find((c) => c.opts?.method === 'PUT' && c.url.endsWith('/api/v1/users/bob'));
       expect(post, 'update POST happened').to.be.ok;
       const body = JSON.parse(post!.opts.body);
       expect(body.role).to.eq('control');
@@ -107,7 +107,7 @@ describe('UsersCard', () => {
     cy.then(() => {
       const del = calls.find((c) => c.opts?.method === 'DELETE');
       expect(del, 'DELETE happened').to.be.ok;
-      expect(del!.url).to.contain('/api/users/bob');
+      expect(del!.url).to.contain('/api/v1/users/bob');
     });
   });
 

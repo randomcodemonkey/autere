@@ -5,7 +5,7 @@
 
 /** Wait for the backend (started by run-e2e.ts on a random port) to be up. */
 export function waitForBackend(): void {
-  cy.request({ url: '/api/state', retryOnStatusCodeFailure: true, timeout: 5000 })
+  cy.request({ url: '/api/v1/session/state', retryOnStatusCodeFailure: true, timeout: 5000 })
     .its('status').should('eq', 200);
 }
 
@@ -23,9 +23,22 @@ export function openSettings(): void {
   cy.get('.settings-card').should('be.visible');
 }
 
+/** Open a specific settings section via the side menu (one section renders
+ *  at a time). Desktop viewport assumed (menu buttons hidden on mobile). */
+export function openSettingsSection(label: string): void {
+  openSettings();
+  cy.get('.settings-menu-btn', { timeout: 5000 }).contains(label).click();
+}
+
 /** Scope to the Models section — the settings page has TWO sortable lists. */
 export function modelsSection(): Cypress.Chainable<JQuery<HTMLElement>> {
   return cy.get('.settings-section:has(.settings-section-title:contains("Models"))');
+}
+
+/** Open the Models settings section and return its scope. */
+export function openModelsSection(): Cypress.Chainable<JQuery<HTMLElement>> {
+  openSettingsSection('Models');
+  return modelsSection().should('be.visible');
 }
 
 /** Open the sessions page via the header view menu. */

@@ -16,3 +16,6 @@ core.*
 # nested extension node_modules
 **/node_modules/*
 dist-backend
+
+# TUI smoke artifacts
+tui/smoke/out/

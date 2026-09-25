@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Modal } from './Modal';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 import type { ManagedUser, AllowedDir, DirAccess } from '../types';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
@@ -175,7 +176,7 @@ export const UsersCard: React.FC<{ username: string | null }> = ({ username }) =
 
   const reload = useCallback(async () => {
     try {
-      const res = await fetch(url('/api/users'));
+      const res = await fetch(url(API.users.list));
       const data = await res.json();
       if (data.success) setUsers(data.data || []);
       else setError(data.error || 'Failed to load users');
@@ -188,8 +189,8 @@ export const UsersCard: React.FC<{ username: string | null }> = ({ username }) =
 
   const save = useCallback(async (u: any, isNew: boolean): Promise<string | null> => {
     try {
-      const res = await fetch(url(isNew ? '/api/users' : `/api/users/${encodeURIComponent(u.username)}`), {
-        method: 'POST',
+      const res = await fetch(url(isNew ? API.users.list : API.users.item(u.username)), {
+        method: isNew ? 'POST' : 'PUT',
         headers: JSON_HEADERS,
         body: JSON.stringify(u),
       });
@@ -205,7 +206,7 @@ export const UsersCard: React.FC<{ username: string | null }> = ({ username }) =
   const remove = useCallback(async (name: string) => {
     if (!confirm(`Delete user "${name}"? Their sessions will be stopped.`)) return;
     try {
-      const res = await fetch(url(`/api/users/${encodeURIComponent(name)}`), { method: 'DELETE' });
+      const res = await fetch(url(API.users.item(name)), { method: 'DELETE' });
       const data = await res.json();
       if (!data.success) setError(data.error || 'Failed to delete user');
       else await reload();

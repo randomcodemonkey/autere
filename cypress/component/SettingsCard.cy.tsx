@@ -20,9 +20,9 @@ function stubFetch(settings: Record<string, any>) {
     win.fetch = (input: any, _init: any) => {
       const u = String(input);
       let data: any = { success: true };
-      if (u.includes('/api/settings/schema')) data = { success: true, data: schema };
-      else if (u.includes('/api/settings')) data = { success: true, data: settings };
-      else if (u.includes('/api/extensions/packages')) data = { success: true, data: { available: [] } };
+      if (u.includes('/api/v1/settings/schema')) data = { success: true, data: schema };
+      else if (u.includes('/api/v1/settings')) data = { success: true, data: settings };
+      else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
       return Promise.resolve({ json: () => Promise.resolve(data) } as any);
     };
   });
@@ -67,13 +67,13 @@ describe('SettingsCard per-model fields', () => {
       win.fetch = (input: any, _init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/settings/schema')) data = { success: true, data: perModelSchema };
-        else if (u.includes('/api/settings')) data = { success: true, data: {
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: perModelSchema };
+        else if (u.includes('/api/v1/settings')) data = { success: true, data: {
           enabledModels: ['z-ai/glm-5.3-flash', 'anthropic/claude-x'],
           modelThinkingLevels: { 'z-ai/glm-5.3-flash': 'high' },
           reserveTokensPercentByModel: { 'anthropic/claude-x': '10' },
         } };
-        else if (u.includes('/api/extensions/packages')) data = { success: true, data: { available: [] } };
+        else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
       };
     });
@@ -96,10 +96,10 @@ describe('SettingsCard per-model fields', () => {
       win.fetch = (input: any, init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/settings/schema')) data = { success: true, data: perModelSchema };
-        else if (u.includes('/api/settings') && init?.method === 'POST') { savedBody = JSON.parse(init.body); data = { success: true }; }
-        else if (u.includes('/api/settings')) data = { success: true, data: settings };
-        else if (u.includes('/api/extensions/packages')) data = { success: true, data: { available: [] } };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: perModelSchema };
+        else if (u.includes('/api/v1/settings') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); data = { success: true }; }
+        else if (u.includes('/api/v1/settings')) data = { success: true, data: settings };
+        else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
       };
     });
@@ -131,10 +131,10 @@ describe('SettingsCard number fields', () => {
       win.fetch = (input: any, init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/settings/schema')) data = { success: true, data: schemaData };
-        else if (u.includes('/api/settings') && init?.method === 'POST') data = { success: true };
-        else if (u.includes('/api/settings')) data = { success: true, data: settings };
-        else if (u.includes('/api/extensions/packages')) data = { success: true, data: { available: [] } };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: schemaData };
+        else if (u.includes('/api/v1/settings') && init?.method === 'PUT') data = { success: true };
+        else if (u.includes('/api/v1/settings')) data = { success: true, data: settings };
+        else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
       };
     });
@@ -153,13 +153,13 @@ describe('SettingsCard number fields', () => {
       win.fetch = (input: any, init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/settings/schema')) data = { success: true, data: numberSchema };
-        else if (u.includes('/api/settings') && init?.method === 'POST') {
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: numberSchema };
+        else if (u.includes('/api/v1/settings') && init?.method === 'PUT') {
           savedBody = JSON.parse(init.body);
           data = { success: true };
         }
-        else if (u.includes('/api/settings')) data = { success: true, data: { reserveTokensPercent: 0 } };
-        else if (u.includes('/api/extensions/packages')) data = { success: true, data: { available: [] } };
+        else if (u.includes('/api/v1/settings')) data = { success: true, data: { reserveTokensPercent: 0 } };
+        else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
       };
     });
@@ -183,11 +183,11 @@ describe('SettingsCard side menu', () => {
       win.fetch = (input: any, init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/settings/schema')) data = { success: true, data: twoSectionSchema };
-        else if (u.includes('/api/settings')) {
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: twoSectionSchema };
+        else if (u.includes('/api/v1/settings')) {
           if (init?.method === 'POST') { putSpy?.(init); return Promise.resolve({ json: () => Promise.resolve({ success: true, data }) } as any); }
           data = { success: true, data: { imageModel: '' } };
-        } else if (u.includes('/api/extensions/packages')) data = { success: true, data: { available: [] } };
+        } else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
       };
     });
@@ -196,10 +196,10 @@ describe('SettingsCard side menu', () => {
   it('renders category side menu and shows only the active section', () => {
     stubTwo();
     cy.mount(<SettingsCard sseConnected={true} />);
-    cy.get('.settings-menu-btn').should('have.length', 3); // 2 sections + Personas
+    cy.get('.settings-menu-btn').should('have.length', 4); // 2 sections + Personas + API Tokens
     cy.get('.settings-menu-btn').first().should('have.class', 'active');
     cy.get('.settings-content select.settings-input').should('exist');
-    cy.get('.settings-menu-btn').eq(2).click(); // alphabetical: Images, Personas, Sandbox
+    cy.get('.settings-menu-btn').eq(1).click(); // backend order: Images, Sandbox (+Personas, +API Tokens)
     cy.get('.settings-content input.settings-input').should('exist');
     cy.contains('.settings-content', 'Sandbox Image').should('exist');
     cy.contains('.settings-content', 'Image Model').should('not.exist');
@@ -210,7 +210,7 @@ describe('SettingsCard side menu', () => {
     stubTwo(post);
     cy.mount(<SettingsCard sseConnected={true} />);
     cy.get('.settings-save-btn').should('not.exist');
-    cy.get('.settings-menu-btn').eq(2).click();
+    cy.get('.settings-menu-btn').eq(1).click();
     cy.get('.settings-content input.settings-input').type('img-x');
     cy.get('.settings-save-btn').should('exist');
     cy.get('.settings-save-btn').click();
@@ -220,7 +220,7 @@ describe('SettingsCard side menu', () => {
 });
 
 describe('SettingsCard folderIgnores fields', () => {
-  const folderSchema = [
+  const _folderSchema = [
     {
       id: 'files',
       label: 'Files',
@@ -258,5 +258,50 @@ describe('SettingsCard folderIgnores fields', () => {
     cy.get('.sortable-list-item').should('have.length', 1);
     cy.get('.sortable-list-item input[type=checkbox]').should('be.checked').and('have.length', 2);
     cy.get('.sortable-list-add .sortable-list-input').should('have.value', '');
+  });
+});
+
+describe('SettingsCard API tokens section', () => {
+  it('stays on API Tokens after clicking it (no reset to first schema section)', () => {
+    cy.window({ log: false }).then((win) => {
+      win.fetch = (input: any, _init: any) => {
+        const u = String(input);
+        let data: any = { success: true };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: schema };
+        else if (u.includes('/api/v1/settings')) data = { success: true, data: {} };
+        else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
+        else if (u.endsWith('/api/v1/tokens')) data = { success: true, data: [] };
+        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
+      };
+    });
+    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.contains('.settings-menu-btn', 'API Tokens').click();
+    // the validity-reset effect used to snap selection back to the first
+    // schema section (e.g. 9router/Images) here
+    cy.contains('.settings-menu-btn', 'API Tokens').should('have.class', 'active');
+    cy.contains('.settings-section-title', 'API Tokens').should('exist');
+    cy.contains('Create token').should('exist');
+  });
+
+  it('renders schema sections in backend order (no client-side sort)', () => {
+    const ordered = [
+      { id: 'zeta', label: 'Zulu', fields: [{ key: 'a', label: 'A', type: 'text' as const }] },
+      { id: 'alpha', label: 'Alpha', fields: [{ key: 'b', label: 'B', type: 'text' as const }] },
+    ];
+    cy.window({ log: false }).then((win) => {
+      win.fetch = (input: any, _init: any) => {
+        const u = String(input);
+        let data: any = { success: true };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: ordered };
+        else if (u.includes('/api/v1/settings')) data = { success: true, data: {} };
+        else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
+        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
+      };
+    });
+    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.get('.settings-menu-btn').then(($btns) => {
+      const labels = [...$btns].map((b) => b.textContent);
+      expect(labels).to.deep.eq(['Zulu', 'Alpha', 'Personas', 'API Tokens']);
+    });
   });
 });

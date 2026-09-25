@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 
 export function useAuth() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -11,7 +12,7 @@ export function useAuth() {
 
   const checkAuthStatus = useCallback(async (): Promise<boolean> => {
     try {
-      const res = await fetch(url('/api/auth/status'));
+      const res = await fetch(url(API.auth.status));
       const data = await res.json();
       if (data.success && data.data.authEnabled && !data.data.authenticated) {
         setAuthEnabled(true);
@@ -43,7 +44,7 @@ export function useAuth() {
       return false;
     }
     try {
-      const res = await fetch(url('/api/auth/login'), {
+      const res = await fetch(url(API.auth.login), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user, password }),
@@ -69,7 +70,7 @@ export function useAuth() {
 
   const logout = useCallback(async () => {
     try {
-      await fetch(url('/api/auth/logout'), { method: 'POST' });
+      await fetch(url(API.auth.logout), { method: 'POST' });
     } catch {}
     setAuthenticated(false);
   }, []);

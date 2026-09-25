@@ -34,13 +34,13 @@ describe('NotFound', () => {
 
 describe('RootRedirect', () => {
   it('shows a loading indicator while resolving sessions', () => {
-    cy.intercept('GET', '**/api/sessions', () => new Promise(() => {})).as('sessions'); // never resolves
+    cy.intercept('GET', '**/api/v1/sessions', () => new Promise(() => {})).as('sessions'); // never resolves
     renderAt('/', <RootRedirect />);
     cy.contains('Loading…').should('exist');
   });
 
   it('redirects to the most recent session', () => {
-    cy.intercept('GET', '**/api/sessions', {
+    cy.intercept('GET', '**/api/v1/sessions', {
       success: true,
       data: [{ id: 'session-abc' }, { id: 'session-def' }],
     }).as('sessions');
@@ -50,8 +50,8 @@ describe('RootRedirect', () => {
   });
 
   it('navigates to the newly created session when no sessions exist', () => {
-    cy.intercept('GET', '**/api/sessions', { success: true, data: [] }).as('sessions');
-    cy.intercept('POST', '**/api/new-session', {
+    cy.intercept('GET', '**/api/v1/sessions', { success: true, data: [] }).as('sessions');
+    cy.intercept('POST', '**/api/v1/sessions', {
       success: true,
       navigateUrl: '/session/new-session-1',
     }).as('newSession');
@@ -62,8 +62,8 @@ describe('RootRedirect', () => {
   });
 
   it('shows an error when session creation fails', () => {
-    cy.intercept('GET', '**/api/sessions', { success: true, data: [] }).as('sessions');
-    cy.intercept('POST', '**/api/new-session', {
+    cy.intercept('GET', '**/api/v1/sessions', { success: true, data: [] }).as('sessions');
+    cy.intercept('POST', '**/api/v1/sessions', {
       statusCode: 500,
       body: { success: false },
     }).as('newSession');
@@ -74,7 +74,7 @@ describe('RootRedirect', () => {
   });
 
   it('shows an error when the sessions fetch fails', () => {
-    cy.intercept('GET', '**/api/sessions', { statusCode: 500, body: 'error' }).as('sessions');
+    cy.intercept('GET', '**/api/v1/sessions', { statusCode: 500, body: 'error' }).as('sessions');
     renderAt('/', <RootRedirect />);
     cy.wait('@sessions');
     cy.contains('Failed to load sessions.').should('exist');

@@ -53,9 +53,9 @@ describe('SettingsCard focus retention', () => {
   };
 
   beforeEach(() => {
-    cy.intercept('GET', '**/api/settings/schema', { success: true, data: schema });
-    cy.intercept('GET', '**/api/settings', { success: true, data: { name: '', dirs: ['one'] } });
-    cy.intercept('GET', '**/api/extensions/packages', { success: true, data: { available: [] } });
+    cy.intercept('GET', '**/api/v1/settings/schema', { success: true, data: schema });
+    cy.intercept('GET', '**/api/v1/settings', { success: true, data: { name: '', dirs: ['one'] } });
+    cy.intercept('GET', '**/api/v1/extensions/packages', { success: true, data: { available: [] } });
   });
 
   it('does not remount field inputs across a re-render', () => {
@@ -93,7 +93,7 @@ describe('SettingsCard focus retention', () => {
     cy.get('.settings-input').first().click().type('hello');
     cy.get('.settings-save-btn').should('exist');
     // Saving clears the dirty state — button disappears again.
-    cy.intercept('POST', '**/api/settings', { success: true }).as('save');
+    cy.intercept('PUT', '**/api/v1/settings', { success: true }).as('save');
     cy.get('.settings-save-btn').click();
     cy.wait('@save');
     cy.get('.settings-save-btn').should('not.exist');
@@ -103,7 +103,7 @@ describe('SettingsCard focus retention', () => {
   it('tells the user when the restart is deferred to turn end', () => {
     cy.mount(<Harness />);
     cy.get('.settings-input').first().should('exist').click().type('hello');
-    cy.intercept('POST', '**/api/settings', { success: true, deferred: true }).as('save');
+    cy.intercept('PUT', '**/api/v1/settings', { success: true, deferred: true }).as('save');
     cy.get('.settings-save-btn').click();
     cy.wait('@save');
     cy.get('.settings-saved').should('contain', 'restarts when the current turn ends');

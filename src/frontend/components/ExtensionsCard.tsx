@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useCardState } from '../hooks/useCardState';
 import { Modal } from './Modal';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 import type { ExtensionInfo } from '../types';
 import type { ExtensionSection } from '../types';
 import { formatTimestamp } from './ChatMessage';
@@ -29,7 +30,7 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
   // per-request injection point for the real stats.
   const [patched, setPatched] = useState<ExtensionInfo[] | null>(null);
   const fetchPatched = useCallback(() => {
-    fetch(url('/api/extensions'))
+    fetch(url(API.extensions.root))
       .then((r) => r.json())
       .then((res) => {
         if (res?.success && Array.isArray(res.data)) setPatched(res.data);

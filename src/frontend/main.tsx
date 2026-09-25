@@ -12,7 +12,7 @@ import './styles.scss';
 const origFetch = window.fetch.bind(window);
 window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
   const target = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-  const api = target.includes('/api/') || target.endsWith('/events');
+  const api = target.includes('/api/');
   if (api) {
     const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
     headers.set(CLIENT_ID_HEADER, getClientId());

@@ -7,7 +7,7 @@ function stubApi() {
   cy.stub(window, 'fetch').callsFake((input: RequestInfo | URL) => {
     const u = String(input);
     let body: any = { success: true, data: [] };
-    if (u.includes('/api/status')) body = { success: true, data: { autereStartedAt: Date.now() - 65000, piStartedAt: Date.now() - 10000 } };
+    if (u.includes('/api/v1/status')) body = { success: true, data: { autereStartedAt: Date.now() - 65000, piStartedAt: Date.now() - 10000 } };
     return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })) as any;
   });
 }
@@ -84,7 +84,7 @@ describe('StatusCard', () => {
 
   it('shows em dashes for uptime when processes are not running', () => {
     cy.stub(window, 'fetch').callsFake((input: RequestInfo | URL) => {
-      const body = String(input).includes('/api/status')
+      const body = String(input).includes('/api/v1/status')
         ? { success: true, data: { autereStartedAt: null, piStartedAt: null } }
         : { success: true, data: [] };
       return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })) as any;

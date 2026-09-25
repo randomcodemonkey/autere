@@ -63,7 +63,7 @@ export class ProcessManager {
    * sessionFile=null spawns a fresh session (pi picks id/file; the entry is
    * filed under the resolved file once start() completes).
    */
-  async getOrCreate(user: string, sessionFile: string | null): Promise<UserSession> {
+  async getOrCreate(user: string, sessionFile: string | null, opts: { cwd?: string } = {}): Promise<UserSession> {
     if (sessionFile) {
       const existing = this.sessions.get(user)?.get(sessionFile);
       if (existing && existing.isRunning) {
@@ -84,6 +84,7 @@ export class ProcessManager {
         provider: this.options.provider,
         model: this.options.model,
         args: this.options.args,
+        cwd: opts.cwd,
       }, this.defaultIdleTimeoutMs);
 
       session.onIdle(() => {

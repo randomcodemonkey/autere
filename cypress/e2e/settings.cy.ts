@@ -3,7 +3,7 @@
  * (add/remove); the mutations net out like they did in the monolith.
  */
 
-import { waitForBackend, warmUpSession, openSettings, modelsSection } from './support/helpers';
+import { waitForBackend, warmUpSession, openSettings, openSettingsSection, openModelsSection, modelsSection } from './support/helpers';
 
 describe('autere — settings', () => {
   before(function() { this.timeout(60000); waitForBackend(); warmUpSession(); });
@@ -21,7 +21,7 @@ describe('autere — settings', () => {
   });
 
   it('shows Models section with sortable list', () => {
-    openSettings();
+    openModelsSection();
     cy.get('.settings-section-title').contains('Models').should('exist');
     modelsSection().find('.sortable-list').should('exist');
   });
@@ -32,31 +32,31 @@ describe('autere — settings', () => {
   });
 
   it('shows enabled models in sortable list', () => {
-    openSettings();
+    openModelsSection();
     modelsSection().find('.sortable-list-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
   });
 
   it('add model input is visible on its own row', () => {
-    openSettings();
+    openModelsSection();
     modelsSection().find('.sortable-list-add').should('exist');
     modelsSection().find('.sortable-list-add .sortable-list-input').should('be.visible');
     modelsSection().find('.sortable-list-add-btn').should('contain', 'Add Model');
   });
 
   it('add model button is disabled when input is empty', () => {
-    openSettings();
+    openModelsSection();
     modelsSection().find('.sortable-list-add .sortable-list-input').should('have.value', '');
     modelsSection().find('.sortable-list-add-btn').should('be.disabled');
   });
 
   it('add model button enables when input has text', () => {
-    openSettings();
+    openModelsSection();
     modelsSection().find('.sortable-list-add .sortable-list-input').type('test/model-v1');
     modelsSection().find('.sortable-list-add-btn').should('not.be.disabled');
   });
 
   it('can add a model to the list', () => {
-    openSettings();
+    openModelsSection();
 
     // Get initial count
     modelsSection().find('.sortable-list-item').then(($items) => {
@@ -78,7 +78,7 @@ describe('autere — settings', () => {
   });
 
   it('can add multiple models sequentially', () => {
-    openSettings();
+    openModelsSection();
 
     modelsSection().find('.sortable-list-item').then(($items) => {
       const initialCount = $items.length;
@@ -100,7 +100,7 @@ describe('autere — settings', () => {
   });
 
   it('can remove a model from the list', () => {
-    openSettings();
+    openModelsSection();
 
     // Net-zero mutation: add a fixture model, then remove exactly that one —
     // the shared env's enabled-models list must be unchanged by this spec.
@@ -120,7 +120,7 @@ describe('autere — settings', () => {
   });
 
   it('can focus and interact with model entry inputs', () => {
-    openSettings();
+    openModelsSection();
 
     cy.get('.sortable-list-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
 
@@ -131,7 +131,7 @@ describe('autere — settings', () => {
   });
 
   it('prevents adding duplicate models', () => {
-    openSettings();
+    openModelsSection();
 
     modelsSection().find('.sortable-list-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
 
@@ -161,10 +161,10 @@ describe('autere — settings', () => {
   });
 
   it('save button is visible', () => {
-    openSettings();
-    // Floating save action only appears while there are unsaved changes
+    openSettingsSection('9Router');
+    // Save action only appears while there are unsaved changes
     cy.get('input.settings-input').first().click().type('x');
-    cy.get('.settings-save-float .btn-primary').should('contain', 'Save Settings');
+    cy.get('.settings-save-btn', { timeout: 5000 }).should('contain', 'Save Settings');
   });
 
   it('Sessions view button opens the sessions page', () => {

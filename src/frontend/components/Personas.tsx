@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Modal } from './Modal';
 import { useCardState } from '../hooks/useCardState';
 import { url } from '../base-path';
+import { API } from '../api-paths';
 import type { Persona } from '../types';
 
 /**
@@ -13,7 +14,7 @@ let personasCache: Persona[] = [];
 const personaSubscribers = new Set<(p: Persona[]) => void>();
 
 function reloadPersonas(): Promise<Persona[]> {
-  return fetch(url('/api/personas'))
+  return fetch(url(API.personas.root))
     .then((r) => r.json())
     .then((d) => {
       if (d.success) {
@@ -39,7 +40,7 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
 /**
  * Agent card section: shows the current session's persona and allows
- * changing it for the ACTIVE session. Changing POSTs /api/set-persona —
+ * changing it for the ACTIVE session. Changing PUTs the session/persona —
  * the backend rebinds and broadcasts status; the extension injects the
  * new persona into the LLM context on the next call.
  */
@@ -51,7 +52,7 @@ export const PersonaSection: React.FC<{ persona: { id: string; name: string } | 
   const change = useCallback(async (id: string) => {
     setChanging(true);
     try {
-      await fetch(url('/api/set-persona'), { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ personaId: id || null }) });
+      await fetch(url(API.session.persona), { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ personaId: id || null }) });
     } catch {}
     setChanging(false);
   }, []);
@@ -117,7 +118,7 @@ export const PersonasSettingsSection: React.FC = () => {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(url('/api/personas'), { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ name, description, prompt }) });
+      const res = await fetch(url(API.personas.root), { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ name, description, prompt }) });
       const data = await res.json();
       if (data.success) {
         setCreating(false);
@@ -135,7 +136,7 @@ export const PersonasSettingsSection: React.FC = () => {
   const remove = useCallback(async (id: string) => {
     if (!window.confirm('Delete this persona?')) return;
     try {
-      await fetch(url('/api/personas/delete'), { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ id }) });
+      await fetch(url(API.personas.item(id)), { method: 'DELETE', headers: JSON_HEADERS });
       reload();
     } catch {}
   }, [reload]);
@@ -145,7 +146,7 @@ export const PersonasSettingsSection: React.FC = () => {
     setGenerating(true);
     setError(null);
     try {
-      const res = await fetch(url('/api/personas/generate'), { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ text }) });
+      const res = await fetch(url(API.personas.generate), { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ text }) });
       const data = await res.json();
       if (data.success && data.data?.prompt) onResult(data.data.prompt);
       else setError(data.error || 'Failed to generate prompt');
@@ -166,10 +167,10 @@ export const PersonasSettingsSection: React.FC = () => {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(url('/api/personas'), {
-        method: 'POST',
+      const res = await fetch(url(details.id ? API.personas.item(details.id) : API.personas.root), {
+        method: details.id ? 'PUT' : 'POST',
         headers: JSON_HEADERS,
-        body: JSON.stringify({ id: details.id, name: details.name, description: details.description, prompt: detailsPrompt }),
+        body: JSON.stringify({ name: details.name, description: details.description, prompt: detailsPrompt }),
       });
       const data = await res.json();
       if (data.success) {

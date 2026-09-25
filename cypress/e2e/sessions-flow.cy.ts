@@ -23,12 +23,12 @@ describe('autere — session flow', () => {
       cy.get('.status-badge', { timeout: 30000 }).should('not.contain', 'Working');
       cy.get('.status-badge', { timeout: 30000 }).should('not.contain', 'Compacting');
 
-      // Open the sessions modal
+      // Open the sessions page, then the new-session form modal
       openSessionsModal();
-      cy.get('.modal-session .btn-primary').should('be.visible').and('not.be.disabled');
-      cy.get('.modal-session .btn-primary').click();
+      cy.get('.btn-primary').contains('New Session').should('be.visible').and('not.be.disabled');
+      cy.get('.btn-primary').contains('New Session').click();
       // The form opens inside the modal; create with the prefilled name
-      cy.get('.session-create-btn').should('be.visible').click();
+      cy.get('.session-create-btn', { timeout: 5000 }).should('be.visible').click();
 
       // Should eventually navigate to a new session (loading page may be too fast to catch)
       cy.url({ timeout: 5000 }).should('match', /\/session\/[^/]+$/);
@@ -75,17 +75,15 @@ describe('autere — session flow', () => {
     });
 
     it('session list shows sessions with id and name', () => {
-      cy.get('.session-badge').click();
+      openSessionsModal();
       // At least the current session must be listed
       cy.get('.session-item', { timeout: 5000 }).should('have.length.at.least', 1);
       cy.get('.session-item').first().find('.session-item-id').should('exist');
-      cy.get('.modal-session .modal-close').click();
     });
 
     it('current session is highlighted in list', () => {
-      cy.get('.session-badge').click();
+      openSessionsModal();
       cy.get('.session-item.active', { timeout: 5000 }).should('exist');
-      cy.get('.modal-session .modal-close').click();
     });
 
     it('can abort operation from the status card', function() {
@@ -115,9 +113,10 @@ describe('autere — session flow', () => {
       openSessionsModal();
       cy.get('.btn-primary').contains('New Session').click();
       // The form opens inside the modal; create with the prefilled name
-      cy.get('.session-create-btn').should('be.visible').click();
-      // Modal must close once the new session is ready
-      cy.get('.modal-session', { timeout: 10000 }).should('not.be.visible');
+      cy.get('.session-create-btn', { timeout: 5000 }).should('be.visible').click();
+      // The sessions view (with its form modal) closes once the new session
+      // is ready — navigation unmounts it
+      cy.get('.modal-session', { timeout: 10000 }).should('not.exist');
       // And we end up on a fresh session view
       cy.get('.stream-card', { timeout: 10000 }).should('exist');
     });
@@ -132,9 +131,10 @@ describe('autere — session flow', () => {
         expect($items.length, 'at least one other session exists').to.be.greaterThan(0);
         const targetId = $items.first().find('.session-item-id').text().trim();
         cy.wrap($items.first()).click();
-        // URL must change to the target session and the modal must close
+        // URL must change to the target session; switching unmounts the
+        // sessions view
         cy.url({ timeout: 10000 }).should('include', `/session/${targetId}`);
-        cy.get('.modal-session').should('not.be.visible');
+        cy.get('.sessions-page').should('not.exist');
       });
     });
   });
@@ -155,15 +155,17 @@ describe('autere — session flow', () => {
       cy.get('.stream-role-user', { timeout: 5000 }).should('contain', 'user');
       cy.get('.stream-text').should('contain', uniqueMsg);
 
-      // Open the sessions modal and abort
-      cy.get('.session-badge').click();
-      cy.get('.modal-session').should('be.visible');
-      cy.get('.btn-abort', { timeout: 5000 }).should('be.visible').click();
+      // The sessions view opens while the agent works (viewing, not
+      // switching) — and closes back to chat
+      openSessionsModal();
+      cy.get('.view-btn-chat').click();
+      cy.get('.sessions-page').should('not.exist');
+
+      // Abort the turn from the status card
+      cy.contains('Abort Operation', { timeout: 5000 }).click({ force: true });
 
       // Agent should leave the Working state
       cy.get('.status-badge', { timeout: 30000 }).should('not.contain', 'Working');
-      cy.get('.modal-session .modal-close').click();
-      cy.get('.modal-session').should('not.be.visible');
     });
   });
 });

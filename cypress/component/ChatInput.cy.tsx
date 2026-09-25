@@ -43,7 +43,7 @@ describe('ChatInput slash commands', () => {
   });
 
   it('/help shows the available commands without contacting the backend', () => {
-    cy.intercept('POST', '**/api/send', { statusCode: 500, body: { success: false } }).as('send');
+    cy.intercept('POST', '**/api/v1/session/messages', { statusCode: 500, body: { success: false } }).as('send');
     cy.mount(<ChatInput onNewSession={() => {}} />);
     cy.get('.chat-input').type('/help{enter}');
     cy.get('.chat-help-box').should('be.visible');
@@ -64,7 +64,7 @@ describe('ChatInput slash commands', () => {
   });
 
   it('regular messages do not trigger commands and go to the backend', () => {
-    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.intercept('POST', '**/api/v1/session/messages', { success: true }).as('send');
     cy.mount(<ChatInput onNewSession={() => {}} />);
     cy.get('.chat-input').type('hello world{enter}');
     cy.wait('@send');
@@ -106,7 +106,7 @@ describe('ChatInput image attachments', () => {
   });
 
   it('sends images with the message and clears them after send', () => {
-    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.intercept('POST', '**/api/v1/session/messages', { success: true }).as('send');
     cy.mount(<ChatInput onNewSession={() => {}} />);
     cy.get('.chat-input').focus();
     attachPng();
@@ -121,7 +121,7 @@ describe('ChatInput image attachments', () => {
   });
 
   it('Send is enabled with an image but no text', () => {
-    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.intercept('POST', '**/api/v1/session/messages', { success: true }).as('send');
     cy.mount(<ChatInput onNewSession={() => {}} />);
     cy.get('.chat-input').focus();
     attachPng();
@@ -165,7 +165,7 @@ describe('ChatInput image attachments', () => {
 describe('ChatInput first-click send (expanded state regression)', () => {
   it('sends on the FIRST click while the input is expanded (button position stable)', () => {
     cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={false} />);
-    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.intercept('POST', '**/api/v1/session/messages', { success: true }).as('send');
     cy.get('.chat-input').focus().type('hello');
     cy.get('.chat-input-container').should('have.class', 'expanded');
     // Capture the button's position while expanded, then click it.
@@ -184,7 +184,7 @@ describe('ChatInput first-click send (expanded state regression)', () => {
 
   it('rapid double-click sends only once', () => {
     cy.mount(<ChatInput onNewSession={cy.stub()} isStreaming={false} />);
-    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.intercept('POST', '**/api/v1/session/messages', { success: true }).as('send');
     cy.get('.chat-input').focus().type('hello');
     cy.get('.chat-send-btn').click();
     // After the first click the input clears and the button disables — a
@@ -208,7 +208,7 @@ describe('ChatInput draft persistence', () => {
     cy.get('.chat-input').should('have.value', '');
 
     // Sending clears the draft.
-    cy.intercept('POST', '**/api/send', { success: true }).as('send');
+    cy.intercept('POST', '**/api/v1/session/messages', { success: true }).as('send');
     cy.get('.chat-input').type('hi{enter}');
     cy.wait('@send');
     cy.mount(<ChatInput onNewSession={cy.stub()} sessionId="s2" />);

@@ -5,12 +5,12 @@
  * - chat: converse and view (send/abort/compact/switch sessions, read state)
  * - control: everything except restarting autere itself (settings, personas
  *   library, scheduled tasks, session deletion)
- * - admin: everything, including /api/restart-backend
+ * - admin: everything, including backend restart
  *
  * The admin account is bootstrapped from AUTERE_ADMIN_USER /
- * AUTERE_ADMIN_PASSWORD (defaults "admin"/"admin"); the legacy shared
- * "user" account (monitor password) maps to "control" and only exists when
- * a monitor password is configured.
+ * AUTERE_ADMIN_PASSWORD (defaults "admin"/"admin"); the shared "user"
+ * account (monitor password) maps to "control" and only exists when a
+ * monitor password is configured.
  */
 
 import { IncomingMessage, ServerResponse } from 'http';
@@ -38,7 +38,14 @@ export type { Role } from './users.js';
 interface TokenEntry {
   expiry: number;
   user: string;
+  /** API tokens only: display name + stable id + creation time (login-session tokens carry none) */
+  name?: string;
+  id?: string;
+  createdAt?: number;
 }
+
+/** API tokens outlive login sessions by design — effectively non-expiring */
+export const API_TOKEN_EXPIRY_MS = 10 * 365 * 24 * 3600 * 1000;
 
 const ROLE_LEVEL: Record<Role, number> = { chat: 1, control: 2, admin: 3 };
 
@@ -69,7 +76,7 @@ export function loadAuthTokens() {
         if (typeof e === 'number') {
           authTokens.set(token, { expiry: e, user: 'admin' });
         } else if (e && typeof e === 'object' && typeof e.expiry === 'number') {
-          authTokens.set(token, { expiry: e.expiry, user: e.user || 'admin' });
+          authTokens.set(token, { expiry: e.expiry, user: e.user || 'admin', name: e.name, id: e.id, createdAt: e.createdAt });
         }
       }
       // Prune expired tokens
@@ -90,7 +97,7 @@ export function saveAuthTokens() {
     const dir = dirname(AUTH_TOKENS_FILE);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const data = Object.fromEntries(
-      [...authTokens.entries()].map(([token, entry]) => [token, { expiry: entry.expiry, user: entry.user }])
+      [...authTokens.entries()].map(([token, entry]) => [token, { expiry: entry.expiry, user: entry.user, name: entry.name, id: entry.id, createdAt: entry.createdAt }])
     );
     const tmp = join(dir, `.auth-tmp-${randomUUID()}`);
     writeFileSync(tmp, JSON.stringify(data), 'utf-8');
@@ -171,40 +178,8 @@ export function verifyCredentials(user: string, password: string): boolean {
   return verifyUser(user, password);
 }
 
-/**
- * Minimum role required for an API call. Everything not listed is chat-level
- * (conversing and viewing); global/config mutations need control, restarting
- * autere itself needs admin.
- */
-const CONTROL_ROUTES = new Set([
-  'POST /api/settings',
-  'POST /api/personas',
-  'POST /api/personas/delete',
-  'POST /api/personas/generate',
-  'POST /api/scheduler/tasks',
-  'DELETE /api/scheduler/tasks', // prefix: task ids follow in the path
-  'POST /api/sessions/delete',
-  'POST /api/extensions/packages',
-]);
-
-const ADMIN_ROUTES = new Set([
-  'POST /api/restart-backend',
-  'GET /api/users',
-  'POST /api/users',
-]);
-
-export function requiredRole(method: string, pathname: string): Role {
-  const key = `${method} ${pathname}`;
-  if (ADMIN_ROUTES.has(key)) return 'admin';
-  if (CONTROL_ROUTES.has(key)) return 'control';
-  if (pathname.startsWith('/api/scheduler/tasks/') && method === 'DELETE') return 'control';
-  // File browser mutations — paths are additionally restricted to the
-  // user's allowedDirs inside the handlers (files.ts)
-  if (pathname.startsWith('/api/browse/') && method === 'POST') return 'control';
-  // /api/users/<name> update (POST) and delete (DELETE) — admin
-  if (pathname.startsWith('/api/users/')) return 'admin';
-  return 'chat';
-}
+// Role model note: minimum roles are declared per route in routes.ts
+// (chat < control < admin); this module only owns the role hierarchy.
 
 export function requireAuth(req: IncomingMessage, res: ServerResponse): boolean {
   if (checkAuth(req)) return false;
@@ -260,6 +235,41 @@ export function removeUserTokens(user: string): string[] {
 /** Add auth token for a user */
 export function addAuthToken(token: string, user: string) {
   authTokens.set(token, { expiry: Date.now() + AUTH_TOKEN_EXPIRY_MS, user });
+}
+
+// ── API tokens (named, long-lived, per-user; used by TUI / scripts) ──
+
+export function listApiTokens(user: string) {
+  return [...authTokens.entries()]
+    .filter(([, e]) => e.user === user && e.id)
+    .map(([token, e]) => ({
+      id: e.id,
+      name: e.name || 'unnamed',
+      createdAt: e.createdAt,
+      expiry: e.expiry,
+      /** Only the first 8 chars — never expose the full token after creation */
+      prefix: token.slice(0, 8) + '…',
+    }))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+export function createApiToken(user: string, name: string): { id: string; token: string } {
+  const token = generateToken();
+  const id = randomUUID();
+  authTokens.set(token, { expiry: Date.now() + API_TOKEN_EXPIRY_MS, user, name, id, createdAt: Date.now() });
+  saveAuthTokens();
+  return { id, token };
+}
+
+export function deleteApiToken(user: string, id: string): boolean {
+  for (const [token, e] of authTokens) {
+    if (e.user === user && e.id === id) {
+      authTokens.delete(token);
+      saveAuthTokens();
+      return true;
+    }
+  }
+  return false;
 }
 
 export function removeAuthToken(token: string) {
