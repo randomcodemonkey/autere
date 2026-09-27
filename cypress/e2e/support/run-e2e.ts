@@ -18,7 +18,7 @@ async function main() {
     await startBackend();
     console.log(`[run-e2e] Running cypress e2e tests against port ${TEST_PORT}...`);
     const envsDir = getTestEnvsDir();
-    execSync(`npx cypress run --e2e --config baseUrl=http://localhost:${TEST_PORT}`, {
+    execSync(`npx cypress run --e2e --config baseUrl=http://localhost:${TEST_PORT} ${process.env.SPEC ? `--spec ${process.env.SPEC}` : `""`}`, {
       cwd: process.cwd(),
       stdio: 'inherit',
       // Tests read this to locate the isolated pi env (seed/reset data files)

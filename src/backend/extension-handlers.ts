@@ -282,7 +282,7 @@ const piImagesHandler: ExtensionHandler = {
 
   async enrich(info: ExtensionInfo): Promise<ExtensionInfo> {
     const { getRouterConfig, fetchImageModels } = await import('./image-models.js');
-    const config = getRouterConfig();
+    const config = getRouterConfig('admin');
     info.configPath = NINE_ROUTER_CONFIG_PATH;
     info.hasConfig = existsSync(NINE_ROUTER_CONFIG_PATH);
 
@@ -306,15 +306,6 @@ const piImagesHandler: ExtensionHandler = {
       }
       info.status = 'ok';
       info.statusText = 'Available';
-      info.sections = [
-        {
-          header: 'Available Image Models',
-          items: models.map((m) => ({
-            'Model': m.id,
-            'Selected': selectedModel === m.id ? 'yes' : '',
-          })),
-        },
-      ];
       return info;
     } catch (err: any) {
       info.status = 'error';

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import Editor, { loader } from '@monaco-editor/react';
 import { renderEditDiff } from './ChatMessage';
 // Editor core + Monarch syntax highlighting for all bundled basic languages,
@@ -69,11 +70,21 @@ const parentDir = (p: string) => p.slice(0, p.lastIndexOf('/')) || p;
 const listUrl = (reposMode: boolean | undefined, dir: string) =>
   reposMode ? API.git.list(dir) : API.browse.list(dir);
 
-// ── Files/Repositories tab: lazy file tree + Monaco viewer/editor ──
 // Repositories view (reposMode): roots come from the configured git
 // folders and the detail pane shows repo status/remotes/log for the root,
 // plus a Commits tab per file.
-const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[]; reposMode?: boolean }> = ({ canWrite, changedPaths, reposMode }) => {
+// Deep-link state arrives via props (EditsPage mirrors it to URL query
+// params): initialSelected = linked file path, initialDetailRoot = linked
+// repo whose detail pane should open. State changes call onParam() so the
+// URL tracks navigation (browser back/forward restores it).
+const FileBrowser: React.FC<{
+  canWrite: boolean;
+  changedPaths: string[];
+  reposMode?: boolean;
+  initialSelected?: string | null;
+  initialDetailRoot?: string | null;
+  onParam?: (patch: { file?: string | null; repo?: string | null }) => void;
+}> = ({ canWrite, changedPaths, reposMode, initialSelected, initialDetailRoot, onParam }) => {
   const [roots, setRoots] = useState<FileRoot[]>([]);
   const rootIsRepo = useMemo(
     () => new Map(reposMode ? (roots as RepoEntry[]).map((r) => [r.path, r.isRepo]) : []),
@@ -157,9 +168,47 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[]; reposMo
       setRoots(r);
       if (reposMode) refreshStatuses(r.filter((x: RepoEntry) => x.isRepo).map((x: RepoEntry) => x.path));
       // Auto-expand the sole fallback root ($HOME) so the tree isn't empty
-      if (r.length === 1) toggleDir(r[0].path);
+      if (r.length === 1 && !initialSelected) toggleDir(r[0].path);
+      // Deep link: expand the ancestors of the linked file/repo so the tree
+      // is open at the linked spot, not the collapsed initial state.
+      const target = initialSelected || initialDetailRoot || null;
+      if (target) {
+        const root = r.find((x: FileRoot) => target === x.path || target.startsWith(x.path + '/'));
+        if (root) {
+          const segs = target.slice(root.path.length).split('/').filter(Boolean);
+          const expandedSet = new Set<string>([root.path]);
+          const dirs = [root.path];
+          for (let k = 1; k < segs.length; k++) {
+            const p = `${root.path}/${segs.slice(0, k).join('/')}`;
+            expandedSet.add(p);
+            dirs.push(p);
+          }
+          setExpanded(expandedSet);
+          dirs.forEach(loadDir);
+        } else {
+          // Linked path's root vanished — fall back to the default state
+          onParam?.({ file: null, repo: null });
+        }
+      }
     }).catch((e) => setError(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reposMode]);
+
+  // Deep-link restore: once roots are loaded, open the linked file / repo.
+  // One-shot — later state changes are user navigation.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    const pending = (initialSelected || initialDetailRoot) && roots.length > 0;
+    if (!pending || restoredRef.current) return;
+    restoredRef.current = true;
+    if (reposMode && initialDetailRoot && rootIsRepo.get(initialDetailRoot)) {
+      openRepoStatus(initialDetailRoot, true);
+    }
+    if (initialSelected) {
+      (reposMode ? openFileInRepo : openFile)(initialSelected, true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roots, reposMode]);
 
   const loadDir = useCallback(async (dir: string) => {
     try {
@@ -189,7 +238,7 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[]; reposMo
     return best?.access ?? 'read';
   }, [roots]);
 
-  const openFile = useCallback(async (p: string) => {
+  const openFile = useCallback(async (p: string, isRestore = false) => {
     setSelected(p);
     setError(null);
     setRepoDetail(null);
@@ -201,15 +250,25 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[]; reposMo
       setReadInfo({ binary: d.binary, truncated: d.truncated });
       setContent(d.binary ? '' : d.content);
       setBaseline(d.binary ? '' : d.content);
+      onParam?.({ file: p, repo: null });
     } catch (e: any) {
-      setError(e.message);
+      // Missing file (stale deep link or deleted after opening): fall back
+      // to the default state instead of a dead selection.
+      if (isRestore || /\b404\b|ENOENT/i.test(e.message)) {
+        setSelected(null);
+        setBaseline(null);
+        setContent('');
+        setReadInfo(null);
+        onParam?.({ file: null, repo: null });
+      }
+      if (!isRestore) setError(e.message);
       setBaseline(null);
     }
     // Opening a file counts as repo interaction — refresh its repo's status
     // in the background if the cache is stale
     const root = roots.find((r) => p === r.path || p.startsWith(r.path + '/'));
     if (reposMode && root) refreshStatuses([root.path]);
-  }, [reposMode, roots, refreshStatuses]);
+  }, [reposMode, roots, refreshStatuses, onParam]);
 
   // Git status (repositories view): full absolute path → 'modified'|'removed'|'created'
   // from the worktree status letter. Ancestor dirs inherit the status of their
@@ -266,11 +325,11 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[]; reposMo
   }, [changeStatus]);
 
   // Repositories view: file click → editor + Diff (changed files) + Commits
-  const openFileInRepo = useCallback(async (p: string) => {
+  const openFileInRepo = useCallback(async (p: string, isRestore = false) => {
     const changed = gitStatusFor(p) !== null;
     setDetailTab('editor');
     setDiffText(null);
-    openFile(p);
+    openFile(p, isRestore);
     if (changed) {
       // Changed file → the Diff tab becomes the default view
       setDetailTab('diff');
@@ -299,9 +358,9 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[]; reposMo
     toggleDir(root);
   }, [toggleDir, rootIsRepo, refreshStatuses]);
 
-  // Status button: open the repo details pane; refresh its status in the
+  // Info button: open the repo details pane; refresh its status in the
   // background if the cache is older than the TTL
-  const openRepoStatus = useCallback((root: string) => {
+  const openRepoStatus = useCallback((root: string, isRestore = false) => {
     refreshStatuses([root]);
     setSelected(null);
     setBaseline(null);
@@ -311,7 +370,12 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[]; reposMo
     setDetailTab('editor');
     if (rootIsRepo.get(root)) loadRepoDetail(root, 10);
     else { setDetailRoot(root); setRepoDetail(null); setRepoError(null); }
-  }, [rootIsRepo, loadRepoDetail, refreshStatuses]);
+    if (!isRestore) onParam?.({ file: null, repo: root });
+    // A linked repo that no longer exists just falls back: detail pane shows
+    // the clone/init offer which is harmless for a vanished root.
+  }, [rootIsRepo, loadRepoDetail, refreshStatuses, onParam]);
+
+  // Deep-link restore: once roots are loaded, open the linked file / repo.
 
   // True while a repo pane (details or clone/init actions) owns the content area
   const showRepoPane = reposMode && !!detailRoot && (rootIsRepo.get(detailRoot) ? !!repoDetail : true);
@@ -567,7 +631,7 @@ const FileBrowser: React.FC<{ canWrite: boolean; changedPaths: string[]; reposMo
                     or clone/init offer) without collapsing the tree */}
                 {reposMode && rootIsRepo.get(r.path) !== undefined && (
                   <span className="repo-row-actions" onClick={(e) => e.stopPropagation()}>
-                    <button className="btn repo-row-btn" title={`Show status of ${r.path}`} onClick={() => openRepoStatus(r.path)}>status</button>
+                    <button className="btn repo-row-btn" title={`Show info of ${r.path}`} onClick={() => openRepoStatus(r.path)}>info</button>
                   </span>
                 )}
                 <span className={`files-access files-access-${r.access}`}>{r.access}</span>
@@ -718,9 +782,30 @@ interface EditsPageProps {
 }
 
 /** Edits view: backend-backed file browser + Monaco editor, plus the
- *  per-session change history under a Session Edits tab. */
+ *  per-session change history under a Session Edits tab.
+ *  Deep-linking: the open tab, selected file, repo detail and session-change
+ *  selection are mirrored to URL query params ('e','f','r','c') so browser
+ *  back/forward restores what was open instead of collapsing to the start. */
 export const EditsPage: React.FC<EditsPageProps> = ({ sessionId, userRole }) => {
-  const [tab, setTab] = useState<'files' | 'changes' | 'repos'>('files');
+  const [params, setParams] = useSearchParams();
+  const paramTab = params.get('e');
+  const [tab, setTab] = useState<'files' | 'repos' | 'changes'>(
+    paramTab === 'repos' || paramTab === 'changes' || paramTab === 'files' ? paramTab : 'files',
+  );
+  const writeParams = useCallback((patch: Record<string, string | null>) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null) next.delete(k);
+        else next.set(k, v);
+      }
+      return next;
+    });
+  }, [setParams]);
+  const selectTab = useCallback((t: 'files' | 'repos' | 'changes') => {
+    setTab(t);
+    writeParams({ e: t, f: null, r: null, c: null });
+  }, [writeParams]);
   const canWrite = userRole === 'control' || userRole === 'admin';
   const [changedPaths, setChangedPaths] = useState<string[]>([]);
   useEffect(() => {
@@ -734,11 +819,22 @@ export const EditsPage: React.FC<EditsPageProps> = ({ sessionId, userRole }) => 
   return (
     <div className="edits-page">
       <div className="edits-tabs">
-        <button className={tab === 'files' ? 'active' : ''} onClick={() => setTab('files')}>Files</button>
-        <button className={tab === 'repos' ? 'active' : ''} onClick={() => setTab('repos')}>Repositories</button>
-        <button className={tab === 'changes' ? 'active' : ''} onClick={() => setTab('changes')}>Session Edits</button>
+        <button className={tab === 'files' ? 'active' : ''} onClick={() => selectTab('files')}>Files</button>
+        <button className={tab === 'repos' ? 'active' : ''} onClick={() => selectTab('repos')}>Repositories</button>
+        <button className={tab === 'changes' ? 'active' : ''} onClick={() => selectTab('changes')}>Session Edits</button>
       </div>
-      {tab === 'files' ? <FileBrowser canWrite={canWrite} changedPaths={changedPaths} /> : tab === 'repos' ? <FileBrowser canWrite={canWrite} changedPaths={changedPaths} reposMode /> : <ChangesPage sessionId={sessionId} />}
+      {tab === 'files' ? (
+        <FileBrowser canWrite={canWrite} changedPaths={changedPaths}
+          initialSelected={tab === 'files' ? params.get('f') : null}
+          onParam={(p) => writeParams({ f: p.file ?? null, r: null })} />
+      ) : tab === 'repos' ? (
+        <FileBrowser canWrite={canWrite} changedPaths={changedPaths} reposMode
+          initialSelected={params.get('f')}
+          initialDetailRoot={params.get('r')}
+          onParam={(p) => writeParams({ f: p.file ?? null, r: p.repo ?? null })} />
+      ) : (
+        <ChangesPage sessionId={sessionId} initialFile={params.get('c')} onSelect={(p) => writeParams({ c: p })} />
+      )}
     </div>
   );
 };

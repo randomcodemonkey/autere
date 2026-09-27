@@ -1,5 +1,9 @@
 import React from 'react';
 import { EditsPage } from '../../src/frontend/components/EditsPage';
+import { MemoryRouter } from 'react-router-dom';
+// EditsPage deep-links via useSearchParams — a Router context is required
+// even in component (mount) tests.
+const mountEdits = (el: any) => cy.mount(<MemoryRouter>{el}</MemoryRouter>);
 // Global styles — Monaco needs a laid-out parent (flex heights live here)
 import '../../src/frontend/styles.scss';
 
@@ -47,7 +51,7 @@ const mountWith = (userRole: string) => {
   // Fixed-size wrapper — the real app provides a laid-out parent via
   // .edits-card's flex column; Monaco's frame layout can lag in the test
   // iframe, so content assertions go through the editor handle instead.
-  cy.mount(<div style={{ height: 700, width: 1200, display: 'flex', flexDirection: 'column' }}><EditsPage sessionId="s1" userRole={userRole} /></div>);
+  mountEdits(<div style={{ height: 700, width: 1200, display: 'flex', flexDirection: 'column' }}><EditsPage sessionId="s1" userRole={userRole} /></div>);
   return s;
 };
 
@@ -197,7 +201,7 @@ describe('EditsPage — Repositories tab', () => {
   it('shows configured repos as a tree, root click opens details + folder, files get Editor/Commits tabs', () => {
     const s = stubGitFetch();
     cy.stub(window, 'fetch').callsFake(s.fetch);
-    cy.mount(<div style={{ height: 700, width: 1200, display: 'flex', flexDirection: 'column' }}><EditsPage sessionId="s1" userRole="control" /></div>);
+    mountEdits(<div style={{ height: 700, width: 1200, display: 'flex', flexDirection: 'column' }}><EditsPage sessionId="s1" userRole="control" /></div>);
     cy.get('.edits-tabs').contains('Repositories').click();
 
     // Two configured roots visible; the repo one was NOT auto-expanded (len 2)
@@ -249,7 +253,7 @@ describe('EditsPage — Repositories tab', () => {
   it('highlights changed files on open — before any Status click', () => {
     const s = stubGitFetch();
     cy.stub(window, 'fetch').callsFake(s.fetch);
-    cy.mount(<div style={{ height: 700, width: 1200, display: 'flex', flexDirection: 'column' }}><EditsPage sessionId="s1" userRole="control" /></div>);
+    mountEdits(<div style={{ height: 700, width: 1200, display: 'flex', flexDirection: 'column' }}><EditsPage sessionId="s1" userRole="control" /></div>);
     cy.get('.edits-tabs').contains('Repositories').click();
     cy.get('.files-row').contains('proj').click();
     // Tree markers come from the background status fetch on view load —
@@ -263,7 +267,7 @@ describe('EditsPage — Repositories tab', () => {
     const s = stubGitFetch();
     cy.stub(window, 'fetch').callsFake(s.fetch);
     cy.stub(window, 'prompt').returns('http://git:3000/xenic/newrepo.git');
-    cy.mount(<div style={{ height: 700, width: 1200, display: 'flex', flexDirection: 'column' }}><EditsPage sessionId="s1" userRole="control" /></div>);
+    mountEdits(<div style={{ height: 700, width: 1200, display: 'flex', flexDirection: 'column' }}><EditsPage sessionId="s1" userRole="control" /></div>);
     cy.get('.edits-tabs').contains('Repositories').click();
     // Non-repo root: actions open via the row Status button (click = expand)
     cy.get('.files-row').contains('plain', { timeout: 15000 }).click();

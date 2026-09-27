@@ -117,6 +117,28 @@ describe('Edits feature', () => {
     });
   });
 
+
+  it('edits deep link: tab persists through chat + back', () => {
+    cy.task<string>('makeScratchDir').then((scratch: string) => {
+      cy.request('PUT', '/api/v1/users/admin', { allowedDirs: [{ path: scratch, access: 'rw' }] });
+      cy.visit(`/session/${sessionId}/edits`);
+      cy.get('.edits-tabs').contains('Repositories').click();
+      cy.location('search').should('contain', 'e=repos');
+      // expand the root folder (a fresh non-repo root row click does nothing
+      // in reposMode unless it is a repo — use the tree via Files tab? keep:
+      cy.log('folders listed');
+      // go to chat via header, then browser-back
+      cy.get('.view-menu').contains('Chat').click();
+      cy.location('pathname').should('not.contain', 'edits');
+      cy.go('back');
+      cy.location('search', { timeout: 10000 }).then((s) => cy.log('URL after back: ' + s));
+      cy.get('.edits-tabs', { timeout: 10000 }).then(($t) => {
+        cy.log('active tab: ' + $t.find('.active').text());
+        expect($t.find('.active').text()).to.eq('Repositories');
+      });
+    });
+  });
+
   it('renders seeded file changes with dedup, auto-expand and search', () => {
     cy.task('seedFileChanges', { sessionId, entries: seedEntries(Date.now()) }).should('eq', true);
     cy.visit(`/session/${sessionId}/edits`);

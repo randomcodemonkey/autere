@@ -12,7 +12,7 @@ import { MonitorRpcClient } from './rpc-client.js';
 import { filterScopedModels, autoSessionName, readSessionUsage } from './utils.js';
 import { log, userLog } from './logger.js';
 import { ensurePiEnv, ensureSandboxHomeVolume, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage } from './pi-env.js';
-import { getEditIgnorePaths, getHistoryLimit, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost, writeReserveTokensConfig, annotateContextUsage } from './user-settings.js';
+import { getEditIgnorePaths, getHistoryLimit, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getShowReadImages, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost, writeReserveTokensConfig, annotateContextUsage } from './user-settings.js';
 import { deliverToSession } from './client-hub.js';
 import { getActivePersona } from './personas.js';
 import {
@@ -563,7 +563,7 @@ export class UserSession {
         const messages = await this.rpc.getMessages();
         if (messages && messages.length > 0) {
           const buf = this.history();
-          buf.push(...buildStreamHistoryFromMessages(messages));
+          buf.push(...buildStreamHistoryFromMessages(messages, getShowReadImages(this.user)));
           if (buf.length > this.historyLimit) buf.splice(0, buf.length - this.historyLimit);
         }
       } catch (err) {
@@ -576,7 +576,7 @@ export class UserSession {
           const file = this.state.sessionState.sessionFile;
           if (file && existsSync(file)) {
             const raw = readMessageEntries(file, this.historyLimit);
-            if (raw.length > 0) this.setHistory(buildStreamHistoryFromMessages(raw).slice(-this.historyLimit));
+            if (raw.length > 0) this.setHistory(buildStreamHistoryFromMessages(raw, getShowReadImages(this.user)).slice(-this.historyLimit));
             log.userSession.info(`fetchInitialState: history fallback from session file (${raw.length} entries)`);
           }
         } catch (err) {
@@ -1178,6 +1178,7 @@ export class UserSession {
         event.result?.details,
         tool?.rmSnapshots,
         { name: event.toolName, cmd },
+        getShowReadImages(this.user),
       );
       if (entry) {
         // Tool results with images split into the original (text/toolCall)

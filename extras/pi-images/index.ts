@@ -19,7 +19,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createHash, randomBytes } from "node:crypto";
 import { Type } from "typebox";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { extname, isAbsolute, join, resolve } from "node:path";
+import { basename, extname, isAbsolute, join, resolve } from "node:path";
 const MAX_IMAGE_EDIT_BYTES = 8 * 1024 * 1024;
 
 /**
@@ -412,15 +412,10 @@ export default function (pi: ExtensionAPI) {
 			const file = join(dir, `${prefix}-${Date.now()}-${randomBytes(4).toString("hex")}-${i + 1}.${ext}`);
 			writeFileSync(file, Buffer.from(img.data, "base64"));
 			savedPaths.push(file);
-			// Copy into the uploads dir under the hist-* name served by
-			// autere's /api/images route, and announce it to the dashboard.
+			// Announce to the dashboard: the img url hits autere's own
+			// /api/images/generated/<name> route (env-scoped, not shared).
 			try {
-				const envDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
-				const uploads = join(envDir, "uploads");
-				mkdirSync(uploads, { recursive: true });
-				const name = `hist-${createHash("sha1").update(img.data).digest("hex").slice(0, 16)}.${ext}`;
-				const histFile = join(uploads, name);
-				if (!existsSync(histFile)) writeFileSync(histFile, Buffer.from(img.data, "base64"));
+				const name = basename(file);
 				pi.appendEntry("image_saved", { name, mimeType: img.mimeType, path: file });
 			} catch (err: any) {
 				console.error("[pi-images] failed to publish image to uploads:", err?.message || err);

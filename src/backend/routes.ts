@@ -29,11 +29,11 @@ import { withDedupSections, withJanitorSections } from './extension-handlers.js'
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionHistory } from './utils.js';
 import { getEnabledModelEntries, scopeModelsForSession } from './utils.js';
+import { isPiImagesInstalled } from './image-models.js';
 import { getPiEnvDir, validateSandboxImage } from './pi-env.js';
 import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
 import { getHistoryLimit } from './user-settings.js';
-import { getRouterConfig } from './image-models.js';
 import { extensionsState } from './state.js';
 import { pathIsIgnored } from '../shared/edit-ignore.js';
 import { userFileRoots, browseList, browseRead, browseWrite, browseDelete, type BrowseResult } from './files.js';
@@ -178,6 +178,7 @@ const RE = {
   schedulerTaskRun: new RegExp(`^${API_PREFIX}/scheduler/tasks/([\\w-]+)/run$`),
   schedulerRunLog: new RegExp(`^${API_PREFIX}/scheduler/runs/([\\w-]+)/([\\w-]+)$`),
   image: new RegExp(`^${API_PREFIX}/images/([a-zA-Z0-9._-]+)$`),
+  genImage: new RegExp(`^${API_PREFIX}/images/generated/([a-zA-Z0-9._-]+)$`),
   file: new RegExp(`^${API_PREFIX}/files/([a-zA-Z0-9._%~-]+)$`),
 };
 
@@ -237,6 +238,8 @@ async function runHandler(route: RouteDef, match: RegExpMatchArray | null, c: Ct
     throw err;
   }
 }
+
+import { MonitorRpcClient } from './rpc-client.js';
 
 export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?: Scheduler): ReturnType<typeof createServer> {
   let sessionRefreshInterval: ReturnType<typeof setInterval> | null = null;
@@ -1454,11 +1457,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     },
   });
 
-  // Generate a persona prompt from the user's notes using the CURRENT
-  // session's model via 9router (OpenAI-compatible chat completions).
   route({
     method: 'POST', path: API.personas.generate, template: `${API_PREFIX}/personas/generate`,
-    role: 'control', tag: 'Personas', summary: 'Generate a persona prompt from notes with the viewed session model (body: text, sessionId?)',
+    role: 'control', tag: 'Personas', summary: 'Generate a persona prompt from notes with the viewed session model via a one-shot spawned pi (body: text, sessionId?)',
     handler: async (c) => {
       try {
         const body = await readBody(c.req);
@@ -1467,71 +1468,58 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           sendJSON(c.res, { success: false, error: 'text is required' }, 400);
           return;
         }
-        const model = (await resolveTarget(c, body.sessionId))?.state.sessionState.model?.id;
-        if (!model) {
+        const model = (await resolveTarget(c, body.sessionId))?.state.sessionState.model;
+        if (!model?.id) {
           sendJSON(c.res, { success: false, error: 'No model selected' }, 400);
           return;
         }
-        // Per-user env config first (the settings UI writes there), master as fallback
-        let routerConfig = getRouterConfig();
+        // One-shot pi spawn through the user's own pi env — same spawn config
+        // ProcessManager gives user sessions, so the request runs through
+        // pi's own provider pipeline (never a backend chat-completions call).
+        const oneShot = new MonitorRpcClient({
+          provider: model.provider || pm.spawnOptions.provider,
+          model: model.id,
+          args: pm.spawnOptions.args,
+          agentDir: getPiEnvDir(c.user),
+        });
+        let prompt: string;
         try {
-          const envConfig = JSON.parse(readFileSync(join(getPiEnvDir(c.user), '9router-config.json'), 'utf-8'));
-          if (envConfig?.baseUrl) {
-            routerConfig = { baseUrl: String(envConfig.baseUrl).replace(/\/+$/, ''), apiKey: String(envConfig.apiKey || '') };
-          }
-        } catch {}
-        if (!routerConfig.baseUrl) {
-          sendJSON(c.res, { success: false, error: 'No model router configured' }, 400);
-          return;
-        }
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 120_000);
-        try {
-          const llmRes = await fetch(`${routerConfig.baseUrl}/v1/chat/completions`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(routerConfig.apiKey ? { Authorization: `Bearer ${routerConfig.apiKey}` } : {}),
-            },
-            body: JSON.stringify({
-              model,
-              messages: [{
-                role: 'user',
-                content: `Turn the notes below into a persona system prompt for an AI coding agent: a clear, self-contained, imperative description of the agent's role, tone and behavior. Output ONLY the persona prompt text — no commentary, no markdown fences.\n\nNotes:\n${text.trim()}`,
-              }],
-            }),
-            signal: controller.signal,
+          await oneShot.start();
+          prompt = await new Promise<string>((resolve, reject) => {
+            let settled = false;
+            const finish = (fn: () => void) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              off();
+              fn();
+            };
+            let off = () => {};
+            const settle = (err: Error) => finish(() => reject(err));
+            const timer = setTimeout(() => settle(new Error('Persona generation timed out')), 120_000);
+            off = oneShot.onEvent((event: any) => {
+              if (event.type !== 'message_end' || event.message?.role !== 'assistant') return;
+              if (event.message.stopReason === 'error' || event.message.errorMessage) {
+                settle(new Error(event.message.errorMessage || 'Model returned an error'));
+                return;
+              }
+              const content = (event.message.content || [])
+                .filter((part: any) => part.type === 'text')
+                .map((part: any) => part.text)
+                .join('');
+              if (content) finish(() => resolve(content));
+            });
+            oneShot.prompt(`Turn the notes below into a persona system prompt for an AI coding agent: a clear, self-contained, imperative description of the agent's role, tone and behavior. Output ONLY the persona prompt text — no commentary, no markdown fences.
+
+Notes:
+${text.trim()}`).catch((err) => settle(err as Error));
           });
-          if (!llmRes.ok) throw new Error(`HTTP ${llmRes.status}`);
-          // 9router may return SSE-flavored bodies even without stream:true —
-          // a plain JSON object followed by "data: [DONE]", padding whitespace,
-          // or real SSE data chunks. Parse leniently: exact JSON, then SSE
-          // chunks, then the largest {...} region.
-          const raw = await llmRes.text();
-          const contentFrom = (obj: any) => obj?.choices?.[0]?.delta?.content ?? obj?.choices?.[0]?.message?.content;
-          let content: any = null;
-          try {
-            content = contentFrom(JSON.parse(raw.trim()));
-          } catch {
-            for (const line of raw.split('\n')) {
-              const t = line.trim();
-              if (!t.startsWith('data:') || t === 'data: [DONE]') continue;
-              try {
-                const piece = contentFrom(JSON.parse(t.slice(5).trim()));
-                if (typeof piece === 'string') content = (content || '') + piece;
-              } catch { /* skip unparseable chunk */ }
-            }
-            if (!content) {
-              const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
-              if (s >= 0 && e > s) content = contentFrom(JSON.parse(raw.slice(s, e + 1)));
-            }
-          }
-          const prompt = typeof content === 'string' ? content.trim() : '';
-          if (!prompt) throw new Error('Empty response from model');
-          sendJSON(c.res, { success: true, data: { prompt } });
         } finally {
-          clearTimeout(timeout);
+          try { await oneShot.stop(); } catch { /* already dead */ }
         }
+        const trimmed = prompt.trim();
+        if (!trimmed) throw new Error('Empty response from model');
+        sendJSON(c.res, { success: true, data: { prompt: trimmed } });
       } catch (err: any) {
         sendJSON(c.res, { success: false, error: `Failed to generate persona prompt: ${err.statusCode ? err.message : err}` }, err.statusCode || 500);
       }
@@ -1543,7 +1531,27 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     method: 'GET', path: API.settings.schema, template: `${API_PREFIX}/settings/schema`,
     role: 'chat', tag: 'Settings', summary: 'Settings schema (sections, fields, option values)',
     handler: async (c) => {
-      const schema = await getUserSettingsSchema(c.user);
+      // Image-model options: 9router discovery (pi-images keys image
+      // generation off these); fall back to the viewed session's chat model
+      // when 9router has none / isn't reachable.
+      const imageModelOptions: { value: string; label: string }[] = [];
+      let sessionModel: { id?: string; name?: string } | undefined;
+      if (isPiImagesInstalled()) {
+        try {
+          sessionModel = (await resolveTarget(c, targetParam(c)))?.state.sessionState.model;
+        } catch { /* no live session — fallback uses nothing */ }
+        const { getRouterConfig, fetchImageModels, fallbackImageModelOption } = await import('./image-models.js');
+        try {
+          const config = getRouterConfig(c.user);
+          imageModelOptions.push(...(await fetchImageModels(config)).map((m) => ({ value: m.id, label: m.label })));
+        } catch (err: any) {
+          log.http.error('9router image-model discovery failed:', err?.message || err);
+        }
+        if (imageModelOptions.length === 0) {
+          imageModelOptions.push(...fallbackImageModelOption(sessionModel).map((m) => ({ value: m.id, label: m.label })));
+        }
+      }
+      const schema = await getUserSettingsSchema(c.user, imageModelOptions);
       sendJSON(c.res, { success: true, data: schema });
     },
   });
@@ -1741,6 +1749,25 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         return;
       }
       const file = join(getPiEnvDir(c.user), 'uploads', name);
+      if (!existsSync(file)) { sendJSON(c.res, { success: false, error: 'Not found' }, 404); return; }
+      const ext = name.split('.').pop() || 'png';
+      c.res.writeHead(200, { 'Content-Type': IMAGE_MIME[ext] || 'application/octet-stream', 'Cache-Control': 'private, max-age=31536000, immutable' });
+      c.res.end(readFileSync(file));
+    },
+  });
+
+  // ── Generated images (pi-images gen-* files in the user's env images dir;
+  // auth-scoped like hist- images so raw generated bytes stay per-user). ──
+  route({
+    method: 'GET', path: RE.genImage, template: `${API_PREFIX}/images/generated/{name}`,
+    role: 'chat', tag: 'Session', summary: 'A generated image from the pi-images extension (name: gen-<ts>-<rand>-<n>.<ext>)',
+    handler: async (c, m) => {
+      const name = m![1];
+      if (!/^(gen|edit)-\d+-[a-f0-9]{8}-\d+\.[a-z0-9]{2,5}$/.test(name)) {
+        sendJSON(c.res, { success: false, error: 'Bad image name' }, 400);
+        return;
+      }
+      const file = join(getPiEnvDir(c.user), 'images', name);
       if (!existsSync(file)) { sendJSON(c.res, { success: false, error: 'Not found' }, 404); return; }
       const ext = name.split('.').pop() || 'png';
       c.res.writeHead(200, { 'Content-Type': IMAGE_MIME[ext] || 'application/octet-stream', 'Cache-Control': 'private, max-age=31536000, immutable' });

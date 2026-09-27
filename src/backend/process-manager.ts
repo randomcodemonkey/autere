@@ -26,6 +26,8 @@ export class ProcessManager {
   private sessions = new Map<string, Map<string, UserSession>>();
   /** Spawns in flight, keyed user::sessionFile — prevents double spawns */
   private starting = new Map<string, Promise<UserSession>>();
+  /** Spawn options (provider/model/args) passed to every spawned pi */
+  readonly spawnOptions: ProcessManagerOptions;
   private options: ProcessManagerOptions;
   private defaultIdleTimeoutMs: number;
   // Deferred pi restarts (settings saved while a turn was running), keyed
@@ -50,6 +52,7 @@ export class ProcessManager {
 
   constructor(options: ProcessManagerOptions = {}) {
     this.options = options;
+    this.spawnOptions = options;
     this.defaultIdleTimeoutMs = options.idleTimeoutMs || 30 * 60 * 1000; // 30 min default
     this.resumeLastSession = options.resumeLastSession !== false;
   }

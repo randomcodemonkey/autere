@@ -111,7 +111,7 @@ describe('Git repositories feature', () => {
     // Root click = plain expand/collapse; detail pane opens via the Status button
     cy.get('.files-row').contains('seedrepo').click();
     cy.get('.files-row', { timeout: 15000 }).should('contain', 'seed.txt');
-    cy.get('.files-row').contains('seedrepo').parent().find('.repo-row-btn').contains('status').click();
+    cy.get('.files-row').contains('seedrepo').parent().find('.repo-row-btn').contains('info').click();
     cy.get('.repo-detail', { timeout: 15000 }).should('contain', '⎇ main');
     cy.get('.repo-detail').should('not.contain', 'Select a file to view or edit');
     // Section headers present
@@ -134,7 +134,7 @@ describe('Git repositories feature', () => {
     // Non-repo root: actions live under the row's status button
     cy.get('.files-row').contains('plain').click();
     cy.get('.files-row', { timeout: 15000 }).should('contain', 'plain');
-    cy.get('.files-row').contains('plain').parent().find('.repo-row-btn').contains('status').click();
+    cy.get('.files-row').contains('plain').parent().find('.repo-row-btn').contains('info').click();
     cy.get('.repo-actions', { timeout: 15000 }).should('exist');
 
     // git init with a prompted remote → repo created, detail pane loads

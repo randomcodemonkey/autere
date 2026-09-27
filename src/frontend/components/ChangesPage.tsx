@@ -13,9 +13,14 @@ interface FileChange {
 
 interface ChangesPageProps {
   sessionId: string | null;
+  /** Deep link: file to open initially (URL ?c=); changes are recorded
+   *  per-session so a vanished path simply falls back to the newest file. */
+  initialFile?: string | null;
+  /** Called on selection changes so EditsPage can mirror to the URL. */
+  onSelect?: (path: string | null) => void;
 }
 
-export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
+export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId, initialFile, onSelect }) => {
   const [changes, setChanges] = useState<FileChange[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,14 +46,16 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
         if (d.success) {
           setChanges(d.data);
           if (d.data.length > 0) {
-            const latest = d.data[d.data.length - 1];
-            setSelectedFile(latest.path);
+            // Deep link first: the linked file if it still has changes,
+            // otherwise the newest change's file (default state fallback).
+            const linked = initialFile ? d.data.find((c: FileChange) => c.path === initialFile) : null;
+            setSelectedFile((linked ?? d.data[d.data.length - 1]).path);
           }
         } else setError(d.error || 'Failed to load');
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [sessionId]);
+  }, [sessionId, initialFile]);
 
   // Dedupe: per file+change-type keep only the latest entry (older ones are
   // superseded — e.g. repeated misclassified "created" rows for one file)
@@ -131,7 +138,7 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId }) => {
               <div
                 key={path}
                 className={`changes-file${selectedFile === path ? ' selected' : ''}`}
-                onClick={() => setSelectedFile(selectedFile === path ? null : path)}
+                onClick={() => { const p = selectedFile === path ? null : path; setSelectedFile(p); onSelect?.(p); }}
               >
                 <span className="changes-file-name">{path}</span>
                 <span className="changes-file-count">{count}</span>

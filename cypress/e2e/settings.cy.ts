@@ -151,7 +151,9 @@ describe('autere — settings', () => {
   });
 
   it('toggle fields work correctly', () => {
-    openSettings();
+    // Toggles live in the Chat section; the default section (Sandbox) has
+    // only a text field, and Images only exists when pi-images is installed.
+    openSettingsSection('Chat');
 
     cy.get('.settings-toggle', { timeout: 5000 }).should('exist');
 

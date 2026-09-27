@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { LoginScreen } from './components/LoginScreen';
 import { ChangePasswordScreen } from './components/ChangePassword';
-import { DashboardPage } from './pages/DashboardPage';
+import { AppPage } from './pages/AppPage';
 import { RootRedirect } from './pages/RootRedirect';
 import { NotFound } from './pages/NotFound';
 import { useSSE } from './hooks/useSSE';
@@ -95,7 +95,7 @@ function App() {
           <RootRedirect />
         } />
         <Route path="/session/:sessionId/:view?" element={
-          <DashboardPage
+          <AppPage
             authenticated={authenticated}
             username={username}
             userRole={userRole}

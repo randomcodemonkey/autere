@@ -106,6 +106,6 @@ export const API = {
     restart: `${P}/backend/restart`,
   },
 
-  images: (name: string) => `${P}/images/${name}`,
+  images: (name: string) => (name.startsWith('gen-') || name.startsWith('edit-')) ? `${P}/images/generated/${name}` : `${P}/images/${name}`,
   files: (name: string) => `${P}/files/${encodeURIComponent(name)}`,
 } as const;

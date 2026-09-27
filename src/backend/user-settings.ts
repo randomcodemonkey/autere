@@ -202,7 +202,10 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
     }
 
     // Write 9router settings into the env's 9router-config.json
-    const nineRouterKeys = ['nineRouterBaseUrl', 'nineRouterApiKey', 'nineRouterPassword', 'nineRouterEnableReasoning'];
+    // enableReasoning is deliberately NOT written: it defaults to false in
+    // pi-9router-ext and is the "manual reasoning toggle" described in its
+    // docs — leaving it unset keeps thinking levels hidden for 9router models.
+    const nineRouterKeys = ['nineRouterBaseUrl', 'nineRouterApiKey', 'nineRouterPassword'];
     const present = nineRouterKeys.filter(k => k in settings);
     if (present.length > 0) {
       const configPath = join(envDir, '9router-config.json');
@@ -213,7 +216,6 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
       if ('nineRouterBaseUrl' in settings) config.baseUrl = settings.nineRouterBaseUrl;
       if ('nineRouterApiKey' in settings) config.apiKey = settings.nineRouterApiKey;
       if ('nineRouterPassword' in settings) config.password = settings.nineRouterPassword;
-      if ('nineRouterEnableReasoning' in settings) config.enableReasoning = settings.nineRouterEnableReasoning;
       const tmp = join(envDir, `.9router-config-tmp-${randomUUID()}`);
       writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf-8');
       renameSync(tmp, configPath);
@@ -502,6 +504,12 @@ export function getSendImagesToChatModel(user: string): boolean {
   return raw !== false && raw !== 'false';
 }
 
+/** Show images from 'read' tool results as first-class chat images. Default on. */
+export function getShowReadImages(user: string): boolean {
+  const raw = getUserSetting(user, 'showReadImages', true);
+  return raw !== false && raw !== 'false';
+}
+
 /** streamfix (pi-images): non-streamed upstream requests for image-bearing chats. Default on. */
 export function getImageStreamFix(user: string): boolean {
   const raw = getUserSetting(user, 'imageStreamFix', true);
@@ -656,9 +664,7 @@ function getUserSettingsDefaults(user: string): UserSettings {
   // 9router settings (always available)
   const nineRouterConfig = getPiConfig('9router-config.json');
   defaults.nineRouterBaseUrl = nineRouterConfig?.baseUrl || '';
-  defaults.nineRouterApiKey = nineRouterConfig?.apiKey || '';
   defaults.nineRouterPassword = process.env.INITIAL_PASSWORD || '';
-  defaults.nineRouterEnableReasoning = nineRouterConfig?.enableReasoning ?? false;
 
   // pi-images: selected image model (stored in 9router-config.json)
   defaults.imageModel = nineRouterConfig?.imageModel || '';
@@ -668,6 +674,7 @@ function getUserSettingsDefaults(user: string): UserSettings {
   // settings UI shows them as on when unset (undefined renders as off).
   defaults.sendImagesToChatModel = true;
   defaults.imageStreamFix = true;
+  defaults.showReadImages = true;
 
   defaults.reserveTokensPercent = 0;
   defaults.reserveTokensPercentByModel = {};
@@ -693,7 +700,7 @@ function getUserSettingsDefaults(user: string): UserSettings {
  * The backend decides what settings are relevant; the frontend just renders them.
  * Async because the image-model select options are discovered from 9router.
  */
-export async function getUserSettingsSchema(user: string): Promise<SettingSection[]> {
+export async function getUserSettingsSchema(user: string, imageModelOptions: { value: string; label: string }[] = []): Promise<SettingSection[]> {
   const sections: SettingSection[] = [];
 
   // Docker sandbox — backend-level, always shown
@@ -740,26 +747,14 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
           placeholder: '••••••••',
           description: 'Password for the 9router web dashboard',
         },
-        {
-          key: 'nineRouterEnableReasoning',
-          label: 'Enable Reasoning',
-          type: 'toggle',
-          description: 'Enable reasoning/thinking mode for supported models',
-        },
       ],
     });
   }
 
-  // Image generation settings — when the pi-images extension is installed
+  // Image generation settings — when the pi-images extension is installed.
+  // Options are resolved by the caller (routes.ts) from the viewed session's
+  // pi rpc — the same get_available_models that backs chat model selection.
   if (isPiImagesInstalled()) {
-    const { getRouterConfig, fetchImageModels } = await import('./image-models.js');
-    let imageModelOptions: { value: string; label: string }[] = [];
-    try {
-      const models = await fetchImageModels(getRouterConfig());
-      imageModelOptions = models.map((m) => ({ value: m.id, label: m.id }));
-    } catch (err) {
-      log.settings.error('Failed to fetch image models for settings schema:', err);
-    }
     sections.push({
       id: 'images',
       label: 'Images',
@@ -839,6 +834,12 @@ export async function getUserSettingsSchema(user: string): Promise<SettingSectio
         label: 'Non-streamed image requests',
         type: 'toggle',
         description: 'Send image-bearing chat requests non-streamed and relay the response as a stream. Works around upstream stream-usage accounting inflating image token counts ~4x. Applies after a pi restart.',
+      },
+      {
+        key: 'showReadImages',
+        label: 'Show read images',
+        type: 'toggle',
+        description: "Images read by the model (e.g. 'Read image file ...' tool results) render as first-class chat images. When off, only text of tool results is shown. Applies to new tool results and on session reload.",
       },
       {
         key: 'imagePreviewQuality',

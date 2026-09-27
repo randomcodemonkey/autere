@@ -1,48 +1,57 @@
 # autere
 
-Real-time web dashboard for monitoring pi agent sessions via per-user RPC processes.
+Autere is a web frontend and orchestrator for the [Pi Coding Agent](https://pi.dev/) with multi-user and multi-session support.
 
-![Dashboard](https://img.shields.io/badge/status-stable-green)
+Designed to communicate to a locally running 9router instance, but the underlying pi agents can be configured to use
+some other supported AI provider directly.
 
-## Features
+The backend multiplexes pi sessions per user, allowing the same user to interact with any pi session from any
+number of devices. The pi sessions are optionally isolated into their own docker containers, providing each
+user their own (configurable) workdirs inside the container.
 
-- **Multi-User Support** — Each user gets their own pi process with isolated state
-- **Live Stream** — Real-time message history with markdown rendering and thinking display
-- **Session Stats** — Messages, requests, input/output tokens, and cost tracking
-- **Context Usage** — Visual progress bar showing context window consumption
-- **Model Info** — Current model with real-time switching
-- **Active Tools** — Tools currently executing with live updates
-- **Recent Tools** — Last 5 completed tool calls with expandable arguments (persisted in memory)
-- **Session Management** — Switch sessions, create new ones, delete old ones, rename sessions
-- **Extension Discovery** — Automatic detection of installed pi extensions with status
-- **User Roles** — Admin role with backend restart privileges
-- **Autoscroll** — Smart scrolling with "New messages" button when scrolled up
-- **Fullscreen Chat** — Mobile-optimized chat-only view
-- **Idle Timeout** — Pi processes automatically terminate after configurable idle period
+The web frontend shows a users pi sessions, allows interacting with them ('chat'), has a file browser with git repository
+support and provides access to per-user settings.
 
-## Installation
+## Installation and Running
 
-### Standalone (recommended)
+### From source
+
+Autere can be directly executed from source using `npm`:
 
 ```bash
-cd /home/slop/code/pi-monitor
 npm install
 npm start
 ```
 
-### With custom provider
+### With custom provider and default model
 
 ```bash
-npx tsx src/backend/index.ts --provider 9router --model openrouter/mimo-v2.5-all
+npx tsx src/backend/index.ts --provider 9router --model example/mimo-v2.6-pro
 ```
+
+### Docker
+
+Builds a docker image with the autere frontend, backend, 9router and supervisord to manage the daemon processes:
+
+```bash
+cd docker
+docker build -t autere
+
+docker run -d --name autere \
+  -p 3456:3456 -p 8080:8080 \
+  -v autere-data:/home/autere/.autere \
+  autere
+```
+
+See [docker/README.md](docker/README.md) for details.
 
 ## Usage
 
-Once started, the dashboard is available at **http://localhost:3456** (default port).
+Once started, the dashboard is available at **http://localhost:3456**
 
 ### Login
 
-Default user: `admin` with the password set via `--monitor-password` or `PI_MONITOR_PASSWORD`.
+Default user: `admin` with the password set via env variable `INITIAL_PASSWORD`. Once 
 
 ### Configuration
 

@@ -40,6 +40,7 @@ export function formatToolResult(
   resultDetails?: any,
   rmSnapshots?: Record<string, string>,
   toolCall?: ToolCallInfo,
+  showReadImages = false,
 ): { role: string; text: string; streaming: boolean; timestamp?: number; isError?: boolean; images?: StreamImage[]; toolCall?: ToolCallInfo } | null {
   let text: string;
   let role: string;
@@ -90,9 +91,10 @@ export function formatToolResult(
     return null;
   }
 
-  // 'read' returns image blocks only so the MODEL can see them — user-facing
-  // images come from image_saved entries / attachments, not tool results.
-  const images = toolName === 'edit' || toolName === 'read' ? [] : extractImages(resultContent);
+  // 'edit' images are diffs, never previews. 'read' returns image blocks only
+  // so the MODEL can see them — user-facing images come from image_saved
+  // entries / attachments, not tool results, unless showReadImages is on.
+  const images = toolName === 'edit' || (toolName === 'read' && !showReadImages) ? [] : extractImages(resultContent);
   const prefix = isError ? `[${toolName} error]` : '';
   const displayText = prefix ? (text ? prefix + ' ' + text : prefix) : text;
   if (!displayText && images.length === 0) return null;
@@ -170,7 +172,7 @@ function msgText(content: any): string {
   return typeof content === 'string' ? content : '';
 }
 
-export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
+export function buildStreamHistoryFromMessages(rawMessages: any[], showReadImages = false): any[] {
   const entries = rawMessages.map((raw: any) => ({
     msg: raw.message || raw,
     entryTimestamp: raw.timestamp,
@@ -204,7 +206,7 @@ export function buildStreamHistoryFromMessages(rawMessages: any[]): any[] {
   const out = entries
     .flatMap(({ msg, entryTimestamp }: any) => {
       try {
-        return buildOneEntry(msg, entryTimestamp, toolCallArgs, matchedCallIds, toolCallInfo);
+        return buildOneEntry(msg, entryTimestamp, toolCallArgs, matchedCallIds, toolCallInfo, showReadImages);
       } catch (err) {
         // One malformed entry must never abort the whole history load —
         // that silently wiped sessions after respawn (see persona markers
@@ -237,6 +239,7 @@ function buildOneEntry(
   toolCallArgs: Map<string, any>,
   matchedCallIds: Set<string>,
   toolCallInfo: (id: string | undefined) => any,
+  showReadImages: boolean,
 ): any[] {
       // Custom entries (file_saved / file_change) are part of the file's
       // chronological order — render them in place, NOT appended at the end.
@@ -262,7 +265,7 @@ function buildOneEntry(
         const toolArgs = (msg.toolCallId ? toolCallArgs.get(msg.toolCallId)?.args : undefined) || {};
         const formatted = formatToolResult(
           msg.toolName, toolArgs, msg.content, msg.isError, timestamp, msg.details,
-          undefined, toolCallInfo(msg.toolCallId),
+          undefined, toolCallInfo(msg.toolCallId), showReadImages,
         );
         return formatted ? splitImageEntry(formatted) : [];
       }
