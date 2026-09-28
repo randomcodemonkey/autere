@@ -102,7 +102,8 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   // validity check reset the selection back to the first schema section
   // every time one was clicked.
   useEffect(() => {
-    const ids = [...schema.map((s) => s.id), '__personas', '__apitokens'];
+    // Backend schema is the source of truth for section ids (incl. personas/apiTokens).
+    const ids = schema.map((s) => s.id);
     if (!loading && !ids.includes(activeSection)) setActiveSection(ids[0]);
   }, [schema, activeSection, loading]);
 
@@ -343,13 +344,9 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
 
   const dirty = JSON.stringify(settings) !== baselineRef.current;
 
-  // Side menu: schema sections in the backend-provided order, then the two
-  // frontend-only sections. No client-side sorting.
-  const menuItems = [
-    ...schema.map((s) => ({ id: s.id, label: s.label })),
-    { id: '__personas', label: 'Personas' },
-    { id: '__apitokens', label: 'API Tokens' },
-  ];
+  // Side menu: the backend schema drives the full order — nothing appended
+  // or sorted client-side.
+  const menuItems = schema.map((s) => ({ id: s.id, label: s.label }));
 
   return (
     <div className="card settings-card">
@@ -408,9 +405,9 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
           </div>
 
           <div className="settings-content">
-            {activeSection === '__personas' ? (
+            {activeSection === 'personas' ? (
               <PersonasSettingsSection />
-            ) : activeSection === '__apitokens' ? (
+            ) : activeSection === 'apiTokens' ? (
               <ApiTokensSection />
             ) : (
               schema

@@ -14,161 +14,105 @@ support and provides access to per-user settings.
 
 ## Installation and Running
 
-### From source
-
-Autere can be directly executed from source using `npm`:
-
-```bash
-npm install
-npm start
-```
-
-### With custom provider and default model
-
-```bash
-npx tsx src/backend/index.ts --provider 9router --model example/mimo-v2.6-pro
-```
-
-### Docker
-
-Builds a docker image with the autere frontend, backend, 9router and supervisord to manage the daemon processes:
+Build a docker image with the autere frontend + backend (9router started/managed by the backend when the provider is 9router) under supervisord:
 
 ```bash
 cd docker
 docker build -t autere
 
 docker run -d --name autere \
-  -p 3456:3456 -p 8080:8080 \
+  -p 127.0.0.1:3456:3456 -p 127.0.0.1:20128:20128 \
+  -e INITIAL_PASSWORD=secret \
   -v autere-data:/home/autere/.autere \
+  -v autere-master-pi-data:/home/autere/.pi \
+  -v autere-master-9router-data:/home/autere/.9router \
   autere
 ```
 
 See [docker/README.md](docker/README.md) for details.
 
-## Usage
+Once started, the web app is available at **http://localhost:3456**. Default user `admin`, password via `INITIAL_PASSWORD` (`admin` when unset) and 9router is available at **http://localhost:20128**
 
-Once started, the dashboard is available at **http://localhost:3456**
-
-### Login
-
-Default user: `admin` with the password set via env variable `INITIAL_PASSWORD`. Once 
-
-### Configuration
+Autere can also be ran without 9router, by defining the `AUTERE_PROVIDER` env value to a valid `pi` provider. With this mode, you must manually configure the provider with `pi` through the running autere docker container
 
 ```bash
-npx tsx src/backend/index.ts \
-  --port 3456 \
-  --monitor-auth true \
-  --monitor-password mypassword \
-  --provider 9router \
-  --model openrouter/mimo-v2.5-all \
-  --idle-timeout 30
+docker exec -it autere pi
 ```
 
-| Argument | Default | Description |
+Enter `/login` to pi and follow the instructions for configuring your selected profile.
+
+
+
+
+### Configuration (env)
+
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `--port` | 3456 | HTTP server port |
-| `--monitor-auth` | true | Enable/disable authentication |
-| `--monitor-password` | — | Password for login |
-| `--provider` | — | Pi provider |
-| `--model` | — | Pi model ID |
-| `--idle-timeout` | 30 | Minutes before idle pi process is killed |
-
-## Dashboard
-
-The dashboard shows:
-
-| Section | Description |
-|---------|-------------|
-| **Header** | Autere title, connection status indicator, session selector |
-| **Model** | Current model with selector to switch |
-| **Stats** | Messages, Requests, Input/Output Tokens, Cost |
-| **Context Usage** | Token count, context window size, usage percentage bar |
-| **Tools** | Active tools (with spinner) + last 5 completed tools |
-| **Extensions** | Installed extensions with connection status |
-| **Chat Stream** | Real-time message history with role labels |
-| **Chat Input** | Message input with send button |
-
-### Chat Stream Roles
-
-| Role | Description |
-|------|-------------|
-| `user` | User messages |
-| `assistant` | Assistant responses (rendered as markdown) |
-| `thinking` | Model reasoning/thinking |
-| `toolResult` | Tool execution results |
-| `edit` | File edit diffs (colored) |
-| `system` | System messages (e.g., "Session cleared") |
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Dashboard UI |
-| `/events` | GET | SSE stream (user-scoped) |
-| `/api/auth/login` | POST | Login (user + password) |
-| `/api/auth/logout` | POST | Logout |
-| `/api/auth/status` | GET | Auth status + user role |
-| `/api/state` | GET | Current session state |
-| `/api/stats` | GET | Token usage statistics |
-| `/api/messages` | GET | Recent messages |
-| `/api/tools` | GET | Active + recent tools |
-| `/api/extensions` | GET | Installed extensions |
-| `/api/models` | GET | Available models |
-| `/api/set-model` | POST | Switch model |
-| `/api/sessions` | GET | List sessions |
-| `/api/sessions/switch-by-id` | POST | Switch session by ID |
-| `/api/sessions/delete` | POST | Delete session |
-| `/api/new-session` | POST | Create new session |
-| `/api/session-name` | POST | Rename session |
-| `/api/send` | POST | Send message |
-| `/api/abort` | POST | Abort current operation |
-| `/api/compact` | POST | Compact context |
-| `/api/restart` | POST | Restart user's pi process |
-| `/api/restart-backend` | POST | Restart entire backend (admin only) |
-
-## SSE Events
-
-| Type | Description |
-|------|-------------|
-| `status` | Session state update |
-| `stats` | Token/cost update |
-| `stream_history` | Chat messages (last 50) |
-| `tool_start` | Tool started |
-| `tool_end` | Tool completed (includes recentTools) |
-| `models` | Available models list |
-| `sessions` | Available sessions list |
-| `extensions` | Extension status updates |
-| `navigate` | Frontend navigation command |
-| `heartbeat` | Keep-alive (every 3s) |
-| `new_session_creating` | New session being created |
+| `AUTERE_PORT` | 3456 | HTTP server port |
+| `AUTERE_AUTH` | true | Enable/disable authentication |
+| `INITIAL_PASSWORD` | `admin` | Initial password for Autere `admin` user and 9router |
+| `AUTERE_PROVIDER` | - | Pi provider |
+| `AUTERE_MODEL` | - | Pi model ID |
+| `AUTERE_IDLE_TIMEOUT` | 30 | Minutes before idle pi process is killed |
+| `NINE_ROUTER_BASE_URL` / `NINE_ROUTER_API_KEY` | `http://localhost:20128` | 9router endpoint/credentials |
 
 ## Architecture
 
-- **Standalone server** — Node.js HTTP server with per-user pi RPC processes
-- **Frontend** — React + Vite SPA served from `dist/`
-- **State** — Per-user in-memory state, global extensions/sessions
-- **Auth** — Token-based with user roles, atomic file writes
+### Data files
 
-## Data Files
+Global (under `~/.autere/`):
 
-| File | Description |
-|------|-------------|
-| `~/.pi/agent/monitor-auth-tokens.json` | Auth tokens |
-| `~/.pi/agent/monitor-last-session.json` | Last session per user |
-| `~/.autere/sessions/` | Session files |
-| `~/.autere/deleted-sessions/` | Deleted sessions |
+| File | Contents |
+|------|----------|
+| `autere-users.json` | User registry (roles, password hashes, allowed dirs) - seeded on first start, authoritative afterwards |
+| `autere-auth-tokens.json` | Active login tokens (30-day expiry) |
+| `users/<user>/settings.json` | Per-user (persisted) settings values |
+| `users/<user>/scheduled-tasks.json` (+ `scheduled-task-logs/`) | Scheduled tasks and run logs |
 
-## Development
+Per-user pi env (under `~/.autere/pi-envs/<user>/`):
+
+| File | Contents |
+|------|----------|
+| `sessions/*.jsonl` | Pi session transcripts (current last id in `last-session.json`) |
+| `file-changes/*.jsonl` | Per-session file change log (Files -> Session Edits) |
+| `images/`, `uploads/` | Generated images / session attachments |
+| `9router-config.json` | 9router endpoint + per-user settings overrides |
+| `models.json` | pi model overrides (per-input-type forcing) |
+| `settings.json` | pi settings for the session environment |
+| `janitor-config.json`, `dedup-stats.json` | Extension state (live-read) |
+
+### REST API
+
+All endpoints are versioned under `/api/v1`. The full machine-generated spec is served at
+`/api/v1/openapi.json` - no endpoint list is kept in this document.
+
+Run Swagger UI against a local backend:
 
 ```bash
-npm install
-npm run dev        # Run frontend + backend concurrently
-npm run typecheck  # Type check
-npm run build      # Build frontend to dist/
-npm test           # Run component tests
-npm run test:e2e   # Run e2e tests
+docker run --rm -p 8081:8080 -e SWAGGER_JSON_URL=http://localhost:3456/api/v1/openapi.json swaggerapi/swagger-ui
+# open http://localhost:8081 - for auth'd calls, first POST /api/v1/auth/login and set the returned bearer token via the Authorize button
 ```
+
+### SSE
+
+Stream: `GET /api/v1/events` (per-user, scoped to the viewed session where applicable). Heartbeats every 3s.
+
+| Event | Data |
+|-------|------|
+| `status` | session state (model, isStreaming, compacting, sessionId, ...) |
+| `stats` | token usage/cost |
+| `stream_history` | full history snapshot (connect/reload) |
+| `history_upsert` | entries appended or replaced by stable id |
+| `history_remove` | entry ids removed |
+| `stream_delta` | `{role, text}` of the streaming entry (throttled client-side) |
+| `tool_start` / `tool_end` | tool lifecycle |
+| `models` / `sessions` / `extensions` | resource lists |
+| `navigate` | server-commanded frontend navigation |
+| `new_session_creating` | new session creation in flight |
+| `error` | error message |
+| `heartbeat` | keep-alive |
+
+History entry `role` values: `user`, `assistant`, `thinking`, `toolCall`, `toolResult`, `edit`, `file`, `image`. Non-renderable pi roles (e.g. `model_change`) are dropped.
 
 ## License
 

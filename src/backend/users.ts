@@ -7,7 +7,7 @@
  * have — the CRUD surface here is the only thing that needs to change when
  * users move to a database.
  *
- * The registry is SEEDED ONCE from the environment (AUTERE_ADMIN_* / monitor
+ * The registry is SEEDED ONCE from the environment (INITIAL_PASSWORD
  * password) when the file does not exist. After that the file is
  * authoritative: env password changes no longer reset stored accounts
  * (delete the file to re-seed).
@@ -77,11 +77,10 @@ function saveRegistry() {
 }
 
 export interface UserRegistrySeed {
-  adminName: string;
   adminPassword: string;
-  monitorPassword: string;
 }
 
+// The admin account is not configurable: fixed name 'admin' (id=1), role admin.
 export function initUserRegistry(seed: UserRegistrySeed) {
   try {
     if (existsSync(USERS_FILE)) {
@@ -102,21 +101,13 @@ export function initUserRegistry(seed: UserRegistrySeed) {
   } catch (err) {
     log.auth.error('Failed to load users registry, starting from env seed:', err);
   }
-  // First start: seed from env (plaintext passwords → hashed)
-  registry[seed.adminName] = {
+  // First start: seed from env (plaintext password → hashed)
+  registry['admin'] = {
     passwordHash: hashPassword(seed.adminPassword),
     role: 'admin',
     mustChangePassword: false,
     allowedDirs: [],
   };
-  if (seed.monitorPassword && !registry['user']) {
-    registry['user'] = {
-      passwordHash: hashPassword(seed.monitorPassword),
-      role: 'control',
-      mustChangePassword: false,
-      allowedDirs: [],
-    };
-  }
   saveRegistry();
 }
 

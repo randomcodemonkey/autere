@@ -16,7 +16,7 @@ code — keep it up to date when architecture or workflows change.**
 
 ## Location & Deployment
 
-- Repo: `/home/slop/code/autere/` (git remote: `http://git:3000/xenic/pi-monitor.git`, branch `main`)
+- Repository location: check your memory for repository location, if not set ASK the user where the autere source code resides and then store that into memory. 
 - The running instance is supervisord-managed, serving the built frontend from `dist/`.
 
 **Deploying changes — know the difference:**

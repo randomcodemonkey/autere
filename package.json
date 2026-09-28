@@ -11,7 +11,7 @@
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
     "dev:frontend": "cd src/frontend && npx vite",
     "dev:backend": "tsx watch src/backend/index.ts",
-    "build": "npm run build:frontend",
+    "build": "npm run build:frontend && npx tsc -p tsconfig.backend.json",
     "build:frontend": "cd src/frontend && npx vite build",
     "start": "tsx src/backend/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.backend.json && cd src/frontend && npx tsc --noEmit",
@@ -27,7 +27,8 @@
     "test:component": "npm run cy:component",
     "test:e2e": "npm run build && npx tsx cypress/e2e/support/run-e2e.ts",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "build:backend": "npx tsc -p tsconfig.backend.json"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

@@ -3,12 +3,9 @@
 # ---- frontend build stage ----
 FROM node:24-alpine AS build
 WORKDIR /app
-COPY package.json package-lock.json ./
-COPY src/frontend/package.json src/frontend/
-RUN npm ci --no-audit --no-fund
-COPY src ./src
-COPY tsconfig.json ./
-RUN npm run build
+ADD package.json package-lock.json tsconfig.* /app
+ADD src /app/src/
+RUN npm ci --no-audit --no-fund && npm run build
 
 # ---- runtime image ----
 FROM ubuntu:resolute
@@ -20,8 +17,12 @@ RUN apt-get -y update \
       curl \
       python3 \
       golang \
+      build-essential \
+      automake \
+      autoconf \
       openjdk-21-jdk-headless \
       emacs \
+      fd-find \
       maven \
       nodejs \
       npm \
@@ -50,27 +51,30 @@ RUN apt-get -y update \
     && rm -rf /var/lib/apt/lists/*
 
 # increment the counter if you want to force npm reinstalls, e.g. new versions
-ENV NPM_CACHE_COUNTER=0001
+ENV NPM_CACHE_COUNTER=0002
 
-RUN npm install -g cypress --ignore-scripts
-RUN npm install -g 9router --ignore-scripts \
-    && npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.84.4 \
+RUN npm install -g cypress --ignore-scripts \
+    && npm install -g 9router --ignore-scripts \
+    && npm install -g --ignore-scripts @earendil-works/pi-coding-agent \
+    && npm install -g @tobilu/qmd \
     && npm cache clean --force
 
 # autere backend runs from source via tsx (runtime dependency, installed with the app)
 RUN useradd -m -d /home/autere -s /bin/bash -G tty autere \
-    && mkdir -p /home/autere/log /home/autere/code \
+    && mkdir -p /home/autere/log /home/autere/code /home/autere/.autere /home/autere/.pi \
     && chown -R autere:autere /home/autere
 
-COPY --chown=autere:autere supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-COPY --chown=autere:autere entrypoint.sh /entrypoint.sh
-COPY --chown=autere:autere SKILL.md /tmp
+COPY --chown=autere:autere docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY --chown=autere:autere docker/entrypoint.sh /entrypoint.sh
+COPY --chown=autere:autere SKILL.md /home/autere/SKILL.md
 
-# autere app: prebuilt frontend + source + runtime-only node_modules
-COPY --chown=autere:autere --from=build /app/dist /home/autere/code/autere/dist
-COPY --chown=autere:autere package.json package-lock.json /home/autere/code/autere/
-COPY --chown=autere:autere src /home/autere/code/autere/src/
-WORKDIR /home/autere/code/autere
+# autere app: prebuilt frontend (dist/) + compiled backend (dist-backend/)
+# + runtime-only node_modules. No source in the image.
+COPY --chown=autere:autere --from=build /app/dist /home/autere/dist
+COPY --chown=autere:autere --from=build /app/dist-backend /home/autere/dist-backend
+COPY --chown=autere:autere package.json package-lock.json /home/autere/dist
+
+WORKDIR /home/autere/dist
 RUN npm ci --omit=dev --no-audit --no-fund \
     && npm cache clean --force \
     && rm -rf /tmp/*

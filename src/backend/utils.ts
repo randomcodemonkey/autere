@@ -69,13 +69,13 @@ export function getDashboardHTML(basePath: string = ''): string {
   if (basePath) {
     // 1. Rewrite Vite-baked absolute asset paths so the browser loads
     //    them from the correct proxied location.
-    //    e.g.  src="/assets/index.js"  →  src="/monitor/assets/index.js"
+    //    e.g.  src="/assets/index.js"  →  src="/autere/assets/index.js"
     html = html.replace(/(src|href)="\//g, `$1="${basePath}/`);
 
     // 2. Inject runtime base path so the frontend JS knows the prefix.
-    //    The frontend reads window.__PI_MONITOR_BASE__ and uses it for
+    //    The frontend reads window.__AUTERE_BASE__ and uses it for
     //    all fetch() / EventSource calls.
-    const script = `<script>window.__PI_MONITOR_BASE__ = ${JSON.stringify(basePath)}</script>`;
+    const script = `<script>window.__AUTERE_BASE__ = ${JSON.stringify(basePath)}</script>`;
     html = html.replace('<head>', `<head>${script}`);
   }
   return html;

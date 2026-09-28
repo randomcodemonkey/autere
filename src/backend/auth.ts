@@ -7,10 +7,8 @@
  *   library, scheduled tasks, session deletion)
  * - admin: everything, including backend restart
  *
- * The admin account is bootstrapped from AUTERE_ADMIN_USER /
- * AUTERE_ADMIN_PASSWORD (defaults "admin"/"admin"); the shared "user"
- * account (monitor password) maps to "control" and only exists when a
- * monitor password is configured.
+ * The admin account is 'admin', bootstrapped from INITIAL_PASSWORD
+ * (defaults "admin").
  */
 
 import { IncomingMessage, ServerResponse } from 'http';
@@ -192,24 +190,21 @@ export function requireAuth(req: IncomingMessage, res: ServerResponse): boolean 
 // ── Auth init ──
 
 export function resolveAuth(pi: { getFlag: (name: string) => any }) {
-  authEnabled = pi.getFlag('monitor-auth') as boolean;
-  authPassword = (pi.getFlag('monitor-password') as string) || process.env.PI_MONITOR_PASSWORD || '';
+  authEnabled = pi.getFlag('autere-auth') as boolean;
+  authPassword = (pi.getFlag('autere-password') as string) || process.env.INITIAL_PASSWORD || '';
 
-  // Admin account: AUTERE_ADMIN_* overrides, then the monitor password for
-  // back-compat with existing deployments, then the documented default.
-  const adminName = process.env.AUTERE_ADMIN_USER || 'admin';
-  const adminPassword = process.env.AUTERE_ADMIN_PASSWORD || authPassword || 'admin';
+  // Single admin account ('admin'), password from INITIAL_PASSWORD.
   // File-backed registry seeds from env on FIRST start; afterwards the file
   // is authoritative (env password changes do not reset stored accounts).
-  initUserRegistry({ adminName, adminPassword, monitorPassword: authPassword });
+  initUserRegistry({ adminPassword: authPassword || 'admin' });
   if (authEnabled) {
-    if (!process.env.AUTERE_ADMIN_PASSWORD && !authPassword) {
-      log.auth.warn('No AUTERE_ADMIN_PASSWORD / monitor password configured — admin password defaults to "admin"');
+    if (!authPassword) {
+      log.auth.warn('No INITIAL_PASSWORD configured — admin password defaults to "admin"');
     }
   }
   loadAuthTokens();
   if (!authEnabled) {
-    log.auth.info('Authentication disabled (--monitor-auth false)');
+    log.auth.info('Authentication disabled (--autere-auth false)');
   }
 }
 
@@ -287,7 +282,7 @@ export function getAuthPassword(): string {
 // Stored INSIDE the user's pi environment so it is automatically scoped:
 // another user (or an isolated e2e env) can never see, resume, or corrupt
 // another environment's last-session pointer. The previous global
-// ~/.autere/monitor-last-session.json leaked exactly that way — an e2e
+// ~/.autere/autere-last-session.json leaked exactly that way — an e2e
 // backend resolved the real admin's last session and resumed it.
 
 function lastSessionFile(user: string): string {

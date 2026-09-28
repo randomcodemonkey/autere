@@ -25,7 +25,7 @@
  */
 
 import { getUserAllowedDirs, getUserRole, isRegisteredUser } from './users.js';
-import { cpSync, existsSync, mkdirSync, readdirSync, copyFileSync, readlinkSync, rmSync, symlinkSync, lstatSync, readFileSync } from 'fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, copyFileSync, readlinkSync, rmSync, symlinkSync, lstatSync, readFileSync, writeFileSync } from 'fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'path';
 import { PI_DIR, AUTERE_DIR } from './constants.js';
@@ -37,6 +37,26 @@ const SHARED_DIRS = ['npm', 'extensions', 'skills', 'themes', 'bin', 'tmp'];
 
 /** Files copied into each user environment on first use */
 const SEED_FILES = ['settings.json', 'auth.json', 'models-store.json', 'models.json'];
+
+/** Neutralize pi-9router-ext in the env's settings.json packages list:
+ *  rewrite its entry to object form with empty resource lists, which pi
+ *  treats as a fully filtered-out package (nothing loads). */
+export function disable9routerExt(envDir: string): void {
+  const settingsPath = join(envDir, 'settings.json');
+  try {
+    const raw = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    if (!Array.isArray(raw.packages)) return;
+    const packages = raw.packages.map((p: any) =>
+      (typeof p === 'string' ? p.includes('pi-9router-ext') : p.source?.includes?.('pi-9router-ext'))
+        ? { source: 'npm:pi-9router-ext', extensions: [], skills: [], promptTemplates: [] }
+        : p);
+    if (JSON.stringify(packages) !== JSON.stringify(raw.packages)) {
+      raw.packages = packages;
+      writeFileSync(settingsPath, JSON.stringify(raw, null, 2));
+      log.piEnv.info(`Provider is not 9router — pi-9router-ext disabled in ${settingsPath}`);
+    }
+  } catch { /* no/invalid settings.json - nothing to disable */ }
+}
 
 /** Directory of per-user pi environments.
  *  AUTERE_PI_ENVS_DIR overrides the location — used by the e2e suite to
@@ -75,6 +95,13 @@ export function ensurePiEnv(user: string): string {
           log.piEnv.error(`Failed to seed ${file} for user "${user}":`, err);
         }
       }
+    }
+
+    // When pi runs against a non-9router provider, neutralize
+    // pi-9router-ext in the env's settings.json (object form with empty
+    // resource lists = package loads nothing; pi 'packages filter').
+    if (process.env.AUTERE_PROVIDER && process.env.AUTERE_PROVIDER !== '9router') {
+      disable9routerExt(envDir);
     }
 
     // Copy any extension config files (e.g. 9router-config.json)

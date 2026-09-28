@@ -1,2 +1,0 @@
-// ── Extension API types ──
-export {};

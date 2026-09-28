@@ -4,13 +4,12 @@ echo "Installing pi extensions"
 pi install npm:pi-9router-ext
 pi install npm:pi-memory
 
-echo "Copying Autere skill to pi"
-mkdir -p ~/.pi/agent/skills/autere && cp /tmp/SKILL.md ~/.pi/agent/skills/autere
-
-echo "Copying autere skill to pi"
-mkdir -p ~/.autere/pi-envs/admin/skills/autere && cp /tmp/SKILL.md ~/.autere/pi-envs/admin/skills/autere/SKILL.md
-
+echo "Initializing admin pi-env"
 mkdir -p ~/.autere/pi-envs/admin
+mkdir -p ~/.pi/agent/skills/autere && cp /home/autere/SKILL.md ~/.pi/agent/skills/autere
+mkdir -p ~/.autere/pi-envs/admin/skills/autere && cp /home/autere/SKILL.md ~/.autere/pi-envs/admin/skills/autere/SKILL.md
+rm /home/autere/SKILL.md
+
 if [ ! -f ~/.autere/pi-envs/admin/personas.json ]; then
   echo "Seeding Autere persona"
   PERSONA_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
@@ -19,8 +18,6 @@ printf '[{\n  "id": "%s",\n  "name": "Autere",\n  "description": "Specialist for
 else
   echo "Persona file exists, not seeding"
 fi
-
-rm /tmp/SKILL.md
 
 echo "Starting supervisord"
 supervisord -n -c /etc/supervisor/conf.d/supervisord.conf -l /home/autere/supervisord.log -j /home/autere/supervisord.pid

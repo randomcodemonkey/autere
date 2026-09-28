@@ -950,7 +950,13 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
     ],
   });
 
+  // Frontend-rendered sections whose ordering the backend still owns — the
+  // sort below places them alphabetically; the frontend renders their
+  // specialized UI when it sees these section ids.
+  sections.push({ id: 'personas', label: 'Personas', fields: [] });
+  sections.push({ id: 'apiTokens', label: 'API Tokens', fields: [] });
+
   // Canonical display order is decided here — the frontend renders sections
-  // in the given order (plus its own fixed sections) without re-sorting.
+  // in the given order without re-sorting.
   return sections.sort((a, b) => a.label.localeCompare(b.label));
 }

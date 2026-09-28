@@ -111,7 +111,7 @@ export function startBackend(): Promise<void> {
     const args = [
       'src/backend/index.ts',
       '--port', String(TEST_PORT),
-      '--monitor-auth', 'false',
+      '--autere-auth', 'false',
       // Always start a fresh pi session — resuming the last session would
       // attach to whatever state a previous run left behind.
       '--new-session',
@@ -126,10 +126,14 @@ export function startBackend(): Promise<void> {
         ...process.env,
         PI_MONITOR_AUTH: 'false',
         AUTERE_PI_ENVS_DIR: testEnvsDir,
-        // Users registry must not seed the real ~/.autere/monitor-users.json
-        AUTERE_USERS_FILE: join(testEnvsDir, 'monitor-users.json'),
+        // Users registry must not seed the real ~/.autere/autere-users.json
+        AUTERE_USERS_FILE: join(testEnvsDir, 'autere-users.json'),
         // AUTERE_DIR covers per-user settings (gitRepositories etc.) —
         // without it e2e writes into the REAL ~/.autere/users/<user>!
+        // 9router: piggyback on the live one (dev env) or own it (CI).
+        // 9router kills every other 9router process on startup, so exactly
+        // one 9router per machine — test backends never spawn their own.
+        AUTERE_NINE_ROUTER_URL: 'http://localhost:20128',
         AUTERE_DIR: join(testEnvsDir, 'autere-state'),
         // sandbox points at docker + the real home volume — off for tests
         PI_SANDBOX_IMAGE: 'off',
