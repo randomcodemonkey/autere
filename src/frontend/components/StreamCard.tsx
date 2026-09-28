@@ -88,8 +88,12 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   const openModelDropdown = useCallback(() => {
     setModelOpen((v) => !v);
     // Fetch while the list is empty — the backend serves the scoped catalog
-    // for idle sessions, but an earlier open may have raced a spawn.
-    if (modelsList.length === 0) {
+    // for idle sessions, but an earlier open may have raced a spawn. A lone
+    // 'unknown' placeholder also counts as missing: pi's availability
+    // refresh can leave only the current-model entry cached, and length===0
+    // guards would skip the fetch forever.
+    const onlyUnknown = modelsList.length === 1 && modelsList[0].id === 'unknown';
+    if (modelsList.length === 0 || onlyUnknown) {
       fetch(url(API.session.models))
         .then((res) => res.json())
         .then((data) => {
@@ -106,8 +110,8 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, modelId, sessionId }),
       });
-      const data = await res.json();
-      if (!data.success) onCommandError?.('Failed to change model');
+      const data = await res.json().catch(() => null);
+      if (!data?.success) onCommandError?.(data?.error || 'Failed to change model');
     } catch {
       onCommandError?.('Failed to change model');
     }

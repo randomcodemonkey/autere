@@ -13,6 +13,14 @@ const schema = [
   },
 ];
 
+
+// Backend appends personas/apiTokens sections to the schema (backend-driven
+// sections since f10778a) — mirror that contract in every stub.
+const backendSections = [
+  { id: 'apiTokens', label: 'API Tokens', fields: [] },
+  { id: 'personas', label: 'Personas', fields: [] },
+];
+
 function stubFetch(settings: Record<string, any>) {
   // Component tests run in an already-loaded page — cy.intercept and
   // window:before:load don't apply, so stub window.fetch directly.
@@ -20,7 +28,7 @@ function stubFetch(settings: Record<string, any>) {
     win.fetch = (input: any, _init: any) => {
       const u = String(input);
       let data: any = { success: true };
-      if (u.includes('/api/v1/settings/schema')) data = { success: true, data: schema };
+      if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...schema, ...backendSections] };
       else if (u.includes('/api/v1/settings')) data = { success: true, data: settings };
       else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
       return Promise.resolve({ json: () => Promise.resolve(data) } as any);
@@ -67,7 +75,7 @@ describe('SettingsCard per-model fields', () => {
       win.fetch = (input: any, _init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: perModelSchema };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...perModelSchema, ...backendSections] };
         else if (u.includes('/api/v1/settings')) data = { success: true, data: {
           enabledModels: ['z-ai/glm-5.3-flash', 'anthropic/claude-x'],
           modelThinkingLevels: { 'z-ai/glm-5.3-flash': 'high' },
@@ -96,7 +104,7 @@ describe('SettingsCard per-model fields', () => {
       win.fetch = (input: any, init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: perModelSchema };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...perModelSchema, ...backendSections] };
         else if (u.includes('/api/v1/settings') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); data = { success: true }; }
         else if (u.includes('/api/v1/settings')) data = { success: true, data: settings };
         else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
@@ -131,7 +139,7 @@ describe('SettingsCard number fields', () => {
       win.fetch = (input: any, init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: schemaData };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...schemaData, ...backendSections] };
         else if (u.includes('/api/v1/settings') && init?.method === 'PUT') data = { success: true };
         else if (u.includes('/api/v1/settings')) data = { success: true, data: settings };
         else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
@@ -153,7 +161,7 @@ describe('SettingsCard number fields', () => {
       win.fetch = (input: any, init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: numberSchema };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...numberSchema, ...backendSections] };
         else if (u.includes('/api/v1/settings') && init?.method === 'PUT') {
           savedBody = JSON.parse(init.body);
           data = { success: true };
@@ -183,7 +191,7 @@ describe('SettingsCard side menu', () => {
       win.fetch = (input: any, init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: twoSectionSchema };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...twoSectionSchema, ...backendSections] };
         else if (u.includes('/api/v1/settings')) {
           if (init?.method === 'POST') { putSpy?.(init); return Promise.resolve({ json: () => Promise.resolve({ success: true, data }) } as any); }
           data = { success: true, data: { imageModel: '' } };
@@ -267,7 +275,7 @@ describe('SettingsCard API tokens section', () => {
       win.fetch = (input: any, _init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: schema };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...schema, ...backendSections] };
         else if (u.includes('/api/v1/settings')) data = { success: true, data: {} };
         else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
         else if (u.endsWith('/api/v1/tokens')) data = { success: true, data: [] };
@@ -292,7 +300,7 @@ describe('SettingsCard API tokens section', () => {
       win.fetch = (input: any, _init: any) => {
         const u = String(input);
         let data: any = { success: true };
-        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: ordered };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...ordered, ...backendSections].sort((a, b) => a.label.localeCompare(b.label)) };
         else if (u.includes('/api/v1/settings')) data = { success: true, data: {} };
         else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
@@ -301,7 +309,7 @@ describe('SettingsCard API tokens section', () => {
     cy.mount(<SettingsCard sseConnected={true} />);
     cy.get('.settings-menu-btn').then(($btns) => {
       const labels = [...$btns].map((b) => b.textContent);
-      expect(labels).to.deep.eq(['Zulu', 'Alpha', 'Personas', 'API Tokens']);
+      expect(labels).to.deep.eq(['Alpha', 'API Tokens', 'Personas', 'Zulu']);
     });
   });
 });

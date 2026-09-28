@@ -180,7 +180,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
     }
 
     if (field.type === 'packages') {
-      const enabled: string[] = Array.isArray(value) ? value : [];
+      const enabled: string[] = (Array.isArray(value) ? value : []).map((p: any) => (typeof p === 'string' ? p : p?.source || String(p)));
       const custom = enabled.filter((pkg) => !availablePackages.includes(pkg));
       const togglePkg = (pkg: string, on: boolean) => {
         handleChange(field.key, on ? [...enabled, pkg] : enabled.filter((p) => p !== pkg));

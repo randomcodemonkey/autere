@@ -48,7 +48,7 @@ trap cleanup EXIT
 
 section "start isolated backend"
 export AUTERE_DIR=$TD/state AUTERE_PI_ENVS_DIR=$TD/pi-envs AUTERE_USERS_FILE=$TD/state/users.json \
-  AUTERE_ADMIN_USER=admin AUTERE_ADMIN_PASSWORD=clitest PI_SANDBOX_IMAGE=off AUTERE_LOG_LEVEL=warn
+  AUTERE_ADMIN_USER=admin INITIAL_PASSWORD=clitest AUTERE_SANDBOX_IMAGE=off AUTERE_LOG_LEVEL=warn
 node node_modules/tsx/dist/cli.mjs src/backend/index.ts --port $PORT --autere-auth true \
   > "$TD/backend.log" 2>&1 &
 BACKEND_PID=$!

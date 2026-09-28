@@ -215,6 +215,13 @@ const scrubFetch: typeof globalThis.fetch = async (url, init) => {
 // Named export so smoke-test.mjs can exercise the wrapper directly.
 export { scrubFetch };
 
+interface SessionTarget {
+	baseUrl: string;
+	apiKey: string;
+	headers: Record<string, string>;
+	modelId: string;
+}
+
 interface RouterConfig {
 	baseUrl: string;
 	apiKey: string;
@@ -232,6 +239,31 @@ function extraPrompt(config: RouterConfig): string {
 	// unset or empty → default (set to a custom text to override)
 	if (config.imageExtraPrompt) return config.imageExtraPrompt;
 	return DEFAULT_EXTRA_PROMPT;
+}
+
+/** Resolve a USER-SUPPLIED model id (Settings -> Images input) against pi's
+ *  catalog: only providers with resolvable auth can serve image generation.
+ *  Used when the active provider is NOT 9router (no discovery there). */
+async function resolveUserModelTarget(ctx: any, modelId: string): Promise<SessionTarget | undefined> {
+	const model = ctx?.modelRegistry?.getModels?.().find((m: any) => m.id === modelId || `${m.provider}/${m.id}` === modelId);
+	if (!model) {
+		console.error(`[pi-images] configured image model "${modelId}" not found in the model catalog`);
+		return undefined;
+	}
+	if (model.api && String(model.api) !== "openai-completions") {
+		console.error(`[pi-images] model "${modelId}" API "${model.api}" is not openai-completions — direct image generation unsupported`);
+		return undefined;
+	}
+	let apiKey = "";
+	let headers: Record<string, string> = {};
+	try {
+		const auth = await ctx.modelRegistry.getAuth(model);
+		if (auth?.auth?.apiKey) apiKey = String(auth.auth.apiKey);
+		if (auth?.auth?.headers) headers = { ...auth.auth.headers };
+	} catch (err) {
+		console.error("[pi-images] model auth resolution failed:", err);
+	}
+	return { baseUrl: String(model.baseUrl || "").replace(/\/+$/, ""), apiKey, headers, modelId: model.id };
 }
 
 function piAgentDir(): string {
@@ -327,15 +359,18 @@ async function generateViaChat(
 	model: string,
 	prompt: string | OutputPart[],
 	signal?: AbortSignal,
+	extraHeaders?: Record<string, string>,
 ): Promise<OutputPart[]> {
 	const content = typeof prompt === "string" ? prompt : prompt.map((p) =>
 		p.type === "image"
 				? { type: "image_url", image_url: { url: `data:${p.mimeType};base64,${p.data}` } }
 				: { type: "text", text: p.text ?? "" },
 	);
-	const res = await fetch(`${config.baseUrl}/v1/chat/completions`, {
+	const headers: Record<string, string> = { "Content-Type": "application/json", ...extraHeaders };
+	if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
+	const res = await fetch(`${config.baseUrl}/chat/completions`, {
 		method: "POST",
-		headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+		headers,
 		body: JSON.stringify({
 			model,
 			messages: [{ role: "user", content }],
@@ -362,10 +397,13 @@ async function generateViaImagesApi(
 	model: string,
 	prompt: string,
 	signal?: AbortSignal,
+	extraHeaders?: Record<string, string>,
 ): Promise<OutputPart[]> {
+	const headers: Record<string, string> = { "Content-Type": "application/json", ...extraHeaders };
+	if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
 	const res = await fetch(`${config.baseUrl}/v1/images/generations`, {
 		method: "POST",
-		headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+		headers,
 		body: JSON.stringify({ model, prompt, n: 1, response_format: "b64_json" }),
 		signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
 	});
@@ -437,16 +475,34 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({
 			prompt: Type.String({ description: "Detailed description of the image to generate" }),
 		}),
-		async execute(_toolCallId, params, signal, onUpdate) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const is9router = (ctx?.model?.provider ?? "9router") === "9router";
 			const config = loadRouterConfig();
-			if (!config.apiKey) {
-				return {
-					content: [{ type: "text", text: "Error: no API key configured for 9router (9router-config.json)." }],
-					details: {},
-				};
+			let session: SessionTarget | undefined;
+			if (is9router) {
+				if (!config.apiKey) {
+					return {
+						content: [{ type: "text", text: "Error: no API key configured for 9router (9router-config.json)." }],
+						details: {},
+					};
+				}
+			} else {
+				if (!config.imageModel) {
+					return {
+						content: [{ type: "text", text: "Error: no image model configured. Set it in Settings -> Images (provider is not 9router — no auto-discovery)." }],
+						details: {},
+					};
+				}
+				session = await resolveUserModelTarget(ctx, config.imageModel);
+				if (!session) {
+					return {
+						content: [{ type: "text", text: `Error: image model "${config.imageModel}" not found in the model catalog (or its auth is unresolvable). Check Settings -> Images.` }],
+						details: {},
+					};
+				}
 			}
 
-			const model = await resolveImageModel(config);
+			const model = is9router ? await resolveImageModel(config) : session!.modelId;
 			if (!model) {
 				return {
 					content: [
@@ -460,16 +516,21 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			onUpdate?.({ content: [{ type: "text", text: `Generating image with ${model}…` }] });
+			onUpdate?.({ content: [{ type: "text", text: `Generating image with ${model}…` }], details: {} });
 
+			// 9router's config baseUrl has no /v1 (its client adds it); session
+			// model baseUrls already end in /v1 (pi-ai convention).
+			const target = is9router
+				? { ...config, baseUrl: `${config.baseUrl.replace(/\/+$/, "")}/v1` }
+				: { baseUrl: session!.baseUrl, apiKey: session!.apiKey };
 			let parts: OutputPart[];
 			try {
 				try {
-					parts = await generateViaChat(config, model, params.prompt, signal);
+					parts = await generateViaChat(target as RouterConfig, model, params.prompt, signal, session?.headers);
 				} catch (chatErr: any) {
 					if (signal?.aborted) throw chatErr;
 					console.error("[pi-images] chat/modality path failed, trying images API:", chatErr?.message || chatErr);
-					parts = await generateViaImagesApi(config, model, params.prompt, signal);
+					parts = await generateViaImagesApi(target as RouterConfig, model, params.prompt, signal, session?.headers);
 				}
 			} catch (err: any) {
 				console.error("[pi-images] Image generation failed:", err);
@@ -521,16 +582,34 @@ export default function (pi: ExtensionAPI) {
 			}),
 			prompt: Type.String({ description: "Description of the edit to apply" }),
 		}),
-		async execute(_toolCallId, params, signal, onUpdate) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const is9router = (ctx?.model?.provider ?? "9router") === "9router";
 			const config = loadRouterConfig();
-			if (!config.apiKey) {
-				return {
-					content: [{ type: "text", text: "Error: no API key configured for 9router (9router-config.json)." }],
-					details: {},
-				};
+			let session: SessionTarget | undefined;
+			if (is9router) {
+				if (!config.apiKey) {
+					return {
+						content: [{ type: "text", text: "Error: no API key configured for 9router (9router-config.json)." }],
+						details: {},
+					};
+				}
+			} else {
+				if (!config.imageModel) {
+					return {
+						content: [{ type: "text", text: "Error: no image model configured. Set it in Settings -> Images (provider is not 9router — no auto-discovery)." }],
+						details: {},
+					};
+				}
+				session = await resolveUserModelTarget(ctx, config.imageModel);
+				if (!session) {
+					return {
+						content: [{ type: "text", text: `Error: image model "${config.imageModel}" not found in the model catalog (or its auth is unresolvable). Check Settings -> Images.` }],
+						details: {},
+					};
+				}
 			}
 
-			const model = await resolveImageModel(config);
+			const model = is9router ? await resolveImageModel(config) : session!.modelId;
 			if (!model) {
 				return {
 					content: [{ type: "text", text: "Error: no image-generation model available on 9router." }],
@@ -556,11 +635,14 @@ export default function (pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: `Error reading image: ${err?.message || err}` }], details: {} };
 			}
 
-			onUpdate?.({ content: [{ type: "text", text: `Editing image with ${model}…` }] });
+			onUpdate?.({ content: [{ type: "text", text: `Editing image with ${model}…` }], details: {} });
 
 			let parts_out: OutputPart[];
 			try {
-				parts_out = await generateViaChat(config, model, parts, signal);
+				const target = is9router
+					? { ...config, baseUrl: `${config.baseUrl.replace(/\/+$/, "")}/v1` }
+					: { baseUrl: session!.baseUrl, apiKey: session!.apiKey };
+				parts_out = await generateViaChat(target as RouterConfig, model, parts, signal, session?.headers);
 			} catch (err: any) {
 				if (signal?.aborted) throw err;
 				console.error("[pi-images] Image edit failed:", err);
@@ -584,6 +666,7 @@ export default function (pi: ExtensionAPI) {
 			if (content.length === 0) content.push({ type: "text", text: "Image edited." });
 
 			return {
+				content,
 				details: { model, imageCount: images.length, savedPaths },
 			};
 		},

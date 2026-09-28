@@ -265,6 +265,15 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         setClientSession(c.user, c.clientId, t.routedSessionFile());
         return t;
       }
+      // Reloaded URL for a session pi has not written yet (valid UUID, no
+      // jsonl): activate created the synthetic bootstrap, so operations on
+      // this id must spawn a real process too — never 'No active session'.
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(explicitId)) {
+        if (!spawn) return undefined;
+        const t = await pm.getOrCreate(c.user, null);
+        setClientSession(c.user, c.clientId, t.routedSessionFile());
+        return t;
+      }
     }
     return c.session;
   };
@@ -276,7 +285,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
   // session's process in one shape. sess may be undefined when no session
   // is bound/resolvable — a degenerate payload is returned (the UI treats
   // it as invalid snapshot).
-  const buildBootstrapData = (c: Ctx, sess?: UserSession, disk?: SessionInfo) => {
+  const buildBootstrapData = async (c: Ctx, sess?: UserSession, disk?: SessionInfo) => {
     const user = c.user;
     const st = sess?.state.sessionState ?? null;
     let streamHistory: ReturnType<typeof readSessionHistory> = [];
@@ -345,9 +354,26 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       streamHistory,
       historySessionId: st?.sessionId ?? null,
       availableSessions: pm.listSessions(user, c.viewed),
-      availableModels: sess
-        ? scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model)
-        : getEnabledModelEntries(),
+      // The spawn-path model fetch is async and can race this bootstrap —
+      // an empty catalog here ships the 'unknown' placeholder as the only
+      // picker entry. One bounded await closes the race when nothing has
+      // resolved yet.
+      availableModels: await (sess
+        ? (sess.state.availableModels.length > 0
+          ? scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model)
+          : (async () => {
+              try {
+                const models = await Promise.race([
+                  sess.rpc.getAvailableModels(),
+                  new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+                ]);
+                sess.state.availableModels = models.map((m: any) => ({
+                  provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
+                }));
+              } catch { /* wedged provider — ship the fallback list */ }
+              return scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model);
+            })())
+        : getEnabledModelEntries()),
       extensions: extensionsState,
     };
   };
@@ -661,13 +687,21 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // second read on a consumed stream would hang forever.
       const body = await readBody(c.req).catch(() => ({}) as any);
 
-      // Admin-only: scope the new pi session to a working directory (the
+      // Admin-only: scope the new pi session to working directories (the
       // sandbox work area — the cwd the docker-wrapped pi process runs in,
       // translated by planSandboxMounts into the container's $HOME/work/…
-      // layout). Validated BEFORE anything is spawned.
+      // layout). The first entry is the session cwd; all are mounted as work
+      // roots. Relative inputs resolve from $HOME. Validated BEFORE anything
+      // is spawned.
+      const resolveWorkdir = (raw: string): string => {
+        let wd = raw.trim();
+        if (wd.startsWith('~/')) wd = wd.slice(1);
+        if (!/^\//.test(wd)) wd = join(homedir(), wd);
+        return wd.replace(/\/+$/, '');
+      };
       let workdir: string | undefined;
       if (body?.workdir !== undefined) {
-        const wd = typeof body.workdir === 'string' ? body.workdir.trim() : '';
+        const wd = typeof body.workdir === 'string' ? resolveWorkdir(body.workdir) : '';
         if (getUserRole(c.user) !== 'admin') {
           sendJSON(c.res, { success: false, error: 'workdir requires admin role' }, 403);
           return;
@@ -699,6 +733,46 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         }
         workdir = wd;
       }
+      // Multi-workdir form (New Session modal). Same validation per entry;
+      // deduped, order preserved; entry [0] doubles as the session cwd.
+      let workdirs: string[] | undefined;
+      if (Array.isArray(body?.workdirs)) {
+        if (getUserRole(c.user) !== 'admin') {
+          sendJSON(c.res, { success: false, error: 'workdirs require admin role' }, 403);
+          return;
+        }
+        const list: string[] = [];
+        for (const raw of body.workdirs) {
+          const wd = typeof raw === 'string' ? resolveWorkdir(raw) : '';
+          if (!/^\//.test(wd) || wd.includes('\0')) {
+            sendJSON(c.res, { success: false, error: 'workdirs must be absolute paths' }, 400);
+            return;
+          }
+          const roots = (() => {
+            const dirs = isRegisteredUser(c.user) ? getUserAllowedDirs(c.user) : [];
+            return dirs.length ? dirs.map((d) => d.path) : [homedir()];
+          })();
+          const inside = roots.some((r) => {
+            const root = r.replace(/\/+$/, '');
+            return wd === root || wd.startsWith(root + '/');
+          });
+          if (!inside) {
+            sendJSON(c.res, { success: false, error: `workdir ${wd} is outside your allowed directories (${roots.join(', ')})` }, 403);
+            return;
+          }
+          try {
+            if (!statSync(wd).isDirectory()) {
+              sendJSON(c.res, { success: false, error: `workdir ${wd} is not a directory` }, 400);
+              return;
+            }
+          } catch {
+            sendJSON(c.res, { success: false, error: `workdir ${wd} does not exist` }, 400);
+            return;
+          }
+          if (!list.includes(wd)) list.push(wd.replace(/\/+$/, ''));
+        }
+        if (list.length) workdirs = list;
+      }
 
       // Persona for the new session — validated BEFORE creating anything,
       // so an invalid id fails cleanly without leaving a stray session.
@@ -717,7 +791,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // creation fails.
       let fresh;
       try {
-        fresh = await pm.getOrCreate(c.user, null, workdir ? { cwd: workdir } : {});
+        fresh = await pm.getOrCreate(c.user, null, workdir ? { cwd: workdir, workdirs } : workdirs ? { cwd: workdirs[0], workdirs } : {});
       } catch (err: any) {
         log.http.error('New session spawn failed:', err);
         sendJSON(c.res, { success: false, error: `Failed to create session: ${err?.message || err}` }, 503);
@@ -869,6 +943,13 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           cwd: null,
         };
       }
+      // Any valid UUID is treated as a fresh (empty) session: ids point at
+      // jsonl filenames that pi writes on the FIRST message, so a reloaded
+      // URL for a never-used session must activate as new — not 404. Non-UUID
+      // garbage (typos, 'haha-this-is-not-an-id') stays a 404.
+      if (!sess && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
+        sess = { id: sessionId, sessionFile: '', sessionName: null, parentSession: null, createdAt: Date.now(), lastActivity: Date.now(), cwd: null };
+      }
       if (!sess) { sendJSON(c.res, { success: false, error: 'Session not found' }, 404); return; }
 
       // pi refuses to load a session whose stored working directory no
@@ -901,7 +982,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       log.http.info(`activate done: ${sessionId}${target ? ' (live)' : ' (idle)'}`);
       // Same payload shape as GET /bootstrap — the requesting client
       // applies it with the exact same code path.
-      sendJSON(c.res, { success: true, data: buildBootstrapData(c, target, sess) });
+      sendJSON(c.res, { success: true, data: await buildBootstrapData(c, target, sess) });
     },
   });
 
@@ -919,7 +1000,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       await pm.terminate(c.user, sess.sessionFile);
       const deletedDir = join(homedir(), '.autere', 'deleted-sessions');
       mkdirSync(deletedDir, { recursive: true });
-      renameSync(sess.sessionFile, join(deletedDir, basename(sess.sessionFile)));
+      // Empty sessions have no jsonl yet (created on first message) — only
+      // archive when the file exists.
+      const exists = sess.sessionFile && existsSync(sess.sessionFile);
+      if (exists) renameSync(sess.sessionFile, join(deletedDir, basename(sess.sessionFile)));
       broadcastToUser(c.user, { type: 'sessions', data: pm.listSessions(c.user, c.viewed) });
       sendJSON(c.res, { success: true });
     },
@@ -950,7 +1034,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           diskInfo = pm.listSessions(c.user, viewedSessions(c.user)).find(i => i.sessionFile === file);
         }
       }
-      sendJSON(c.res, { success: true, data: buildBootstrapData(c, c.session, !c.session ? diskInfo : undefined) });
+      sendJSON(c.res, { success: true, data: await buildBootstrapData(c, c.session, !c.session ? diskInfo : undefined) });
     },
   });
 
@@ -1050,6 +1134,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         if (!t) { sendTargetMissing(c); return; }
         const { provider, modelId } = body;
         if (!provider || !modelId) { sendJSON(c.res, { success: false, error: 'provider and modelId are required' }, 400); return; }
+        log.http.info(`set_model ${provider}/${modelId} for ${c.user} session=${t.state.sessionState?.sessionId ?? '?'}`);
         const model = await t.rpc.setModel(provider, modelId);
         if (model) {
           t.state.sessionState.model = { provider: model.provider, id: model.id, name: model.name || model.id };
@@ -1057,6 +1142,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         }
         sendJSON(c.res, { success: true });
       } catch (err: any) {
+        log.http.error(`set_model failed: ${err?.message || err}${err?.stack ? '\n' + err.stack : ''}`);
         sendJSON(c.res, { success: false, error: `Failed to set model: ${err.statusCode ? err.message : err}` }, err.statusCode || 500);
       }
     },

@@ -543,8 +543,12 @@ export function getImagePreviewQuality(user: string): ImagePreviewQuality | 'ful
  * ~/.pi/agent/settings.json. Installing a new extension with pi adds it here;
  * these are offered in the Settings view as available to enable.
  */
+function pkgSource(p: unknown): string {
+  return typeof p === 'string' ? p : (p as { source?: string })?.source || String(p);
+}
+
 export function getAvailablePackages(): string[] {
-  return readJsonCached(join(PI_DIR, 'settings.json'))?.packages || [];
+  return (readJsonCached(join(PI_DIR, 'settings.json'))?.packages || []).map(pkgSource);
 }
 
 /**
@@ -554,7 +558,7 @@ export function getAvailablePackages(): string[] {
  */
 export function getEnabledPackages(user: string): string[] {
   const envSettings = readJsonCached(join(getPiEnvDir(user), 'settings.json'));
-  if (envSettings && Array.isArray(envSettings.packages)) return envSettings.packages;
+  if (envSettings && Array.isArray(envSettings.packages)) return envSettings.packages.map(pkgSource);
   return getAvailablePackages();
 }
 
@@ -755,18 +759,27 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
   // Options are resolved by the caller (routes.ts) from the viewed session's
   // pi rpc — the same get_available_models that backs chat model selection.
   if (isPiImagesInstalled()) {
+    // 9router is discoverable (capabilities.imageOutput over /v1/models);
+    // any other provider is not — the user types the model id instead.
+    const provider = process.env.AUTERE_PROVIDER || '9router';
+    const is9router = provider === '9router';
     sections.push({
       id: 'images',
       label: 'Images',
       fields: [
-        {
+        is9router ? {
           key: 'imageModel',
           label: 'Image Model',
-          type: 'select',
+          type: 'select' as const,
           options: imageModelOptions,
           description: imageModelOptions.length > 0
             ? 'Model used to generate images (e.g. "draw me a panda"). Empty = auto-select the first available.'
             : 'No image-capable models found on 9router. Add an upstream with image output support, then reload settings.',
+        } : {
+          key: 'imageModel',
+          label: 'Image Model',
+          type: 'text' as const,
+          description: `Model id used for image generation (provider "${provider}" — no discovery available). Must match a model the provider offers; image generation fails without it.`,
         },
         {
           key: 'imageExtraPrompt',

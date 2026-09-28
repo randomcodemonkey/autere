@@ -4,3 +4,5 @@ docker/autere-repo
 dist
 sessions
 *.log
+!extras
+extras/*/node_modules

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Modal } from './Modal';
+import { SortableList } from './SortableList';
 import { url } from '../base-path';
 import { API } from '../api-paths';
 import { uiSessionName } from '../session-name';
@@ -11,10 +12,12 @@ interface SessionViewProps {
   sessionName: string | null;
   compacting: boolean;
   isStreaming: boolean;
+  /** Admin-only: show the sandbox workdir field in the new-session form */
+  canSetWorkdir?: boolean;
   onAbort: () => void;
   onAbortCompaction: () => void;
-  /** Creates the session: chosen persona id (null = none) + form name */
-  onNewSession: (personaId: string | null, sessionName: string) => void;
+  /** Creates the session: chosen persona id (null = none) + form name + sandbox workdirs */
+  onNewSession: (personaId: string | null, sessionName: string, workdirs?: string[]) => void;
   onSwitchSession: (sessionId: string) => void;
   /** True while a switch request is in flight — blocks further actions */
   switching?: boolean;
@@ -47,7 +50,7 @@ export function formatSessionTime(ts: number, locale?: string): string {
  */
 export const SessionView: React.FC<SessionViewProps> = ({
   statusType, sessionId, sessionName,
-  compacting, isStreaming,
+  compacting, isStreaming, canSetWorkdir = false,
   onAbort, onAbortCompaction, onNewSession, onSwitchSession,
   switching = false,
 }) => {
@@ -63,6 +66,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
   // 'list' = sessions listing; 'new' = the new-session form
   const [view, setView] = useState<'list' | 'new'>('list');
   const [newNameInput, setNewNameInput] = useState('');
+  const [newWorkdirs, setNewWorkdirs] = useState<string[]>([]);
   const [activeOnly, setActiveOnly] = useState(false);
   const searchSeq = useRef(0);
 
@@ -130,8 +134,8 @@ export const SessionView: React.FC<SessionViewProps> = ({
   }, []);
 
   const createNewSession = useCallback(() => {
-    onNewSession(personaId || null, newNameInput.trim());
-  }, [onNewSession, personaId, newNameInput]);
+    onNewSession(personaId || null, newNameInput.trim(), canSetWorkdir ? newWorkdirs : undefined);
+  }, [onNewSession, personaId, newNameInput, newWorkdirs, canSetWorkdir]);
 
   const visibleSessions = activeOnly ? results.filter((s) => s.active || s.streaming) : results;
 
@@ -172,6 +176,18 @@ export const SessionView: React.FC<SessionViewProps> = ({
             ))}
           </select>
         </div>
+        {canSetWorkdir && (
+          <div className="settings-field session-workdirs-row">
+            <label className="settings-label">Workdirs</label>
+            <div className="settings-description">If workdirs are added, a sandboxed session is created</div>
+            <SortableList
+              items={newWorkdirs}
+              onChange={setNewWorkdirs}
+              placeholder="/home/slop/code/…"
+              addLabel="Add workdir"
+            />
+          </div>
+        )}
       </div>
       <div className="btn-group">
         <button className="btn btn-primary session-create-btn" onClick={createNewSession} disabled={switching}>

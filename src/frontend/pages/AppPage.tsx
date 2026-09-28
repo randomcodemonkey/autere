@@ -200,7 +200,12 @@ export function AppPage({
     }
   }, []);
 
-  const handleNewSession = useCallback((personaId?: string | null, sessionName?: string) => {
+  const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[]) => {
+    const bad = (workdirs || []).find((wd) => !wd.startsWith('/'));
+    if (bad) {
+      setSessionError('Workdirs must be absolute paths');
+      return;
+    }
     setCreatingSession(true);
     setSessionError(null);
     fetch(url(API.sessions.list), {
@@ -212,6 +217,7 @@ export function AppPage({
         locale: navigator.language,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         ...(personaId ? { personaId } : {}),
+        ...(workdirs && workdirs.length ? { workdirs } : {}),
       }),
     })
       .then(res => res.json())
@@ -333,6 +339,7 @@ export function AppPage({
               sessionName={sessionState.sessionName}
               compacting={sessionState.compacting}
               isStreaming={sessionState.isStreaming}
+              canSetWorkdir={userRole === 'admin'}
               onAbort={handleAbort}
               onAbortCompaction={handleAbortCompaction}
               onNewSession={handleNewSession}
@@ -388,7 +395,10 @@ export function AppPage({
         <div className="modal-body">
           <div style={{ color: '#f44336' }}>{sessionError}</div>
           <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
-            <button className="btn btn-primary" onClick={() => handleNewSession(null)}>Try Again</button>
+            {/* No auto-retry button: the error may be a command/model failure
+                rather than session creation, and a blind "Try Again" spawn
+                created an unrelated unsandboxed session. Users retry via the
+                visible controls (+ / model picker / re-send). */}
             <button className="btn" onClick={() => setSessionError(null)}>Close</button>
           </div>
         </div>

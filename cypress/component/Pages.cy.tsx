@@ -61,22 +61,26 @@ describe('RootRedirect', () => {
     cy.get('[data-cy="location"]').should('have.text', '/session/new-session-1');
   });
 
-  it('shows an error when session creation fails', () => {
+  it('lands on the synthetic no-session view when session creation fails', () => {
     cy.intercept('GET', '**/api/v1/sessions', { success: true, data: [] }).as('sessions');
     cy.intercept('POST', '**/api/v1/sessions', {
-      statusCode: 500,
-      body: { success: false },
+      statusCode: 503,
+      body: { success: false, error: 'Failed to create session: docker socket not available' },
     }).as('newSession');
     renderAt('/', <RootRedirect />);
     cy.wait('@sessions');
     cy.wait('@newSession');
-    cy.contains('No sessions available').should('exist');
+    // App must stay usable: land on the synthetic '-' route (error surfaces
+    // via AppPage's modal in the real app), not a dead-end error page.
+    cy.get('[data-cy="session-page"]').should('exist');
+    cy.get('[data-cy="location"]').should('have.text', '/session/-');
   });
 
-  it('shows an error when the sessions fetch fails', () => {
+  it('lands on the synthetic no-session view when the sessions fetch fails', () => {
     cy.intercept('GET', '**/api/v1/sessions', { statusCode: 500, body: 'error' }).as('sessions');
     renderAt('/', <RootRedirect />);
     cy.wait('@sessions');
-    cy.contains('Failed to load sessions.').should('exist');
+    cy.get('[data-cy="session-page"]').should('exist');
+    cy.get('[data-cy="location"]').should('have.text', '/session/-');
   });
 });

@@ -145,17 +145,13 @@ export function ensurePiEnv(user: string): string {
   return envDir;
 }
 
-/** Docker sandbox support: container paths must be mounted by VOLUME NAME —
- *  the docker daemon resolves plain -v paths on the HOST, not inside this
- *  container. Returns EVERY docker-volume-backed mount of this container
- *  (shallow → deep mount order, so children can shadow parents):
- *  [{ volume, target }] e.g. [{ volume: 'slopbox_home', target: '/home/slop' },
- *  { volume: 'code', target: '/home/slop/code' }, ...]. The sandbox mounts
- *  the subset needed for home + pi env dir + session cwd. */
-/** Validate that an image can actually run pi (bash + binary present).
+/** Every docker-volume-backed mount of this container (shallow → deep, so
+ *  children can shadow parents): [{ volume, target }]. Container paths must
+ *  be mounted by VOLUME NAME — plain -v paths resolve on the HOST, not here.
+ *  The sandbox mounts the subset it needs (see planSandboxMounts). */
+/** Validate that an image can actually run pi (binary present on PATH).
  *  Returns null when OK, else an error message. Pulls the image if missing —
- *  ponytail: a 3.6 GB first pull can eat the whole timeout, but that's the
- *  honest outcome either way. */
+ *  ponytail: a first pull can take minutes; the honest outcome either way. */
 export async function validateSandboxImage(image: string): Promise<string | null> {
   const { execFile } = await import('node:child_process');
   try {
@@ -170,15 +166,15 @@ export async function validateSandboxImage(image: string): Promise<string | null
   }
 }
 
-export const DEFAULT_SANDBOX_IMAGE = 'randomcodemonkey.org/slopbox:latest';
+export const DEFAULT_SANDBOX_IMAGE = 'randomcodemonkey.org/autere:latest';
 const OFF = /^(off|none|disabled)$/i;
 
-/** Sandbox disable (off/none/disabled) is an ADMIN escape hatch only —
- *  every other role always sandboxes. */
+/** Resolve pi sandbox image */
 export function resolveSandboxImage(user: string, setting?: string, env?: string): string {
   const admin = isRegisteredUser(user) && getUserRole(user) === 'admin';
   let set = String(setting ?? '').trim();
   let envv = String(env ?? '').trim();
+
   // The off/none/disabled setting is an admin-only escape hatch; a
   // server-level AUTERE_SANDBOX_IMAGE=off is the operator kill switch (e2e).
   if (OFF.test(set)) { if (!admin) set = ''; else return ''; }
@@ -186,12 +182,13 @@ export function resolveSandboxImage(user: string, setting?: string, env?: string
   return set || envv || DEFAULT_SANDBOX_IMAGE;
 }
 
-// ── Sandbox workspace planning ───────────────────────────────────────────
-// Container layout: $HOME stays the image's home (/home/slop). The pi env
-// dir is always mounted path-identical. Work areas mount under $HOME/work/:
+// ── Sandbox workspace planning ───────────────────
+// Container layout: $HOME stays the image's home. The pi env dir mounts
+// path-identical. Work areas mount under $HOME/work/:
 //   - users with allowedDirs: each allowed dir at $HOME/work/<basename>
 //   - admins without allowedDirs: the whole autere home at $HOME/work/autere
-// A session cwd inside a root maps to $HOME/work/<root>/<relative path>.
+//   - per-session workdirs: like allowedDirs, skipped when already covered
+// A session cwd inside a root maps to that root's work path + relative part.
 
 export interface SandboxMount {
   volume: string;
@@ -203,18 +200,16 @@ export interface SandboxMount {
 
 export interface SandboxPlan {
   mounts: SandboxMount[];
-  /** Container cwd for the -w flag; undefined = fallback (/home/slop). */
+  /** Container cwd for the -w flag; undefined = spawn falls back to $HOME. */
   cwd?: string;
 }
 
-// work base is resolved per HOME inside planSandboxMounts (const moved there)
-
 /** Copy the master agent dir's shared pieces into the user env dir so they
  *  cross the sandbox boundary without mounting ~/.pi (extensions may point
- *  at code/autere/extras sources; dereferenced copies keep that private).
- *  npm stays a SYMLINK: it resolves in-container via the master-npm subpath
- *  mount planned below — the master npm dir holds no secrets, only pi's
- *  package project. Refreshed every sandbox spawn to pick up changes. */
+ *  at repo source dirs; dereferenced copies keep that private). npm stays a
+ *  SYMLINK: resolves in-container via the master-npm subpath mount below —
+ *  npm holds no secrets, just pi's package install. Refreshed every
+ *  sandbox spawn to pick up changes. */
 export function prepareSandboxEnvDir(agentDir: string): void {
   for (const name of ['extensions', 'skills', 'bin', 'tmp']) {
     const link = join(agentDir, name);
@@ -228,55 +223,88 @@ export function prepareSandboxEnvDir(agentDir: string): void {
   }
 }
 
-/** Persistent per-user sandbox home volume (created lazily): the container's
- *  $HOME is a NAMED docker volume so ~/.cache/.gitconfig/... survive spawns
- *  without exposing the master ~/.pi (no gitconfig/ssh/tokens are ever
- *  seeded by autere; users get an empty home owned by the sandbox uid). */
+/** Persistent per-user sandbox home volume (created lazily): the sandbox's
+ *  $HOME is a named docker volume so HOME files survive spawns without
+ *  exposing the master ~/.pi. Contents stay empty — autere seeds nothing
+ *  (no gitconfig/ssh/tokens). */
 export function ensureSandboxHomeVolume(user: string, image: string): string {
   const vol = `autere-home-${user}`;
   try {
     execFileSync('docker', ['volume', 'inspect', vol], { stdio: 'ignore' });
     return vol; // exists
-  } catch { /* create + bootstrap */ }
+  } catch { /* not found — create + chown below */ }
   try {
     execFileSync('docker', ['volume', 'create', vol], { stdio: 'ignore' });
-    // entrypoint override: the image default is supervisord (+ full extension
-    // install) — a bootstrap helper only needs a shell.
+    // entrypoint override: the image default is supervisord — bootstrap
+    // only needs a shell.
     execFileSync('docker', ['run', '--rm', '-u', '0', '--entrypoint', 'sh', '-v', `${vol}:/h`, image, '-c',
       'chown -R 1001:1001 /h'], { stdio: 'ignore' });
   } catch (e: any) {
-    // Best effort: the home stays empty/root-owned — spawns still work or fail
-    // loudly in pi; a broken exec shouldn't block per turn.
+    // Best effort: empty/root-owned home — spawns still work or fail loudly
+    // in pi; a broken exec shouldn't block turn start.
     log.rpc.warn?.(`sandbox home volume bootstrap failed: ${String(e && e.message || e)}`);
   }
   return vol;
 }
 
+/** Docker's volume-subpath mount fails container creation when the
+ *  subpath doesn't exist inside the volume (moby#47842) — the daemon never
+ *  creates it. Pre-create every missing subpath dir in its volume, using
+ *  the sandbox image itself, and match the backend's uid so the mounted
+ *  dirs stay writable. Idempotent; best effort (errors surface later at
+ *  spawn with the real docker message). */
+export function ensureVolumeSubpaths(mounts: SandboxMount[], image: string): void {
+  const byVolume = new Map<string, string[]>();
+  for (const m of mounts) {
+    if (m.volume.startsWith('/') || !m.subpath) continue; // binds: host path must exist by nature
+    (byVolume.get(m.volume) ?? byVolume.set(m.volume, []).get(m.volume)!).push(m.subpath);
+  }
+  const uid = process.getuid?.() ?? 1001;
+  const gid = process.getgid?.() ?? uid;
+  for (const [vol, subs] of byVolume) {
+    // One container per volume: test each subpath, mkdir+chown only the
+    // missing ones. mkdir -p is a no-op for existing dirs — never destructive.
+    const script = subs.map((s) =>
+      `test -d "/v/${s}" || { mkdir -p "/v/${s}" && chown ${uid}:${gid} "/v/${s}" $(dirname "/v/${s}") || true; }`
+    ).join('; ');
+    try {
+      execFileSync('docker', ['run', '--rm', '-u', '0', '--entrypoint', 'sh', '-v', `${vol}:/v`, image, '-c', script], { stdio: 'ignore', timeout: 30000 });
+    } catch (e: any) {
+      log.rpc?.warn?.(`volume subpath prep failed for ${vol}: ${String(e && e.message || e)}`);
+    }
+  }
+}
+
 /** Compute the mount set + translated cwd for one sandboxed spawn. */
-export function planSandboxMounts(user: string, cwd: string | undefined, agentDir: string, homeVolume?: string): SandboxPlan {
+export function planSandboxMounts(user: string, cwd: string | undefined, agentDir: string, homeVolume?: string, extraRoots: string[] = []): SandboxPlan {
   const mounts = discoverVolumeMounts();
   const home = process.env.HOME || '/home/slop';
-  // HOME need not be volume-backed (e.g. the autere container mounts only
-  // ~/.autere, ~/.pi, ~/.9router) — only the dirs the sandbox actually uses
-  // must be. homeM is used solely for subpath computation of those dirs.
+  // HOME itself need not be volume-backed (e.g. the autere container mounts
+  // only ~/.autere, ~/.pi, ~/.9router) — each dir the sandbox uses is
+  // resolved against its own mount. homeM only anchors subpath math.
   const homeM = mounts.find((m) => m.target === home);
   const workBase = `${home}/work`;
   const out: SandboxMount[] = [];
   if (homeVolume) out.push({ volume: homeVolume, dst: home }); // parent; children below shadow it
-  const subOf = (p: string) => p.slice((homeM?.target ?? home).replace(/\/$/, '').length + 1);
   const inside = (p: string, base: string) => p === base || p.startsWith(base.endsWith('/') ? base : base + '/');
+  const rel = (p: string, base: string) => p.slice(base.replace(/\/$/, '').length + 1);
 
-  // pi env dir (non-negotiable) + master npm (the env symlink target)
+  // pi env dir (non-negotiable) + master npm (the env symlink target).
+  // subpath is relative to the VOLUME ROOT, and the volume root maps to the
+  // mount's own destination on the autere host — NOT to $HOME (e.g. the
+  // image mounts autere-data at ~/.autere, so envDir's subpath is
+  // 'pi-envs/admin', not '.autere/pi-envs/admin').
+  const subOf = (p: string, m: { target: string }) => rel(p, m.target);
   const envM = mounts.find((m) => inside(agentDir, m.target));
   if (envM) {
-    out.push({ volume: envM.volume, dst: agentDir, subpath: subOf(agentDir) });
+    out.push({ volume: envM.volume, dst: agentDir, subpath: subOf(agentDir, envM) });
   } else {
     throw new Error(`pi sandbox not possible: the pi env dir (${agentDir}) is not inside a docker volume`);
   }
   const masterNpm = join(home, '.pi/agent/npm');
   if (existsSync(masterNpm)) {
     const npmM = mounts.find((m) => inside(masterNpm, m.target));
-    if (npmM) out.push({ volume: npmM.volume, dst: masterNpm, subpath: subOf(masterNpm) });
+    if (npmM) out.push({ volume: npmM.volume, dst: masterNpm, subpath: subOf(masterNpm, npmM) });
   }
   // The 9router extension resolves its config via homedir() (no
   // PI_CODING_AGENT_DIR fallback), so the user's per-env 9router key rides
@@ -284,10 +312,10 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
   const routerCfg = join(home, '.pi/agent/9router-config.json');
   if (existsSync(routerCfg)) {
     const cfgMount = mounts.find((m) => inside(routerCfg, m.target));
-    if (cfgMount) out.push({ volume: cfgMount.volume, dst: routerCfg, subpath: subOf(routerCfg) });
+    if (cfgMount) out.push({ volume: cfgMount.volume, dst: routerCfg, subpath: subOf(routerCfg, cfgMount) });
   }
 
-  // Work area: user's allowedDirs, or (admin without any) the whole home.
+  // Work area: user's allowedDirs (or admin whole-home fallback).
   const dirs = getUserAllowedDirs(user).map((d) => d.path).filter((p): p is string => !!p);
   const backed = (p: string) => mounts.find((m) => p === m.target || p.startsWith(m.target.endsWith('/') ? m.target : m.target + '/'))
     ?? null;
@@ -301,9 +329,16 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
       workRoots.push({ host: d, dst, mount: { volume: b.volume, subpath: d === b.target ? undefined : d.slice(b.target.replace(/\/$/, '').length + 1) } });
     }
   } else if (homeM && getUserRole(user) === 'admin') {
-    // admin without allowedDirs sees the home workspace (loading the
-    // whole home needs HOME itself to be volume-backed)
+    // whole-home work area needs HOME to be volume-backed
     workRoots.push({ host: homeM.target, dst: `${workBase}/autere`, mount: { volume: homeM.volume, subpath: '' } });
+  }
+  // Per-session workdirs (New Session modal): mounted next to the std roots.
+  for (const extra of extraRoots) {
+    if (workRoots.some((w) => extra === w.host || extra.startsWith(w.host.endsWith('/') ? w.host : w.host + '/'))) continue;
+    const b = mounts.find((m) => inside(extra, m.target));
+    if (!b) continue;
+    const name = extra.slice(extra.replace(/\/$/, '').lastIndexOf('/') + 1);
+    workRoots.push({ host: extra.replace(/\/+$/, ''), dst: `${workBase}/${name}`, mount: { volume: b.volume, subpath: extra === b.target ? undefined : extra.slice(b.target.replace(/\/$/, '').length + 1) } });
   }
   for (const w of workRoots) out.push({ volume: w.mount.volume, dst: w.dst, subpath: w.mount.subpath || undefined });
 
@@ -319,6 +354,20 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
 }
 
 export function discoverVolumeMounts(): { volume: string; target: string }[] {
+  // Prefer docker inspect: it gives both named volumes AND bind mounts with
+  // the HOST source path (binds are invisible as host paths in
+  // /proc/self/mountinfo — it only shows the source device). The sandbox
+  // re-mounts entries by name (volume) or host source path (bind).
+  try {
+    const raw = execFileSync('docker', ['inspect', '--format', '{{json .Mounts}}', process.env.HOSTNAME || 'self'], { encoding: 'utf-8', timeout: 5000 });
+    const parsed = JSON.parse(raw) as { Type: string; Name?: string; Source?: string; Destination: string }[];
+    const out = parsed
+      .filter((m) => m.Destination && (m.Type === 'volume' ? !!m.Name : m.Type === 'bind' ? !!m.Source : false))
+      .map((m) => ({ volume: (m.Type === 'volume' ? m.Name : m.Source)!, target: m.Destination }));
+    if (out.length) return out.sort((a, b) => a.target.length - b.target.length);
+  } catch { /* docker unreachable — fall back to mountinfo */ }
+  // Fallback: named volumes only (no docker API available — sandbox cannot
+  // see bind mounts in this mode).
   try {
     const out: { volume: string; target: string }[] = [];
     for (const line of readFileSync('/proc/self/mountinfo', 'utf-8').split('\n')) {

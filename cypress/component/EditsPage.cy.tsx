@@ -208,10 +208,10 @@ describe('EditsPage — Repositories tab', () => {
     cy.get('.files-row', { timeout: 15000 }).should('have.length', 2);
     cy.get('.files-row').should('contain', 'proj');
 
-    // Root click = plain expand/collapse; detail pane opens via the Status button
+    // Root click = plain expand/collapse; detail pane opens via the info button
     cy.get('.files-row').contains('proj').click();
     cy.get('.files-row').contains('app.ts', { timeout: 10000 }).should('exist');
-    cy.get('.files-row').contains('proj').parent().find('.repo-row-btn').contains('status').click();
+    cy.get('.files-row').contains('proj').parent().find('.repo-row-btn').contains('info').click();
     cy.get('.repo-detail', { timeout: 10000 }).should('contain', '⎇ main');
     cy.get('.repo-detail').should('contain', 'origin');
     cy.get('.repo-detail').should('contain', 'first commit');
@@ -241,7 +241,7 @@ describe('EditsPage — Repositories tab', () => {
 
     // Pagination "Load more" re-requests with a higher count
     // (root click now collapses — reopen details via Status)
-    cy.get('.files-row').contains('proj').parent().find('.repo-row-btn').contains('status').click();
+    cy.get('.files-row').contains('proj').parent().find('.repo-row-btn').contains('info').click();
     cy.get('.repo-load-more', { timeout: 10000 }).click();
     cy.then(() => {
       const detailCalls = s.calls.filter((c) => c.url.includes('/api/v1/git/repo?'));
@@ -257,7 +257,7 @@ describe('EditsPage — Repositories tab', () => {
     cy.get('.edits-tabs').contains('Repositories').click();
     cy.get('.files-row').contains('proj').click();
     // Tree markers come from the background status fetch on view load —
-    // no clicking the Status button first.
+    // no clicking the info button first.
     cy.get('.files-row').contains('app.ts', { timeout: 10000 })
       .parent().find('.files-name')
       .should('have.class', 'files-git-modified');
@@ -271,7 +271,7 @@ describe('EditsPage — Repositories tab', () => {
     cy.get('.edits-tabs').contains('Repositories').click();
     // Non-repo root: actions open via the row Status button (click = expand)
     cy.get('.files-row').contains('plain', { timeout: 15000 }).click();
-    cy.get('.files-row').contains('plain').parent().find('.repo-row-btn').contains('status').click();
+    cy.get('.files-row').contains('plain').parent().find('.repo-row-btn').contains('info').click();
     cy.get('.repo-actions', { timeout: 10000 }).should('exist');
     cy.get('.repo-actions').contains('git init').click();
     cy.then(() => {

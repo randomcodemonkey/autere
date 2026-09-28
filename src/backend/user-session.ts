@@ -11,7 +11,7 @@ import { createHash } from 'crypto';
 import { MonitorRpcClient } from './rpc-client.js';
 import { filterScopedModels, autoSessionName, readSessionUsage } from './utils.js';
 import { log, userLog } from './logger.js';
-import { ensurePiEnv, ensureSandboxHomeVolume, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage } from './pi-env.js';
+import { ensurePiEnv, ensureSandboxHomeVolume, ensureVolumeSubpaths, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage, DEFAULT_SANDBOX_IMAGE } from './pi-env.js';
 import { getEditIgnorePaths, getHistoryLimit, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getShowReadImages, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost, writeReserveTokensConfig, annotateContextUsage } from './user-settings.js';
 import { deliverToSession } from './client-hub.js';
 import { getActivePersona } from './personas.js';
@@ -165,7 +165,7 @@ export class UserSession {
     this.broadcast({ type: 'stats', data: { ...this.state.sessionStats } });
   }
 
-  constructor(user: string, sessionFile: string | null, rpcOptions: { provider?: string; model?: string; args?: string[]; cwd?: string }, idleTimeoutMs: number = 30 * 60 * 1000) {
+  constructor(user: string, sessionFile: string | null, rpcOptions: { provider?: string; model?: string; args?: string[]; cwd?: string; workdirs?: string[] }, idleTimeoutMs: number = 30 * 60 * 1000) {
     this.user = user;
     this.sessionFile = sessionFile;
     // Chat history buffer size (messages). Settings saves restart the pi
@@ -198,17 +198,26 @@ export class UserSession {
       sendImagesToChatModel: getSendImagesToChatModel(user),
       imagePreviewQuality: getImagePreviewQuality(user),
       imageStreamFix: getImageStreamFix(user),
-      ...(sandboxImage ? (() => {
+      ...(() => {
+        // Per-session workdirs (New Session modal) request sandboxing
+        // explicitly — even when the user's sandbox setting is off.
+        let image = sandboxImage;
+        if (!image && rpcOptions.workdirs?.length) {
+          image = process.env.AUTERE_SANDBOX_IMAGE?.trim() || DEFAULT_SANDBOX_IMAGE;
+          if (/^(off|none|disabled)$/i.test(image)) image = '';
+        }
+        if (!image) return {};
         // Sandbox startup: copy the master agent dir's shared pieces
         // (skills, extensions, bin, tmp) into the env dir so nothing outside
         // the env dir and the work area needs to be mounted, then plan the
-        // mounts. Sessions spawn with the backend's cwd (sessions.ts has no
-        // per-session cwd plumbing), so that is what gets translated.
+        // mounts. Sessions spawn with the backend's cwd, translated by
+        // planSandboxMounts into the container's $HOME/work/... layout.
         prepareSandboxEnvDir(piEnvDir);
-        const homeVolume = ensureSandboxHomeVolume(user, sandboxImage);
-        const plan = planSandboxMounts(user, rpcOptions.cwd || process.cwd(), piEnvDir, homeVolume);
-        return { sandboxImage, sandboxMounts: plan.mounts, sandboxWorkingDir: plan.cwd, args };
-      })() : {}),
+        const homeVolume = ensureSandboxHomeVolume(user, image);
+        const plan = planSandboxMounts(user, rpcOptions.cwd || process.cwd(), piEnvDir, homeVolume, rpcOptions.workdirs);
+        ensureVolumeSubpaths(plan.mounts, image);
+        return { sandboxImage: image, sandboxMounts: plan.mounts, sandboxWorkingDir: plan.cwd, args };
+      })(),
     });
     this.state = createInitialState();
     this._idleTimeoutMs = idleTimeoutMs;
@@ -548,17 +557,32 @@ export class UserSession {
       }
 
       // Model catalog loads ASYNC — a wedged provider/router must not delay
-      // spawn completion (getOrCreate holds the session's spawn lock until
-      // start() resolves; the /api/models endpoint fetches on demand anyway).
-      this.rpc.getAvailableModels()
-        .then((models) => {
-          this.state.availableModels = filterScopedModels(models).map((m: any) => ({
-            provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
-          }));
-        })
-        .catch((err) => {
-          log.userSession.error('fetchInitialState: failed to get available models:', err);
-        });
+      // spawn completion. pi's availability refresh runs async after its own
+      // boot: an immediate get_available_models can return [] and the UI
+      // falls back to a bare 'unknown' model — so retry until pi reports a
+      // non-empty catalog and broadcast the update (bounded, no lock hold).
+      const fetchModels = async () => {
+        for (let attempt = 0; attempt < 10; attempt++) {
+          let models: any[];
+          try {
+            models = (await this.rpc.getAvailableModels()) ?? [];
+          } catch (err) {
+            log.userSession.warn(`fetchInitialState: get_available_models attempt ${attempt + 1} failed: ${err instanceof Error ? err.message : err}`);
+            await new Promise((r) => setTimeout(r, 1000));
+            continue;
+          }
+          if (models.length > 0 || attempt === 9) {
+            if (models.length === 0) log.userSession.warn('fetchInitialState: pi still reports no available models after retries — provider auth may be missing in the env');
+            this.state.availableModels = filterScopedModels(models).map((m: any) => ({
+              provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
+            }));
+            if (this.state.availableModels.length > 0) this.broadcast({ type: 'models', data: this.state.availableModels });
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      };
+      fetchModels();
 
       // Load session history into the buffer for this specific session
       try {

@@ -53,7 +53,7 @@ describe('SettingsCard focus retention', () => {
   };
 
   beforeEach(() => {
-    cy.intercept('GET', '**/api/v1/settings/schema', { success: true, data: schema });
+    cy.intercept('GET', '**/api/v1/settings/schema', { success: true, data: [...schema, { id: 'apiTokens', label: 'API Tokens', fields: [] }, { id: 'personas', label: 'Personas', fields: [] }] });
     cy.intercept('GET', '**/api/v1/settings', { success: true, data: { name: '', dirs: ['one'] } });
     cy.intercept('GET', '**/api/v1/extensions/packages', { success: true, data: { available: [] } });
   });

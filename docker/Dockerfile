@@ -3,16 +3,22 @@
 # ---- frontend build stage ----
 FROM node:24-alpine AS build
 WORKDIR /app
-ADD package.json package-lock.json tsconfig.* /app
+ADD package.json package-lock.json /app/
+ADD tsconfig.* /app/
 ADD src /app/src/
+# vite publicDir points at the repo root (favicon/logo/sw assets)
+ADD public /app/public/
 RUN npm ci --no-audit --no-fund && npm run build
 
 # ---- runtime image ----
 FROM ubuntu:resolute
 
 USER root
+# ubuntu:resolute ships ca-certificates without a usable trust bundle
+# (postinst trigger bug) — reinstall before ANY TLS fetch.
 RUN apt-get -y update \
-    && apt-get upgrade -y \
+    && apt-get install -y --reinstall ca-certificates \
+    && apt-get -y upgrade \
     && apt-get install -y --no-install-recommends \
       curl \
       python3 \
@@ -37,15 +43,8 @@ RUN apt-get -y update \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
-    && tee /etc/apt/sources.list.d/docker.sources <<EOF
-Types: deb
-URIs: https://download.docker.com/linux/ubuntu
-Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
-Components: stable
-Architectures: $(dpkg --print-architecture)
-Signed-By: /etc/apt/keyrings/docker.asc
-EOF
-RUN apt-get -y update \
+    && printf 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: %s\nComponents: stable\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/docker.asc\n' "$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/docker.sources \
+    && apt-get -y update \
     && apt-get install -y --no-install-recommends docker-ce-cli \
     && apt-get -y clean \
     && rm -rf /var/lib/apt/lists/*
@@ -72,7 +71,9 @@ COPY --chown=autere:autere SKILL.md /home/autere/SKILL.md
 # + runtime-only node_modules. No source in the image.
 COPY --chown=autere:autere --from=build /app/dist /home/autere/dist
 COPY --chown=autere:autere --from=build /app/dist-backend /home/autere/dist-backend
-COPY --chown=autere:autere package.json package-lock.json /home/autere/dist
+COPY --chown=autere:autere package.json package-lock.json /home/autere/dist/
+# Bundled custom pi extensions (loaded via entrypoint symlinks).
+COPY --chown=autere:autere extras /home/autere/pi-ext-extra/
 
 WORKDIR /home/autere/dist
 RUN npm ci --omit=dev --no-audit --no-fund \

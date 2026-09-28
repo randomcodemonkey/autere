@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 
-echo "Installing pi extensions"
-pi install npm:pi-9router-ext
+# Bundled custom extensions (repo extras/) ship in the image at
+# /home/autere/pi-ext-extra — link them into the master pi extensions dir.
+piExtensions="$HOME/.pi/agent/extensions"
+mkdir -p "$piExtensions"
+for dir in /home/autere/pi-ext-extra/*; do
+  [ -d "$dir" ] || continue
+  name=$(basename "$dir")
+  ln -sfn "$dir" "$piExtensions/$name"
+done
+
+# npm packages: pi-9router-ext only when 9router is actually the provider.
+if [ "$AUTERE_PROVIDER" ] && [ "$AUTERE_PROVIDER" != "9router" ]; then
+  echo "AUTERE_PROVIDER=$AUTERE_PROVIDER — skipping 9router extension install"
+else
+  echo "Installing pi extensions"
+  pi install npm:pi-9router-ext
+fi
 pi install npm:pi-memory
 
 echo "Initializing admin pi-env"

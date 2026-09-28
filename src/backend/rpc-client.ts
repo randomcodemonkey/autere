@@ -165,7 +165,12 @@ export class MonitorRpcClient {
     const mounts = this.options.sandboxMounts;
     if (!mounts || mounts.length === 0) throw new Error('pi sandbox requested but no mounts were planned');
 
-    const specs = mounts.map((m) => m.subpath !== undefined && m.subpath !== ''
+    // Bind mounts carry an absolute HOST source path in m.volume; named
+    // volumes mount by name. Binds compose their host src from the source
+    // path + subpath.
+    const specs = mounts.map((m) => m.volume.startsWith('/')
+      ? ['--mount', `type=bind,src=${m.subpath !== undefined && m.subpath !== '' ? `${m.volume}/${m.subpath}` : m.volume},dst=${m.dst}`]
+      : m.subpath !== undefined && m.subpath !== ''
       ? ['--mount', `type=volume,src=${m.volume},dst=${m.dst},volume-subpath=${m.subpath}`]
       : ['-v', `${m.volume}:${m.dst}`]).flat();
     const cwd = this.options.sandboxWorkingDir || process.env.HOME || '/home/slop';
