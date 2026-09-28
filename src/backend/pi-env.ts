@@ -180,7 +180,7 @@ export function resolveSandboxImage(user: string, setting?: string, env?: string
   let set = String(setting ?? '').trim();
   let envv = String(env ?? '').trim();
   // The off/none/disabled setting is an admin-only escape hatch; a
-  // server-level PI_SANDBOX_IMAGE=off is the operator kill switch (e2e).
+  // server-level AUTERE_SANDBOX_IMAGE=off is the operator kill switch (e2e).
   if (OFF.test(set)) { if (!admin) set = ''; else return ''; }
   if (OFF.test(envv)) return '';
   return set || envv || DEFAULT_SANDBOX_IMAGE;
@@ -256,29 +256,35 @@ export function ensureSandboxHomeVolume(user: string, image: string): string {
 export function planSandboxMounts(user: string, cwd: string | undefined, agentDir: string, homeVolume?: string): SandboxPlan {
   const mounts = discoverVolumeMounts();
   const home = process.env.HOME || '/home/slop';
+  // HOME need not be volume-backed (e.g. the autere container mounts only
+  // ~/.autere, ~/.pi, ~/.9router) — only the dirs the sandbox actually uses
+  // must be. homeM is used solely for subpath computation of those dirs.
   const homeM = mounts.find((m) => m.target === home);
-  if (!homeM) throw new Error(`pi sandbox not possible: ${home} is not backed by a docker volume`);
   const workBase = `${home}/work`;
   const out: SandboxMount[] = [];
   if (homeVolume) out.push({ volume: homeVolume, dst: home }); // parent; children below shadow it
-  const subOf = (p: string) => p.slice(homeM.target.replace(/\/$/, '').length + 1);
+  const subOf = (p: string) => p.slice((homeM?.target ?? home).replace(/\/$/, '').length + 1);
+  const inside = (p: string, base: string) => p === base || p.startsWith(base.endsWith('/') ? base : base + '/');
 
   // pi env dir (non-negotiable) + master npm (the env symlink target)
-  if (agentDir.startsWith(homeM.target.endsWith('/') ? homeM.target : homeM.target + '/')) {
-    out.push({ volume: homeM.volume, dst: agentDir, subpath: subOf(agentDir) });
+  const envM = mounts.find((m) => inside(agentDir, m.target));
+  if (envM) {
+    out.push({ volume: envM.volume, dst: agentDir, subpath: subOf(agentDir) });
   } else {
     throw new Error(`pi sandbox not possible: the pi env dir (${agentDir}) is not inside a docker volume`);
   }
   const masterNpm = join(home, '.pi/agent/npm');
   if (existsSync(masterNpm)) {
-    out.push({ volume: homeM.volume, dst: join(home, '.pi/agent/npm'), subpath: subOf(masterNpm) });
+    const npmM = mounts.find((m) => inside(masterNpm, m.target));
+    if (npmM) out.push({ volume: npmM.volume, dst: masterNpm, subpath: subOf(masterNpm) });
   }
   // The 9router extension resolves its config via homedir() (no
   // PI_CODING_AGENT_DIR fallback), so the user's per-env 9router key rides
   // in at ~/.pi/agent/9router-config.json — a file, volume-subpath'd.
-  const routerCfg = join(agentDir, '9router-config.json');
-  if (existsSync(routerCfg) && agentDir.startsWith(homeM.target.endsWith('/') ? homeM.target : homeM.target + '/')) {
-    out.push({ volume: homeM.volume, dst: join(home, '.pi/agent/9router-config.json'), subpath: subOf(routerCfg) });
+  const routerCfg = join(home, '.pi/agent/9router-config.json');
+  if (existsSync(routerCfg)) {
+    const cfgMount = mounts.find((m) => inside(routerCfg, m.target));
+    if (cfgMount) out.push({ volume: cfgMount.volume, dst: routerCfg, subpath: subOf(routerCfg) });
   }
 
   // Work area: user's allowedDirs, or (admin without any) the whole home.
@@ -294,8 +300,9 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
       const dst = `${workBase}/${name}`;
       workRoots.push({ host: d, dst, mount: { volume: b.volume, subpath: d === b.target ? undefined : d.slice(b.target.replace(/\/$/, '').length + 1) } });
     }
-  } else if (getUserRole(user) === 'admin') {
-    // admin without allowedDirs sees the home workspace
+  } else if (homeM && getUserRole(user) === 'admin') {
+    // admin without allowedDirs sees the home workspace (loading the
+    // whole home needs HOME itself to be volume-backed)
     workRoots.push({ host: homeM.target, dst: `${workBase}/autere`, mount: { volume: homeM.volume, subpath: '' } });
   }
   for (const w of workRoots) out.push({ volume: w.mount.volume, dst: w.dst, subpath: w.mount.subpath || undefined });

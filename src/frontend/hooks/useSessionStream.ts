@@ -384,7 +384,7 @@ export function useSessionStream(opts: {
         // pending messages. Don't apply; force a switch-by-id instead, whose
         // response is the same payload shape with state recomputed from the
         // session file. No loop: one recovery attempt per bootstrap.
-        if (!d.sessionState?.sessionId && sid) {
+        if (!d.sessionState?.sessionId && sid && sid !== '-') {
           fetch(url(API.sessions.activate(sid)), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -479,6 +479,12 @@ export function useSessionStream(opts: {
     const urlChanged = prevUrlSessionRef.current !== sid;
     prevUrlSessionRef.current = sid;
 
+    // Synthetic "no session" id (RootRedirect failure landing): nothing to
+    // activate — the stashed bootstrapError modal carries the reason.
+    if (sid === '-') {
+      setSwitchingSession(false);
+      return;
+    }
     if (sid === sessionState.sessionId) {
       return;
     }

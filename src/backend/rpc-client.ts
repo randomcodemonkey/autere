@@ -7,7 +7,6 @@
 
 import { spawn, ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
-import { transformSync } from 'esbuild'; // parse check only (tsx dependency, resolvable at runtime)
 import { StringDecoder } from 'node:string_decoder';
 import { join } from 'node:path';
 import type {
@@ -169,7 +168,7 @@ export class MonitorRpcClient {
     const specs = mounts.map((m) => m.subpath !== undefined && m.subpath !== ''
       ? ['--mount', `type=volume,src=${m.volume},dst=${m.dst},volume-subpath=${m.subpath}`]
       : ['-v', `${m.volume}:${m.dst}`]).flat();
-    const cwd = this.options.sandboxWorkingDir || '/home/slop';
+    const cwd = this.options.sandboxWorkingDir || process.env.HOME || '/home/slop';
     // Escape-proofing: the sandbox NEVER runs as root (root in-container +
     // mounted docker.sock = host root via `docker run -v /:/host`). Force the
     // backend's own uid — it matches the volume ownership already; images
@@ -201,7 +200,7 @@ export class MonitorRpcClient {
     return out;
   }
 
-  private quarantineBrokenExtensions(): void {
+  private async quarantineBrokenExtensions(): Promise<void> {
     const dir = this.options.agentDir ? join(this.options.agentDir, 'extensions') : null;
     if (!dir || !existsSync(dir)) return;
     let entries: string[];
@@ -224,7 +223,11 @@ export class MonitorRpcClient {
         }
       } catch { continue; }
       for (const file of files) {
+        if (file.endsWith('.js')) continue; // plain JS parses npm-side; only TS needs transpilation
         try {
+          // esbuild ships with tsx (a runtime-only dep here) — dynamic import keeps
+          // this optional so prod images without tsx still run.
+          const { transformSync } = await import('esbuild');
           transformSync(readFileSync(file, 'utf-8'), { loader: 'ts', sourcefile: file, format: 'esm' });
         } catch (err: any) {
           const broken = `${file}.broken-${Date.now()}`;
@@ -249,7 +252,7 @@ export class MonitorRpcClient {
     }
     this.exitError = null;
 
-    this.quarantineBrokenExtensions();
+    this.quarantineBrokenExtensions().catch((e) => log.rpc.warn(`Extension parse check skipped: ${e}`));
 
     const args = ['--mode', 'rpc'];
     if (this.options.provider) {
@@ -359,15 +362,11 @@ export class MonitorRpcClient {
     // Wait for process to initialize
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    if (this.process.exitCode !== null) {
-      const error =
-        this.exitError ??
-        this.createProcessExitError(
-          this.process.exitCode,
-          this.process.signalCode
-        );
-      this.exitError = error;
-      throw error;
+    // The 'exit' handler clears this.process — a fast-failing spawn (docker
+    // socket missing) would make this read `null.exitCode`. Treat null as
+    // "already dead" and fail with the recorded exit error.
+    if (this.process === null || this.process.exitCode !== null) {
+      throw this.exitError ?? new Error('Agent process exited immediately after spawn');
     }
 
     log.rpc.info(`pi RPC process started (pid=${childProcess.pid})`);
@@ -541,6 +540,10 @@ export class MonitorRpcClient {
   }
 
   private createProcessExitError(code: number | null, signal: string | null): Error {
+    // Docker-unreachable is the common sandbox spawn failure — name it.
+    if (/docker.sock|docker daemon|docker API/i.test(this.stderr)) {
+      return new Error(`docker socket not available — the docker daemon is unreachable from the backend (cannot start sandboxed session). Stderr: ${this.stderr}`);
+    }
     return new Error(
       `Agent process exited (code=${code} signal=${signal}). Stderr: ${this.stderr}`
     );

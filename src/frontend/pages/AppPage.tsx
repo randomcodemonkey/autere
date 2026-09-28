@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Header, ViewId } from '../components/Header';
 import { StatusCard } from '../components/StatusCard';
@@ -107,6 +107,18 @@ export function AppPage({
     setRestarting,
     onBootstrapped: () => setRestartingBackend(false),
   });
+
+  // RootRedirect failures (e.g. sandbox/docker unavailable during the very
+  // first session create) are stashed there — surface once in the error
+  // modal over the normal app shell, not as a blocking page.
+  useEffect(() => {
+    if (!authenticated) return;
+    const stored = sessionStorage.getItem('bootstrapError');
+    if (stored) {
+      sessionStorage.removeItem('bootstrapError');
+      setSessionError(stored);
+    }
+  }, [authenticated, setSessionError]);
 
   // Cancel a queued (steer/follow-up) message: optimistic UI removal; the
   // backend prunes pi's queue and broadcasts history_remove for the

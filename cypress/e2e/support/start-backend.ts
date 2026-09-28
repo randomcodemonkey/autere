@@ -136,7 +136,7 @@ export function startBackend(): Promise<void> {
         AUTERE_NINE_ROUTER_URL: 'http://localhost:20128',
         AUTERE_DIR: join(testEnvsDir, 'autere-state'),
         // sandbox points at docker + the real home volume — off for tests
-        PI_SANDBOX_IMAGE: 'off',
+        AUTERE_SANDBOX_IMAGE: 'off',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,

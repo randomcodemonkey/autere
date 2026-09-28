@@ -17,21 +17,29 @@ support and provides access to per-user settings.
 Build a docker image with the autere frontend + backend (9router started/managed by the backend when the provider is 9router) under supervisord:
 
 ```bash
-cd docker
-docker build -t autere
+docker buildx build --platform linux/arm64 -t autere -f docker/Dockerfile .
+```
 
+Local buildx builds only target a single architecture; use `--platform linux/amd64,linux/arm64 --push` for a multi-arch push.
+
+All configuration is via env variables (docker run / compose):
+
+```bash
 docker run -d --name autere \
   -p 127.0.0.1:3456:3456 -p 127.0.0.1:20128:20128 \
   -e INITIAL_PASSWORD=secret \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -v autere-data:/home/autere/.autere \
   -v autere-master-pi-data:/home/autere/.pi \
   -v autere-master-9router-data:/home/autere/.9router \
   autere
 ```
 
-See [docker/README.md](docker/README.md) for details.
+`/var/run/docker.sock` is required for sandboxed pi sessions - without it the backend cannot start session containers. Admin user may set 'sandbox' image to 'off' in their per-user settings, or disable sandboxing globally by setting env `AUTERE_SANDBOX_IMAGE=off`
 
-Once started, the web app is available at **http://localhost:3456**. Default user `admin`, password via `INITIAL_PASSWORD` (`admin` when unset) and 9router is available at **http://localhost:20128**
+The `/home/autere/.autere` and `/home/autere/.pi` must be mounted as named docker volumes if using sandboxed pi containers. It is strongly suggested to always mount them as named volumes (not bind mounts) so it is possible to switch to sandboxed mode later.
+
+Once started, the web app is available at **http://localhost:3456**. Default user `admin`, password via `INITIAL_PASSWORD` (`admin` when unset) and 9router, if enabled, is available at **http://localhost:20128**
 
 Autere can also be ran without 9router, by defining the `AUTERE_PROVIDER` env value to a valid `pi` provider. With this mode, you must manually configure the provider with `pi` through the running autere docker container
 
@@ -42,9 +50,7 @@ docker exec -it autere pi
 Enter `/login` to pi and follow the instructions for configuring your selected profile.
 
 
-
-
-### Configuration (env)
+### Configuration (system env)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -54,7 +60,8 @@ Enter `/login` to pi and follow the instructions for configuring your selected p
 | `AUTERE_PROVIDER` | - | Pi provider |
 | `AUTERE_MODEL` | - | Pi model ID |
 | `AUTERE_IDLE_TIMEOUT` | 30 | Minutes before idle pi process is killed |
-| `NINE_ROUTER_BASE_URL` / `NINE_ROUTER_API_KEY` | `http://localhost:20128` | 9router endpoint/credentials |
+| `AUTERE_NINE_ROUTER_URL` | `http://localhost:20128` | Backend-managed 9router |
+| `AUTERE_SANDBOX_IMAGE` | randomcodemonkey.org/autere:latest | Docker image for sandboxed pi sessions (`off` to run pi on the host) |
 
 ## Architecture
 

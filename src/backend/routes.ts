@@ -712,7 +712,17 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // Spawn a DEDICATED process for the fresh session — the previous
       // session's process (if any, even mid-turn) keeps running untouched.
       // workdir scopes pi's cwd (docker sandbox work area) — admin only.
-      const fresh = await pm.getOrCreate(c.user, null, workdir ? { cwd: workdir } : {});
+      // Spawn failures (sandbox planning, wedged provider) surface as a
+      // session-level error response — the UI stays usable, only session
+      // creation fails.
+      let fresh;
+      try {
+        fresh = await pm.getOrCreate(c.user, null, workdir ? { cwd: workdir } : {});
+      } catch (err: any) {
+        log.http.error('New session spawn failed:', err);
+        sendJSON(c.res, { success: false, error: `Failed to create session: ${err?.message || err}` }, 503);
+        return;
+      }
       const state = fresh.state.sessionState;
       if (!state.sessionId || !state.sessionFile) {
         throw new Error('pi started a new session but did not report a sessionId or sessionFile');

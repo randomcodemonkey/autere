@@ -187,9 +187,11 @@ export class UserSession {
       this.resumedExistingSession = true;
       this.resumedSessionFile = sessionFile;
     }
-    // Default: sandbox every session (slopbox image). Disable via the
-    // piSandboxImage setting or PI_SANDBOX_IMAGE env (= off | none | disabled).
-    const sandboxImage = resolveSandboxImage(user, getUserSetting(user, 'piSandboxImage', ''), process.env.PI_SANDBOX_IMAGE);
+    // Default: sandbox every session (slopbox image). Override via the
+    // piSandboxImage setting, AUTERE_SANDBOX_IMAGE env (off/none/disabled
+    // runs pi on the host).
+    const sandboxImage = resolveSandboxImage(user, getUserSetting(user, 'piSandboxImage', ''),
+      process.env.AUTERE_SANDBOX_IMAGE);
     this.rpc = new MonitorRpcClient({
       ...rpcOptions, args, agentDir: piEnvDir,
       editIgnorePaths: getEditIgnorePaths(user),
