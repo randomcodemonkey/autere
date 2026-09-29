@@ -12,6 +12,8 @@ interface UsageCardProps {
   messageCount: number;
   requestCount: number;
   stats: SessionStats;
+  /** Active model's provider — 'github-copilot' renders cost as AI Credits (AIC) */
+  modelProvider?: string | null;
   onCompact?: () => void;
   compactDisabled?: boolean;
   compacting?: boolean;
@@ -20,8 +22,11 @@ interface UsageCardProps {
   isStreaming?: boolean;
 }
 
-export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount, stats, onCompact, compactDisabled, compacting, onAbort, isStreaming }) => {
+export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount, stats, modelProvider, onCompact, compactDisabled, compacting, onAbort, isStreaming }) => {
   const { collapsed, toggle } = useCardState('usage');
+  // GitHub Copilot: pi's $ cost is the list-price estimate — copilot billing
+  // is AI Credits (1 credit = $0.01), so show credits (AIC) instead of $.
+  const isCopilotProvider = (modelProvider || '').toLowerCase().includes('copilot');
   const [showCostInfo, setShowCostInfo] = useState(false);
 
   const ctxTokens = stats.contextUsage?.tokens || 0;
@@ -70,6 +75,20 @@ export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount
         </div>
         <div>
           <div className="stat-label">
+            {isCopilotProvider ? (
+              <>
+                Usage <span className="est-flag">(AIC)</span>
+                <span
+                  className="info-icon"
+                  role="button"
+                  tabIndex={0}
+                  title="GitHub Copilot AI Credits — 1 credit = $0.01, converted from the estimated cost. Not the official GitHub billing total (see the Copilot Credit Usage extension for that)."
+                  onClick={(e) => { e.stopPropagation(); setShowCostInfo((v) => !v); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setShowCostInfo((v) => !v); } }}
+                >ⓘ</span>
+              </>
+            ) : (
+              <>
             Cost <span className="est-flag">(estimated)</span>
             <span
               className="info-icon"
@@ -79,11 +98,17 @@ export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount
               onClick={(e) => { e.stopPropagation(); setShowCostInfo((v) => !v); }}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setShowCostInfo((v) => !v); } }}
             >ⓘ</span>
+              </>
+            )}
           </div>
-          <div className="stat-value-compact">${stats.cost.toFixed(2)}</div>
+          <div className="stat-value-compact">
+            {isCopilotProvider ? `${(stats.cost / 0.01).toLocaleString(undefined, { maximumFractionDigits: 0 })} AIC` : `$${stats.cost.toFixed(2)}`}
+          </div>
           {showCostInfo && (
             <div className="stat-sub" style={{ fontSize: '0.6rem', opacity: 0.7, marginTop: '0.2rem' }}>
-              Estimated from token counts at configurable list-price rates (Settings → Usage). Not actual billing.
+              {isCopilotProvider
+                ? 'GitHub AI Credits from token-count cost estimates (1 credit = $0.01). See the Copilot Credit Usage extension for an official breakdown.'
+                : 'Estimated from token counts at configurable list-price rates (Settings → Usage). Not actual billing.'}
             </div>
           )}
         </div>

@@ -314,6 +314,7 @@ export function AppPage({
             extensions={extensions}
             models={models}
             activeModelId={activeModelId}
+            modelProvider={sessionState.model?.provider ?? null}
             onModelsFetched={setModels}
             username={username}
             userRole={userRole}

@@ -48,7 +48,16 @@ function parsePackageSpec(spec: string): { source: 'npm' | 'local'; id: string }
  * Discover npm extension packages from settings.json.
  */
 function discoverNpmExtensions(): DiscoveredExtension[] {
-  const packages = getUserSetting('admin', 'packages', []) as string[];
+  // Union per-user enabled packages with the global ~/.pi/agent list:
+  // `pi install` writes to the global settings.json, but a stale per-user
+  // `packages` array shadows it in getUserSetting's fallback chain and
+  // would hide newly installed extensions.
+  const globalPackages = (() => {
+    try { return JSON.parse(readFileSync(join(PI_DIR, 'settings.json'), 'utf-8'))?.packages || []; } catch { return []; }
+  })();
+  const userPackages = getUserSetting('admin', 'packages', []) as (string | { source?: string })[];
+  const pkgSource = (p: string | { source?: string }): string => typeof p === 'string' ? p : p?.source || '';
+  const packages = new Set([...userPackages.map(pkgSource), ...globalPackages.map(pkgSource)].filter(Boolean));
   const discovered: DiscoveredExtension[] = [];
 
   for (const spec of packages) {

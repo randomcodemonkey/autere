@@ -26,12 +26,14 @@ import { getUser, getUserRole, hasRole, verifyCredentials, checkAuth, requireAut
 import { getClientSession, setClientSession, registerClient, broadcastToUser, viewedSessions, hubUsers } from './client-hub.js';
 import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword, getUserAllowedDirs } from './users.js';
 import { withDedupSections, withJanitorSections } from './extension-handlers.js';
+import { copilotStatsFor } from './extension-handlers.js';
+import type { CopilotTotals } from './copilot-totals.js';
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionHistory } from './utils.js';
 import { getEnabledModelEntries, scopeModelsForSession } from './utils.js';
 import { isPiImagesInstalled } from './image-models.js';
 import { getPiEnvDir, validateSandboxImage } from './pi-env.js';
-import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, type Persona } from './personas.js';
+import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
 import { getHistoryLimit } from './user-settings.js';
 import { extensionsState } from './state.js';
@@ -1377,12 +1379,17 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         if (rpcImages.length === 0) rpcImages = undefined;
       }
       let text = (message || '').trim();
+      // steer/followUp only make sense mid-turn — when idle, pi would leave
+      // the message queued without ever starting a turn. Downgrade to a
+      // plain prompt instead (same text, actually runs).
+      const downgraded = (type === 'steer' || type === 'followUp') && !t.rpc.isStreaming;
+      const effType = downgraded ? 'prompt' : (type || 'prompt');
       log.http.forSession(sessionState.sessionId).info(
-        `${type || 'prompt'}: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"${rpcImages?.length ? ` [${rpcImages.length} image(s)]` : ''}`);
-      const queued = type === 'steer' || type === 'followUp' || t.rpc.isStreaming;
-      // pi only runs extension input hooks on the prompt() path — steer/
-      // followUp bypass them, so queued messages with images must get the
-      // same attachment intake here (save to uploads + path note) that
+        `${effType}: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"${rpcImages?.length ? ` [${rpcImages.length} image(s)]` : ''}${downgraded ? ' (downgraded to prompt — session idle)' : ''}`);
+      const queued = effType === 'steer' || effType === 'followUp';
+
+      // pi only runs extension input hooks on the prompt() path — steered/
+      // followUp requests bypass them, so queued messages with images must get the
       // pi-filetools provides for prompts.
       if (queued && rpcImages && rpcImages.length > 0) {
         const sendPreviews = getSendImagesToChatModel(c.user);
@@ -1425,12 +1432,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           log.http.error('Failed to save queued image attachments:', err?.message || err);
         }
       }
-      if (type === 'steer') {
+      if (effType === 'steer') {
         await t.rpc.steer(text);
-      } else if (type === 'followUp') {
+      } else if (effType === 'followUp') {
         await t.rpc.followUp(text);
-      } else if (t.rpc.isStreaming) {
-        await t.rpc.steer(text);
       } else {
         await t.rpc.prompt(text);
       }
@@ -1459,6 +1464,22 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           const patched = withJanitorSections(e, c.user);
           return { ...e, sections: patched.sections, status: patched.status, statusText: patched.statusText };
         }
+        if (e.name === 'copilot-credit-usage') {
+          // Real per-user numbers (reads the CALLER's session files only)
+          const { session, month } = copilotStatsFor(c.user);
+          const aic = (t: CopilotTotals) => `${Math.round(t.credits).toLocaleString()} AIC`;
+          return {
+            ...e,
+            sections: [{
+              header: 'Copilot AI credit usage',
+              items: [
+                { 'Copilot turns': session.turns, 'Input tokens': session.input, 'Output tokens': session.output, 'Cache-read tokens': session.cacheRead, 'This session': aic(session), 'This month (all sessions)': aic(month) },
+              ],
+            }],
+            status: 'ok',
+            statusText: 'Active',
+          };
+        }
         return e;
       });
       sendJSON(c.res, { success: true, data });
@@ -1484,6 +1505,27 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     method: 'GET', path: API.personas.root, template: `${API_PREFIX}/personas`,
     role: 'chat', tag: 'Personas', summary: 'List the caller persona library',
     handler: async (c) => sendJSON(c.res, { success: true, data: listPersonas(c.user) }),
+  });
+
+  route({
+    method: 'GET', path: API.personas.globalPrompt, template: `${API_PREFIX}/personas/global-prompt`,
+    role: 'chat', tag: 'Personas', summary: 'Get the global system prompt (injected before the persona prompt every turn)',
+    handler: async (c) => sendJSON(c.res, { success: true, data: { prompt: getGlobalPrompt(c.user) } }),
+  });
+
+  route({
+    method: 'PUT', path: API.personas.globalPrompt, template: `${API_PREFIX}/personas/global-prompt`,
+    role: 'control', tag: 'Personas', summary: 'Replace the global system prompt (body: prompt string; empty clears it)',
+    handler: async (c) => {
+      try {
+        const body = await readBody(c.req);
+        if (typeof body?.prompt !== 'string') { sendJSON(c.res, { success: false, error: 'prompt must be a string' }, 400); return; }
+        setGlobalPrompt(c.user, body.prompt);
+        sendJSON(c.res, { success: true });
+      } catch (err: any) {
+        sendJSON(c.res, { success: false, error: `Failed to save global prompt: ${err.statusCode ? err.message : err}` }, err.statusCode || 500);
+      }
+    },
   });
 
   route({

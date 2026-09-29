@@ -143,6 +143,25 @@ assert_in "workdir" "error mentions workdir"
 cli session-create --workdir /etc
 assert_exit 1 "outside-root workdir rejected"
 
+section "followUp on idle session → runs as prompt"
+cli session-create --name "fu down"
+assert_exit 0 "created fu session"
+FU_ID=$(printf '%s' "$OUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+cli session-activate "$FU_ID" >/dev/null
+assert_exit 0 "spawned fu session"
+cli send "Reply with exactly: pong" --session "$FU_ID" --type followUp
+assert_exit 0 "idle followUp accepted (downgraded)"
+FU_REPLY=""
+for i in 1 2 3 4 5 6 7 8; do
+  sleep 4
+  cli session-history "$FU_ID"
+  if printf '%s' "$OUT" | grep -q '"role": "assistant"'; then FU_REPLY=1; break; fi
+done
+[ -n "$FU_REPLY" ] && ok "idle followUp produced an assistant turn" || fail "followUp never ran (pending forever?)"
+cli session-history "$FU_ID"
+printf '%s' "$OUT" | grep -q 'pong' && ok "assistant replied" || fail "assistant reply missing"
+cli session-delete "$FU_ID" > /dev/null 2>&1
+
 section "tokens"
 cli token-list > /dev/null
 assert_exit 0 "token-list"

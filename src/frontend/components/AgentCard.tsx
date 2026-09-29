@@ -12,6 +12,8 @@ interface AgentCardProps {
   messageCount: number;
   requestCount: number;
   stats: SessionStats;
+  /** Active model's provider — Usage card shows AIC for copilot providers */
+  modelProvider?: string | null;
   extensions: ExtensionInfo[];
   /** Persona bound to the active session */
   persona: { id: string; name: string } | null | undefined;
@@ -30,6 +32,7 @@ interface AgentCardProps {
  */
 export const AgentCard: React.FC<AgentCardProps> = ({
   messageCount, requestCount, stats,
+  modelProvider,
   extensions,
   persona,
   onCompact, compactDisabled, compacting, onAbort, isStreaming,
@@ -47,7 +50,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
 
       <PersonaSection persona={persona} />
       <ExtensionsCard extensions={extensions} />
-      <UsageCard messageCount={messageCount} requestCount={requestCount} stats={stats} onCompact={onCompact} compactDisabled={compactDisabled} compacting={compacting} onAbort={onAbort} isStreaming={isStreaming} />
+      <UsageCard messageCount={messageCount} requestCount={requestCount} stats={stats} modelProvider={modelProvider} onCompact={onCompact} compactDisabled={compactDisabled} compacting={compacting} onAbort={onAbort} isStreaming={isStreaming} />
     </div>
   );
 };

@@ -25,7 +25,9 @@
  */
 
 import { getUserAllowedDirs, getUserRole, isRegisteredUser } from './users.js';
-import { cpSync, existsSync, mkdirSync, readdirSync, copyFileSync, readlinkSync, rmSync, symlinkSync, lstatSync, readFileSync, writeFileSync } from 'fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, copyFileSync, readlinkSync, rmSync, symlinkSync, lstatSync, readFileSync, writeFileSync, renameSync } from 'fs';
+import { randomUUID } from 'crypto';
+import { readJsonCached, invalidateCache } from './user-settings.js';
 import { execFileSync } from 'node:child_process';
 import { join } from 'path';
 import { PI_DIR, AUTERE_DIR } from './constants.js';
@@ -77,6 +79,36 @@ function pathExists(path: string): boolean {
 }
 
 /**
+ * Sync master ~/.pi/agent/settings.json install state into a seeded env's
+ * settings.json. Runs on every ensurePiEnv so master-side `pi install`
+ * (container bootstrap, manual installs) propagates to every user env at
+ * next spawn. Only keys that cannot change per session are overwritten
+ * from master: packages, defaultProvider, defaultModel, enabledModels.
+ * Everything else in the env copy (per-user picks, model thinking levels)
+ * is preserved; a key absent from master is never deleted.
+ */
+function syncMasterSettings(envDir: string): void {
+  const master = readJsonCached(join(PI_DIR, 'settings.json'));
+  if (!master || typeof master !== 'object') return;
+  const envSettingsPath = join(envDir, 'settings.json');
+  let envSettings: any = {};
+  try { envSettings = JSON.parse(readFileSync(envSettingsPath, 'utf-8')); } catch { /* missing/corrupt env copy — start from master's subset */ }
+  const before = JSON.stringify([envSettings.packages, envSettings.defaultProvider, envSettings.defaultModel, envSettings.enabledModels]);
+  for (const key of ['packages', 'defaultProvider', 'defaultModel', 'enabledModels'] as const) {
+    if (master[key] !== undefined) envSettings[key] = master[key];
+  }
+  if (JSON.stringify([envSettings.packages, envSettings.defaultProvider, envSettings.defaultModel, envSettings.enabledModels]) === before) return;
+  try {
+    const tmp = join(envDir, `.settings-tmp-${randomUUID()}`);
+    writeFileSync(tmp, JSON.stringify(envSettings, null, 2), 'utf-8');
+    renameSync(tmp, envSettingsPath);
+    invalidateCache(envSettingsPath);
+  } catch (err) {
+    log.piEnv.error(`Failed to sync master settings into ${envSettingsPath}:`, err);
+  }
+}
+
+/**
  * Ensure the per-user pi environment exists and is seeded.
  * Idempotent — safe to call on every pi spawn.
  * Returns the environment directory to pass as PI_CODING_AGENT_DIR.
@@ -96,6 +128,10 @@ export function ensurePiEnv(user: string): string {
         }
       }
     }
+
+    // Master settings drift (new `pi install`s, default model changes)
+    // reaches env copies only here — pi instances read the env settings.
+    syncMasterSettings(envDir);
 
     // When pi runs against a non-9router provider, neutralize
     // pi-9router-ext in the env's settings.json (object form with empty
@@ -245,6 +281,30 @@ export function ensureSandboxHomeVolume(user: string, image: string): string {
     log.rpc.warn?.(`sandbox home volume bootstrap failed: ${String(e && e.message || e)}`);
   }
   return vol;
+}
+
+/** Copy the host ~/.gitconfig into the sandbox home volume's $HOME (git
+ *  identity, aliases) when it exists. Best effort — git works without it.
+ *  ponytail: copies at every sandboxed spawn (tiny file); a hash-compare
+ *  via `docker run cmp` would trade one wasted copy for one extra container. */
+export function ensureSandboxGitconfig(volume: string, image: string): void {
+  const home = process.env.HOME || '/home/slop';
+  const src = join(home, '.gitconfig');
+  if (!existsSync(src)) return;
+  const uid = process.getuid?.() ?? 1001;
+  const gid = process.getgid?.() ?? uid;
+  const script = 'cp "/srchome/.gitconfig" "/h/.gitconfig.tmp"'
+    + ` && chown ${uid}:${gid} "/h/.gitconfig.tmp"`
+    + ' && mv "/h/.gitconfig.tmp" "/h/.gitconfig"';
+  try {
+    execFileSync('docker', ['run', '--rm', '--entrypoint', 'sh', '-u', '0',
+      // Read-only bind of the backend's own $HOME so the copy crosses
+      // docker-volume/binds transparently (same mechanisms as work roots).
+      '-v', `${home}:/srchome:ro`, '-v', `${volume}:/h`, image, '-c', script],
+      { stdio: 'ignore', timeout: 30000 });
+  } catch (e: any) {
+    log.piEnv.warn?.(`sandbox gitconfig copy failed: ${String(e && e.message || e)}`);
+  }
 }
 
 /** Docker's volume-subpath mount fails container creation when the

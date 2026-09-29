@@ -92,6 +92,10 @@ export const PersonaSection: React.FC<{ persona: { id: string; name: string } | 
  */
 export const PersonasSettingsSection: React.FC = () => {
   const { personas, reload } = usePersonas();
+  const [globalPrompt, setGlobalPrompt] = useState('');
+  const [globalDirty, setGlobalDirty] = useState(false);
+  const [globalSaving, setGlobalSaving] = useState(false);
+  const [globalError, setGlobalError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [details, setDetails] = useState<Persona | null>(null);
   const [detailsPrompt, setDetailsPrompt] = useState('');
@@ -141,6 +145,29 @@ export const PersonasSettingsSection: React.FC = () => {
     } catch {}
   }, [reload]);
 
+  // Global system prompt: load once, save on demand (applies on the session's
+  // next turn — the extension mtime-caches the file, no pi restart needed).
+  useEffect(() => {
+    fetch(url(API.personas.globalPrompt))
+      .then((r) => r.json())
+      .then((d) => { if (d.success) { setGlobalPrompt(d.data?.prompt || ''); setGlobalDirty(false); } })
+      .catch(() => {});
+  }, []);
+  const saveGlobal = useCallback(async () => {
+    setGlobalSaving(true);
+    setGlobalError(null);
+    try {
+      const res = await fetch(url(API.personas.globalPrompt), { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ prompt: globalPrompt }) });
+      const data = await res.json();
+      if (data.success) setGlobalDirty(false);
+      else setGlobalError(data.error || 'Failed to save global prompt');
+    } catch {
+      setGlobalError('Failed to save global prompt');
+    } finally {
+      setGlobalSaving(false);
+    }
+  }, [globalPrompt]);
+
   /** Shared by create + details modals (never open at the same time) */
   const runGenerate = useCallback(async (text: string, onResult: (prompt: string) => void) => {
     setGenerating(true);
@@ -189,6 +216,24 @@ export const PersonasSettingsSection: React.FC = () => {
   return (
     <div className="settings-section">
       <h3 className="settings-section-title">Personas</h3>
+      <div className="settings-field">
+        <label className="settings-label">Global system prompt</label>
+        <textarea
+          className="settings-input"
+          rows={5}
+          value={globalPrompt}
+          placeholder="Injected into EVERY session's system prompt before the active persona…"
+          spellCheck={false}
+          onChange={(e) => { setGlobalPrompt(e.target.value); setGlobalDirty(true); }}
+        />
+        <div className="settings-description">Applies to all sessions (persona prompts refine it, injected after it). Saved to the env the same way as a persona — picked up on each session's next turn.</div>
+        <div className="btn-group">
+          <button className="btn btn-primary" onClick={saveGlobal} disabled={!globalDirty || globalSaving}>
+            {globalSaving ? 'Saving…' : 'Save Global Prompt'}
+          </button>
+        </div>
+        {globalError && <div className="settings-error">{globalError}</div>}
+      </div>
       <button className="btn btn-default persona-new-btn" onClick={openCreate}>+ New Persona</button>
       {personas.length === 0 ? (
         <div className="settings-description">No personas yet — create one to give your agent a standing role and select it when creating a session.</div>

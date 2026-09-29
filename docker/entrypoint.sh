@@ -19,6 +19,12 @@ else
 fi
 pi install npm:pi-memory
 
+# GitHub Copilot usage/credit tracking — only meaningful with that provider.
+if [ "$AUTERE_PROVIDER" = "github-copilot" ]; then
+  echo "Installing copilot-credit-usage extension (github-copilot provider)"
+  pi install npm:copilot-credit-usage
+fi
+
 echo "Initializing admin pi-env"
 mkdir -p ~/.autere/pi-envs/admin
 mkdir -p ~/.pi/agent/skills/autere && cp /home/autere/SKILL.md ~/.pi/agent/skills/autere

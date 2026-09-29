@@ -14,6 +14,7 @@ import { sanitizeUserName } from '../shared/format.js';
 import { getUserSetting } from './user-settings.js';
 import { log } from './logger.js';
 import { readSessions } from './sessions.js';
+import { addUsage, emptyTotals, finalize, usageFromMessage, type CopilotTotals } from './copilot-totals.js';
 
 // ── 9router handler ──
 
@@ -614,6 +615,52 @@ const piJanitorHandler: ExtensionHandler = {
 };
 
 register(piJanitorHandler);
+
+// ── copilot-credit-usage handler ──
+
+/**
+ * Copilot AI-credit usage per user, computed from THEIR session files
+ * (copilot-credit-usage stores nothing on disk — the numbers derive from
+ * pi session data, so compute server-side from the requesting user's env).
+ * Exported for the /api/extensions injection point in routes.ts.
+ */
+export function copilotStatsFor(user: string): { session: CopilotTotals; month: CopilotTotals } {
+	const monthKey = new Date().toISOString().slice(0, 7);
+	const session = emptyTotals();
+	const month = emptyTotals();
+	for (const s of readSessions(user)) {
+		if (!existsSync(s.sessionFile)) continue;
+		let lines: string[];
+		try { lines = readFileSync(s.sessionFile, 'utf-8').split('\n'); } catch { continue; }
+		for (const line of lines) {
+			if (!line.trim()) continue;
+			let e: any;
+			try { e = JSON.parse(line); } catch { continue; }
+			if (e.type !== 'message') continue;
+			const u = usageFromMessage(e.message);
+			if (!u) continue;
+			addUsage(session, u);
+			const ts = e.timestamp ? new Date(e.timestamp).toISOString().slice(0, 7) : '';
+			if (!ts || ts === monthKey) addUsage(month, u);
+		}
+	}
+	return { session: finalize(session), month: finalize(month) };
+}
+
+const piCopilotHandler: ExtensionHandler = {
+	name: 'copilot-credit-usage',
+	displayName: 'Copilot Credit Usage',
+	async enrich(info: ExtensionInfo): Promise<ExtensionInfo> {
+		// User-agnostic enrichment — real per-user numbers swap in per request
+		// (same pattern as pi-dedup/pi-janitor).
+		info.sections = [
+			{ header: 'AI credit usage (this env)', items: [{ 'Copilot turns': 0, 'Input tokens': 0, 'Output tokens': 0, 'Session usage': '0 AIC', 'This month': '0 AIC' }] },
+		];
+		return info;
+	},
+};
+
+register(piCopilotHandler);
 
 /**
  * Get a handler for the given extension name, if one exists.

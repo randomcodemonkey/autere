@@ -26,6 +26,20 @@ function libraryPath(user: string): string {
   return join(getPiEnvDir(user), 'personas.json');
 }
 
+/** Global system prompt (injected before the persona prompt) — per user */
+function globalPromptPath(user: string): string {
+  return join(getPiEnvDir(user), 'persona-global.json');
+}
+
+export function getGlobalPrompt(user: string): string {
+  const d = readJson(globalPromptPath(user));
+  return d && typeof d.prompt === 'string' ? d.prompt : '';
+}
+
+export function setGlobalPrompt(user: string, prompt: string): void {
+  writeJson(globalPromptPath(user), { prompt });
+}
+
 function bindingsPath(user: string): string {
   return join(getPiEnvDir(user), 'persona-active.json');
 }

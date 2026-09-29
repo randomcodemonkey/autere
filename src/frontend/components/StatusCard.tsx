@@ -18,6 +18,8 @@ interface StatusCardProps {
   extensions: ExtensionInfo[];
   models: AvailableModel[];
   activeModelId: string | null;
+  /** Active model's provider — feeds the Usage card's AIC-vs-$ display */
+  modelProvider?: string | null;
   onModelsFetched: (models: AvailableModel[]) => void;
   /** Persona bound to the active session */
   persona: { id: string; name: string } | null | undefined;
@@ -81,6 +83,7 @@ export const StatusCard: React.FC<StatusCardProps> = ({
   extensions,
   models,
   activeModelId,
+  modelProvider,
   onModelsFetched,
   persona,
   sessionActive = true,
@@ -146,6 +149,7 @@ export const StatusCard: React.FC<StatusCardProps> = ({
         messageCount={messageCount}
         requestCount={requestCount}
         stats={stats}
+        modelProvider={modelProvider}
         extensions={extensions}
         persona={persona}
         onCompact={onCompact}

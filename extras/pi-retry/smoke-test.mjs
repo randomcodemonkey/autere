@@ -4,7 +4,7 @@ import assert from "node:assert";
 const { default: factory } = await import("./index.ts");
 
 const handlers = {};
-const pi = { on: (ev, fn) => { handlers[ev] = fn; return () => {}; } };
+const pi = { on: (ev, fn) => { handlers[ev] = fn; return () => {}; }, sendMessage: (m) => { (pi.sent ||= []).push(m); } };
 factory(pi);
 
 const ok = { role: "assistant", stopReason: "stop", content: [] };
@@ -21,17 +21,16 @@ function settle(msgs, outcome = "error") {
 	);
 }
 
-// Retry even without a user prompt (no note is possible then).
+// Without a user prompt there is nothing to replay → no retry (documented).
 let r = await settle([fail, fail]);
-assert.equal(r.continue, true, "retries failure without a user prompt");
-assert.equal(r.entries.length, 0, "no retry note without a prompt");
+assert.equal(r, undefined, "no retry without a user prompt (nothing to replay)");
 
-// With a user prompt: note carries the original prompt text.
+// With a user prompt: hidden replay draft + visible note via sendMessage.
 r = await settle(withPrompt);
 assert.equal(r.continue, true, "retries failure with a user prompt");
-assert.equal(r.entries.length, 1);
-assert.match(r.entries[0].content, /failed, retry/);
-assert.match(r.entries[0].content, /draw a panda/);
+assert.match(pi.sent[0].content, /upstream request failed/, "visible note sent via sendMessage");
+assert.equal(pi.sent[0].display, true, "retry note is visible");
+assert.deepEqual(r.entries.map((e) => e.display), [false], "replay note is hidden");
 
 r = await settle(withPrompt);
 assert.equal(r.continue, true, "second retry");

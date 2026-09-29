@@ -57,7 +57,7 @@ export interface SettingSection {
 
 const settingsCache = new Map<string, { data: any; mtime: number }>();
 
-function readJsonCached(filePath: string): any | null {
+export function readJsonCached(filePath: string): any | null {
   try {
     if (!existsSync(filePath)) return null;
     const stat = statSync(filePath);
@@ -72,7 +72,7 @@ function readJsonCached(filePath: string): any | null {
   }
 }
 
-function invalidateCache(filePath: string) {
+export function invalidateCache(filePath: string) {
   settingsCache.delete(filePath);
 }
 
@@ -160,6 +160,8 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
 
   try {
     // Merge model/package settings into the env's settings.json
+    // (ensurePiEnv has already synced master install state — this layer
+    // applies the user's own choices on top).
     const piSettingsPath = join(envDir, 'settings.json');
     let piSettings: UserSettings = {};
     if (existsSync(piSettingsPath)) {
@@ -191,6 +193,9 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
       }
     }
     if ('packages' in settings) {
+      // Per-user UI saves the user's enabled set — respect it (it may
+      // legitimately differ from the master list mid-merge); master's
+      // fresh `pi install` state lands on the NEXT save/spawn.
       piSettings.packages = settings.packages;
       piSettingsChanged = true;
     }

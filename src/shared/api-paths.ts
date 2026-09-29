@@ -91,6 +91,7 @@ export const API = {
   personas: {
     root: `${P}/personas`,
     generate: `${P}/personas/generate`,
+    globalPrompt: `${P}/personas/global-prompt`,
     item: (id: string) => `${P}/personas/${encodeURIComponent(id)}`,
   },
 
