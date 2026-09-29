@@ -353,6 +353,22 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
   return { mounts: out, cwd: containerCwd };
 }
 
+/** Reverse of planSandboxMounts' cwd translation: map a sandbox work path
+ *  (what sandboxed pi records as the session header cwd, e.g.
+ *  $HOME/work/<name>) back to the host directory the root was mounted
+ *  from. Returns null outside the work base or for unknown root names. */
+export function sandboxWorkPathToHost(user: string, containerPath: string): string | null {
+  const home = process.env.HOME || '/home/slop';
+  const workBase = `${home}/work/`;
+  if (!containerPath.startsWith(workBase)) return null;
+  const rest = containerPath.slice(workBase.length);
+  if (!rest || rest.includes('/')) return null; // root itself / deeper layout
+  const name = rest;
+  const dirs = getUserAllowedDirs(user).map((d) => d.path).filter((p): p is string => !!p);
+  if (dirs.length) return dirs.find((d) => d.slice(d.replace(/\/$/, '').lastIndexOf('/') + 1) === name) || null;
+  return getUserRole(user) === 'admin' ? home : null; // whole-home fallback
+}
+
 export function discoverVolumeMounts(): { volume: string; target: string }[] {
   // Prefer docker inspect: it gives both named volumes AND bind mounts with
   // the HOST source path (binds are invisible as host paths in

@@ -92,6 +92,14 @@ export class Api {
     }));
   }
 
+  async put(path: string, body: any) {
+    return this.unwrap(await fetch(this.base + path, {
+      method: 'PUT',
+      headers: this.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    }));
+  }
+
   async verify(): Promise<boolean> {
     try {
       const res = await fetch(this.base + API.auth.status, { headers: this.headers() });

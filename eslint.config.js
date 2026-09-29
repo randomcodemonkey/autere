@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 
 export default tseslint.config(
-  { ignores: ['dist/', 'dist-backend/', 'node_modules/', 'coverage/', 'cypress/screenshots/', 'cypress/videos/', 'cypress/downloads/'] },
+  { ignores: ['dist/', 'dist-backend/', 'node_modules/', 'coverage/', 'cypress/screenshots/', 'cypress/videos/', 'cypress/downloads/', 'tui/dist/', 'tui/node_modules/', 'tui/smoke/out/'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

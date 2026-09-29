@@ -225,6 +225,16 @@ node "$CLI" no-such-cmd > /dev/null 2>&1
 RC=$?
 assert_exit 2 "unknown command exits 2"
 
+section "argument validation"
+cli session-history
+assert_exit 2 "missing arg → usage error, not a 404"
+assert_in "Usage: autere session-history <id> [limit]" "usage line shows the command signature"
+assert_in "run 'autere help'" "usage hint points to help"
+cli file-ls
+assert_exit 2 "file-ls validates too"
+cli set-model
+assert_exit 2 "set-model validates"
+
 section "summary"
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = 0 ]

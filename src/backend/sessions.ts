@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, existsSync, openSync, readSync, closeSync, fstatSync, statSync } from 'fs';
 import { join } from 'path';
 import { SessionInfo } from './types.js';
-import { getPiEnvDir } from './pi-env.js';
+import { getPiEnvDir, sandboxWorkPathToHost } from './pi-env.js';
 import { log } from './logger.js';
 
 /**
@@ -223,6 +223,16 @@ export function readSessions(user: string): SessionInfo[] {
   try {
     const sessions: SessionInfo[] = [];
 
+    // Sandbox work paths ($HOME/work/<name> — what a docker-wrapped pi
+    // records in the session header cwd) are translated back to the host
+    // directory so existence checks and Changes navigation work on the host.
+    const translateRoot = (info: SessionInfo): SessionInfo | null => {
+      if (!info.cwd) return info;
+      const host = sandboxWorkPathToHost(user, info.cwd);
+      if (!host) return info;
+      return { ...info, cwd: host };
+    };
+
     function findJsonlFiles(dir: string) {
       if (!existsSync(dir)) return;
       const entries = readdirSync(dir, { withFileTypes: true });
@@ -235,9 +245,13 @@ export function readSessions(user: string): SessionInfo[] {
           // reads for new/appended files (append-mode tail rescan for the
           // latter). Falls back to a full-file parse when neither works.
           const info = readSessionInfoCached(fullPath);
+          if (!info) continue;
+          const translated = translateRoot(info);
+          if (!translated) continue;
           // A session whose stored working directory no longer exists can
           // never be switched to (pi refuses to load it) — don't list it.
-          if (info && (!info.cwd || existsSync(info.cwd))) sessions.push(info);
+          if (translated.cwd && !existsSync(translated.cwd)) continue;
+          sessions.push(translated);
         }
       }
     }

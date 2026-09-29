@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, Text, useInput, useApp, useStdout } from 'ink';
 import { Api, API, saveConfig, type Config } from './api.js';
+import { MarkdownText } from './markdown.js';
 import { LoginScreen } from './login.js';
 import type { HistoryEntry, SessionInfo, SessionState, SessionStats } from './api.js';
 
@@ -58,10 +59,10 @@ const Entry: React.FC<{ e: HistoryEntry }> = ({ e }) => {
       return <Text color={C.system} bold>◆ {truncate(e.text, 200)}</Text>;
     case 'error':
       return <Text color={C.error}>⚠ {truncate(e.text, 200)}</Text>;
-    default: // assistant
+    default: // assistant — markdown rendered; raw tail while streaming
       return (
         <Box flexDirection="column" marginTop={e.streaming ? 0 : 1}>
-          <Text color={e.isError ? C.error : C.assistant}>{e.text}{e.streaming ? '▍' : ''}</Text>
+          {e.streaming ? <Text color={C.assistant}>{e.text}▍</Text> : <MarkdownText text={e.text} />}
         </Box>
       );
   }
@@ -80,7 +81,6 @@ const InputBox: React.FC<{
     if (key.escape) { if (streaming) onAbort(); return; }
     if (key.return) { if (value.trim()) onSend(); return; }
     if (key.backspace || key.delete) { onChange(value.slice(0, -1)); return; }
-    if (key.upArrow || key.downArrow || key.tab) return;
     if (input && !key.ctrl && !key.meta) onChange(value + input);
   });
   return (
@@ -105,6 +105,9 @@ export const App: React.FC<{ initialConfig: Config | null; defaultUrl: string }>
   const [sessionState, setSessionState] = useState<SessionState>({});
   const [stats, setStats] = useState<SessionStats>({});
   const [focusInput, setFocusInput] = useState(false);
+  const [showModels, setShowModels] = useState(false);
+  const [models, setModels] = useState<any[]>([]);
+  const [modelIdx, setModelIdx] = useState(0);
   const [input, setInput] = useState('');
   const [booting, setBooting] = useState(true);
 
@@ -112,6 +115,7 @@ export const App: React.FC<{ initialConfig: Config | null; defaultUrl: string }>
   const viewedRef = useRef<string | null>(null);
   const deltaRef = useRef<{ role: string; text: string } | null>(null);
   const pendingSeq = useRef(0);
+  const bootingRef = useRef(true);
 
   viewedRef.current = viewedId;
 
@@ -156,6 +160,9 @@ export const App: React.FC<{ initialConfig: Config | null; defaultUrl: string }>
       case 'sessions':
         setSessions([...(data || [])].sort((a: SessionInfo, b: SessionInfo) => b.lastActivity - a.lastActivity));
         break;
+      case 'models':
+        setModels(data || []);
+        break;
       case 'error':
         setError(typeof data === 'string' ? data : data?.message || 'Session error');
         break;
@@ -183,22 +190,42 @@ export const App: React.FC<{ initialConfig: Config | null; defaultUrl: string }>
     return () => clearInterval(t);
   }, []);
 
+  // ── Actions ──
+  const switchTo = useCallback(async (sessionId: string) => {
+    const api = apiRef.current;
+    if (!api) return;
+    try {
+      setError(null);
+      const data = await api.post(API.sessions.activate(sessionId), {});
+      applyBootstrap(data);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }, []);
+
   // ── Bootstrap + SSE lifecycle ──
   const connect = useCallback(async (api: Api) => {
     const data = await api.get(API.bootstrap);
     applyBootstrap(data);
+    // First boot without a viewed session: show the newest session's history
+    // right away (idle activate — disk read, no pi spawn, like the web UI).
+    if (!data.sessionState?.sessionId && data.availableSessions?.length) {
+      await switchTo((data.availableSessions as SessionInfo[]).sort((a, b) => b.lastActivity - a.lastActivity)[0].id);
+    }
     api.sse(handleEvent, () => {
       // reconnect after a short delay
       setTimeout(() => { connect(api).catch(() => {}); }, 3000);
     });
-  }, [handleEvent]);
+  }, [handleEvent, switchTo]);
 
   const applyBootstrap = (data: any) => {
     setSessionState(data.sessionState || {});
     setStats(data.sessionStats || {});
     setSessions([...(data.availableSessions || [])].sort((a: SessionInfo, b: SessionInfo) => b.lastActivity - a.lastActivity));
+    setModels(data.availableModels || []);
     setHistory(data.streamHistory || []);
     setViewedId(data.sessionState?.sessionId ?? data.historySessionId ?? null);
+    bootingRef.current = false;
     setBooting(false);
   };
 
@@ -223,17 +250,6 @@ export const App: React.FC<{ initialConfig: Config | null; defaultUrl: string }>
   }, [stdout]);
 
   // ── Actions ──
-  const switchTo = async (sessionId: string) => {
-    const api = apiRef.current;
-    if (!api) return;
-    try {
-      setError(null);
-      const data = await api.post(API.sessions.activate(sessionId), {});
-      applyBootstrap(data);
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
 
   const send = async () => {
     const api = apiRef.current;
@@ -256,16 +272,51 @@ export const App: React.FC<{ initialConfig: Config | null; defaultUrl: string }>
     try { await api.post(`${API.session.abort}?sessionId=${encodeURIComponent(viewedId)}`, {}); } catch {}
   };
 
+  const loadModels = useCallback(async () => {
+    const api = apiRef.current;
+    if (!api) return;
+    try {
+      const data = await api.get(`${API.session.models}?sessionId=${encodeURIComponent(viewedId || '')}`);
+      setModels(data || []);
+      setModelIdx(0);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }, [viewedId]);
+
+  const pickModel = async (m: any) => {
+    const api = apiRef.current;
+    if (!api || !viewedId) return;
+    setShowModels(false);
+    try {
+      await api.put(API.session.model, { sessionId: viewedId, provider: m.provider, modelId: m.id });
+      // status event refreshes the model name in the bar; picker data on next 'm'
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
   // ── Global keys ──
   const [showHelp, setShowHelp] = useState(false);
+  useEffect(() => { if (showModels) loadModels(); }, [showModels, loadModels]);
   useInput((input, key) => {
-    const mod = key.ctrl || key.meta; // Cmd on macOS sends meta
-    if (mod && input === 'c') { exit(); process.exit(0); }
-    if (mod && input === 'h') { setShowHelp((v) => !v); return; }
+    const mod = key.ctrl || key.meta;
+    if (mod && input === 'q') { exit(); process.exit(0); }
     if (showHelp) { setShowHelp(false); return; }
+    // Model picker navigation
+    if (showModels) {
+      if (key.upArrow) setModelIdx((i) => Math.max(0, i - 1));
+      else if (key.downArrow) setModelIdx((i) => Math.min(models.length - 1, i + 1));
+      else if (key.return && models[modelIdx]) pickModel(models[modelIdx]);
+      else if (key.escape || (mod && input === 'm')) setShowModels(false);
+      return;
+    }
+    if (mod && input === 'h') { setShowHelp(true); return; }
     if (focusInput) return;
     if (input === 'h') { setShowHelp(true); return; }
-    if (key.tab) { setFocusInput(true); return; }
+    if (input === 'm') { setShowModels(true); return; }
+    // Tab toggles focus between the sessions pane and the chat input
+    if (key.tab) { setFocusInput((v) => !v); return; }
     if (key.upArrow) setSelectedIdx((i) => Math.max(0, i - 1));
     if (key.downArrow) setSelectedIdx((i) => Math.min(sessions.length - 1, i + 1));
     if (key.return && sessions[selectedIdx]) switchTo(sessions[selectedIdx].id);
@@ -288,11 +339,12 @@ export const App: React.FC<{ initialConfig: Config | null; defaultUrl: string }>
           {[
             ['↑ / ↓', 'select session'],
             ['Enter', 'switch to selected session'],
-            ['Tab', 'focus chat input'],
+            ['Tab', 'toggle focus: sessions pane ⇄ chat input'],
             ['Enter (input)', 'send message'],
             ['Esc (input)', 'abort streaming'],
+            ['m', 'view / change model of viewed session'],
             ['h', 'toggle this help'],
-            ['⌘/Ctrl+C', 'quit'],
+            ['Ctrl+Q', 'quit (single press)'],
           ].map(([k, d]) => (
             <Box key={k} gap={2}>
               <Box width={16}><Text color={C.tool} bold>{k}</Text></Box>
@@ -300,17 +352,37 @@ export const App: React.FC<{ initialConfig: Config | null; defaultUrl: string }>
             </Box>
           ))}
         </Box>
-        <Box marginTop={1}><Text dimColor>⌘ (Cmd) and Ctrl both work for modifier shortcuts.</Text></Box>
-        <Text dimColor>Press any key to close…</Text>
+        <Box marginTop={1}><Text dimColor>Press any key to close…</Text></Box>
       </Box>
     );
   }
 
   // ── Layout ──
-  const rows = stdout?.rows || 24;
-  const sessionViewport = Math.max(1, rows - 4);
+  const rows = stdout?.rows || 24;  const sessionViewport = Math.max(1, rows - 4);
   const scroll = Math.max(0, Math.min(selectedIdx - sessionViewport + 1, Math.max(0, sessions.length - sessionViewport)));
   const visible = sessions.slice(scroll, scroll + sessionViewport);
+
+  if (showModels) {
+    const current = `${sessionState.model?.provider || ''}/${sessionState.model?.id || ''}`;
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor={C.accent} paddingX={2} paddingY={1} width={64} alignSelf="center" marginTop={2}>
+        <Text bold color={C.accent}>Models — viewed session</Text>
+        <Text dimColor>current: {current}</Text>
+        <Box flexDirection="column" marginTop={1}>
+          {models.length === 0 && <Text dimColor> no models</Text>}
+          {models.map((m, i) => (
+            <Box key={`${m.provider}/${m.id}`} paddingLeft={1} backgroundColor={i === modelIdx ? C.selectedBg : undefined}>
+              <Text wrap="truncate-end" color={i === modelIdx ? C.selectedText : m.id === sessionState.model?.id ? C.ok : C.assistant} bold={m.id === sessionState.model?.id}>
+                {i === modelIdx ? '› ' : '  '}{m.name || m.id}
+                {m.id === sessionState.model?.id ? <Text color={C.ok}> ✓</Text> : null}
+              </Text>
+            </Box>
+          ))}
+        </Box>
+        <Box marginTop={1}><Text dimColor>↑↓ select · Enter apply · Esc or ⌃M close</Text></Box>
+      </Box>
+    );
+  }
 
   const streaming = !!sessionState.isStreaming;
   const compacting = !!sessionState.compacting;
@@ -360,7 +432,7 @@ export const App: React.FC<{ initialConfig: Config | null; defaultUrl: string }>
           </Box>
           <InputBox
             value={input}
-            focus={focusInput && !showHelp}
+            focus={focusInput && !showHelp && !showModels}
             streaming={streaming}
             onChange={setInput}
             onSend={send}

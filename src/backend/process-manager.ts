@@ -9,8 +9,37 @@
 import { UserSession } from './user-session.js';
 import { findSession } from '../shared/find-session.js';
 import { readSessions } from './sessions.js';
+import { getPiEnvDir } from './pi-env.js';
 import { log } from './logger.js';
 import type { SessionInfo } from './types.js';
+import { readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
+
+/** Spawn opts persisted per session file (in the user's pi env) so pi
+ *  respawns (settings save, session restart, full autere restart) rebuild
+ *  the session in the SAME workdir / docker sandbox work area. With opts
+ *  only in memory, every getOrCreate that doesn't pass cwd/workdirs (all
+ *  restart paths) respawns the session in the backend cwd instead. */
+interface SpawnOpts { cwd?: string; workdirs?: string[] }
+const SPAWN_OPTS_FILE = 'spawn-opts.json';
+
+function loadSpawnOpts(user: string): Record<string, SpawnOpts> {
+  try {
+    const raw = JSON.parse(readFileSync(join(getPiEnvDir(user), SPAWN_OPTS_FILE), 'utf-8'));
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch { return {}; }
+}
+
+function saveSpawnOpts(user: string, sessionFile: string, opts: SpawnOpts): void {
+  try {
+    const all = loadSpawnOpts(user);
+    all[sessionFile] = opts;
+    writeFileSync(join(getPiEnvDir(user), SPAWN_OPTS_FILE), JSON.stringify(all, null, 2));
+  } catch (err) {
+    log.processMgr.warn?.(`Failed to persist spawn opts for (${user}): ${err}`);
+  }
+}
+
 
 export interface ProcessManagerOptions {
   provider?: string;
@@ -83,12 +112,16 @@ export class ProcessManager {
     if (inFlight) return inFlight;
 
     const promise = (async () => {
+      // Restart paths don't pass cwd/workdirs — inherit the persisted ones
+      // so a sandboxed session respawns in the same work area (docker mounts
+      // are planned from exactly these fields in UserSession).
+      const saved = sessionFile ? loadSpawnOpts(user)[sessionFile] : undefined;
       const session = new UserSession(user, sessionFile, {
         provider: this.options.provider,
         model: this.options.model,
         args: this.options.args,
-        cwd: opts.cwd,
-        workdirs: opts.workdirs,
+        cwd: opts.cwd ?? saved?.cwd,
+        workdirs: opts.workdirs ?? saved?.workdirs,
       }, this.defaultIdleTimeoutMs);
 
       session.onIdle(() => {
@@ -133,6 +166,9 @@ export class ProcessManager {
       // keep the first (shared via the starting promise) and drop the dupe.
       const resolvedFile = session.routedSessionFile();
       if (resolvedFile) {
+        // Remember creation-time spawn opts (New Session modal) so restarts
+        // keep the same workdir. Only persisted when the caller supplied them.
+        if (opts.cwd || opts.workdirs) saveSpawnOpts(user, resolvedFile, { cwd: opts.cwd, workdirs: opts.workdirs });
         const dupe = map.get(resolvedFile);
         if (dupe && dupe !== session && dupe.isRunning) {
           // Another process won the race — stop this redundant one.

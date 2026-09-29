@@ -76,7 +76,8 @@ function printSessions(list) {
 }
 
 function requireArgs(args, n, usage) {
-  if (args.length < n) { console.error(`Usage: autere ${usage}`); process.exit(2); }
+  const ok = args.filter((a) => a !== undefined && a !== '').length >= n;
+  if (!ok) { console.error(`Usage: autere ${usage}\n  (run 'autere help' for all commands)`); process.exit(2); }
 }
 
 // Encodes a file into a base64 image attachment body for session messages
@@ -96,7 +97,7 @@ const cmds = {};
 cmds.login = {
   desc: 'login <user> <password> — authenticate with username/password, store the bearer token',
   fn: async ([user, password]) => {
-    if (!user) { console.error('Usage: autere login <user> <password>'); process.exit(2); }
+    requireArgs([user, password], 2, 'login <user> <password>');
     const res = await fetch(`${BASE}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -514,7 +515,10 @@ cmds['git-init'] = {
 // ── Misc ──
 cmds.bootstrap = {
   desc: 'bootstrap [sessionId] — full dashboard bootstrap payload',
-  fn: async ([id]) => out(await get(`/api/v1/bootstrap${id ? `?sessionId=${id}` : ''}`)),
+  fn: async ([id]) => {
+    if (id) return out(await get(`/api/v1/bootstrap?sessionId=${id}`));
+    out(await get('/api/v1/bootstrap'));
+  },
 };
 cmds.status = { desc: 'status — backend/uptime info', fn: async () => out(await get('/api/v1/status')) };
 cmds['backend-restart'] = {

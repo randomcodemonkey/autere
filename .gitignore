@@ -20,3 +20,6 @@ core.*
 tui/smoke/out/
 log/
 dist-backend/
+
+# TUI build output
+tui/dist/

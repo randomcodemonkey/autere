@@ -18,7 +18,7 @@ trap cleanup EXIT
 # ── isolated backend (AUTERE_DIR keeps auth/users/settings out of ~/.autere) ──
 export AUTERE_DIR=$TD/autere AUTERE_PI_ENVS_DIR=$TD/pi-envs AUTERE_USERS_FILE=$TD/autere/users.json \
   AUTERE_ADMIN_USER=admin AUTERE_ADMIN_PASSWORD=testpw PI_SANDBOX_IMAGE=off
-npx tsx ../src/backend/index.ts --port $PORT --monitor-auth true --monitor-password testpw \
+npx tsx ../src/backend/index.ts --port $PORT --autere-auth true --autere-password testpw \
   > "$TD/backend.log" 2>&1 &
 for i in $(seq 1 30); do
   curl -s -o /dev/null http://127.0.0.1:$PORT/api/v1/auth/status && break

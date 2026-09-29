@@ -7,6 +7,7 @@ changes.
 ## Run
 
 ```bash
+npm install            # once, from tui/
 npx tsx index.tsx [url] [--token <token>]
 ```
 
@@ -18,6 +19,26 @@ npx tsx index.tsx [url] [--token <token>]
 
 Create API tokens in the web dashboard: **Settings → API Tokens**
 (full token shown once; TUI authenticates with `Authorization: Bearer`).
+
+## Build a single executable
+
+```bash
+npm run build
+```
+
+Produces a single `tui/dist/autere-tui` (with ink/react and the whole TUI
+embedded). Either run it from there:
+
+```bash
+tui/dist/autere-tui --token <token> [url]
+```
+
+…or copy it onto your `$PATH`, e.g. `cp tui/dist/autere-tui ~/.local/bin/`.
+
+Requires Node ≥ 20; on Node builds without SEA support (some distro
+packages) the build emits the same single file as a `#!/usr/bin/env node`
+script instead of a true binary — usable identically, needs `node` on
+`$PATH`.
 
 ## Keys
 

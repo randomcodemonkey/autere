@@ -1,0 +1,8 @@
+{
+	"name": "pi-retry",
+	"version": "1.0.0",
+	"description": "Retries transient 400/upstream-failed provider requests with a retry context note",
+	"type": "module",
+	"main": "./index.ts",
+	"pi": { "extensions": ["./index.ts"] }
+}
