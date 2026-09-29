@@ -57,12 +57,19 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId, initialFile
       .finally(() => setLoading(false));
   }, [sessionId, initialFile]);
 
-  // Dedupe: per file+change-type keep only the latest entry (older ones are
-  // superseded — e.g. repeated misclassified "created" rows for one file)
+  // Dedupe: collapse only EXACT duplicate rows (same file/type/timestamp/
+  // diff — e.g. a file hit by both the sweep and the explicit-target diff).
+  // Everything else is a genuine incremental diff (each entry diffs against
+  // the previous state) — collapsing per path+change would silently drop
+  // real edits from the session history.
   const deduped = useMemo(() => {
-    const byKey = new Map<string, FileChange>();
-    for (const c of changes) byKey.set(`${c.path}\n${c.change}`, c);
-    return [...byKey.values()].sort((a, b) => a.ts - b.ts);
+    const seen = new Set<string>();
+    const out: FileChange[] = [];
+    for (const c of changes) {
+      const k = JSON.stringify([c.path, c.change, c.ts, c.tool, c.diff]);
+      if (!seen.has(k)) { seen.add(k); out.push(c); }
+    }
+    return out;
   }, [changes]);
 
   const filtered = useMemo(() => {

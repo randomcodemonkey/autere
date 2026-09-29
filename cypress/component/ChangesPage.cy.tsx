@@ -33,6 +33,27 @@ describe('ChangesPage file selection', () => {
     cy.get('@scrollTo').should('have.been.calledWith', 0, 0);
   });
 
+  it('shows every incremental edit to one file, not just the last one', () => {
+    // Regression: the old per-path+change dedupe collapsed repeated
+    // 'modified' rows into one entry, losing all but the newest diff.
+    cy.intercept('GET', '**/file-changes', {
+      success: true,
+      data: [
+        { ts: 1, path: 'src/x.ts', tool: 'edit', change: 'modified', diff: 'first edit' },
+        { ts: 2, path: 'src/x.ts', tool: 'edit', change: 'modified', diff: 'second edit' },
+        { ts: 3, path: 'src/x.ts', tool: 'edit', change: 'modified', diff: 'third edit' },
+      ],
+    });
+    cy.mount(
+      <div style={{ height: '400px', display: 'flex', flexDirection: 'column' }}>
+        <ChangesPage sessionId="s1" />
+      </div>
+    );
+    // src/x.ts is the newest change's file → auto-selected without a click
+    cy.get('.changes-mod').should('have.length', 3);
+    cy.get('.changes-mod-diff').last().should('contain', 'third edit');
+  });
+
   it('deselects on second click — empty state in the detail pane', () => {
     mountPage();
     cy.get('.changes-file').contains('src/long.ts').click();

@@ -1885,8 +1885,13 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       const file = join(getPiEnvDir(c.user), 'uploads', name);
       if (!existsSync(file)) { sendJSON(c.res, { success: false, error: 'Not found' }, 404); return; }
       const origName = name.slice('file-'.length + 16 + 1);
+      // Real mime by extension — <img src> won't render application/octet-stream
+      // (saved-file inline images show broken). svg served as image/svg+xml is
+      // safe inside <img>: scripts/svg animation can't escape the image box.
+      const ext = (origName.split('.').pop() || '').toLowerCase();
+      const mime = IMAGE_MIME[ext] ?? STATIC_MIME[ext] ?? 'application/octet-stream';
       c.res.writeHead(200, {
-        'Content-Type': 'application/octet-stream',
+        'Content-Type': mime,
         'Content-Length': statSync(file).size,
         'Content-Disposition': `attachment; filename="${origName.replace(/"/g, '')}"`,
         'Cache-Control': 'private, max-age=31536000, immutable',

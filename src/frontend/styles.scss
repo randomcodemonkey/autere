@@ -1391,8 +1391,12 @@ body {
     border-radius: 0.75rem 0.75rem 0 0;
   }
 
-  .files-tree,
-  .changes-files {
+  // Higher specificity than the later single-class base rules: base
+  // .changes-files (max-height: 35vh) appears later in the file and would win
+  // the cascade otherwise. Desktop gets full remaining height; the 35vh cap
+  // stays for the mobile/stacked layout.
+  .edits-page .files-tree,
+  .edits-page .changes-files {
     grid-area: tree;
     max-height: none;
     min-height: 0;
