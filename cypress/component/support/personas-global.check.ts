@@ -41,17 +41,17 @@ function freshEnv() {
   let r = handler({ systemPrompt: 'BASE' }, ctx);
   check('global-only', r && r.systemPrompt.includes('<global-system-prompt>') && !r.systemPrompt.includes('<persona'));
 
-  // 3: global + persona -> global BEFORE persona
+  // 3: global + persona -> single <persona> block, global prompt at its end
   w('persona-active.json', { 'sess.jsonl': { id: 'p1', name: 'Derp', prompt: 'PERSONA RULES' } });
   busy(3);
   r = handler({ systemPrompt: 'BASE' }, ctx);
-  const gi = r.systemPrompt.indexOf('<global-system-prompt>');
-  const pi2 = r.systemPrompt.indexOf('<persona');
-  check('global-before-persona', gi >= 0 && pi2 > gi && r.systemPrompt.includes('PERSONA RULES'));
+  const pp = r.systemPrompt.indexOf('PERSONA RULES');
+  const gi = r.systemPrompt.indexOf('GLOBAL RULES', pp);
+  check('global-within-persona', pp >= 0 && gi > pp && !r.systemPrompt.includes('<global-system-prompt>'));
 
   // 4: unchanged on second turn -> no new marker, same shape
   r = handler({ systemPrompt: 'BASE' }, ctx);
-  check('stable', r && r.systemPrompt.includes('<global-system-prompt>') && r.message === undefined);
+  check('stable', r && r.systemPrompt.includes('PERSONA RULES') && r.systemPrompt.includes('GLOBAL RULES') && r.message === undefined);
 
   // 5: global removed
   w('persona-global.json', { prompt: '' });
@@ -67,17 +67,23 @@ function freshEnv() {
   const setg = (g: string) => { busy(3); w('persona-global.json', { prompt: g }); busy(3); };
   const setb = (b: boolean) => { busy(3); w('persona-active.json', { 'sess.jsonl': b ? { id: 'p1', name: 'Derp', prompt: 'PERSONA RULES' } : {} }); busy(3); };
 
-  // persona active first (original behavior), THEN global added
+  // persona active first (original behavior), THEN global added;
+  // injection is now a single <persona> block with the global prompt
+  // concatenated to the END of the persona prompt (no separate tag)
   setb(true);
   let r = handler({ systemPrompt: 'BASE' }, ctx);
   check('t1 persona marker', r.message?.content === 'Persona "Derp" active (new session).');
   setg('GLOBAL RULES');
   r = handler({ systemPrompt: 'BASE' }, ctx);
   check('t2 global marker after persona', r.message?.content === 'Persona "Derp" active; global system prompt added.');
-  check('t2 order', r.systemPrompt.indexOf('<global-system-prompt>') < r.systemPrompt.indexOf('<persona'));
+  check('t2 single injection', r.systemPrompt.includes('<persona') && !r.systemPrompt.includes('<global-system-prompt>'));
+  const pp = r.systemPrompt.indexOf('PERSONA RULES');
+  const gp = r.systemPrompt.indexOf('GLOBAL RULES', pp);
+  check('t2 global after persona text', pp >= 0 && gp > pp);
   setg('GLOBAL RULES2');
   r = handler({ systemPrompt: 'BASE' }, ctx);
   check('t3 changed marker', r.message?.content === 'Global system prompt and persona "Derp" both active (changed).');
+  check('t3 new global inside block', r.systemPrompt.includes('GLOBAL RULES2') && r.systemPrompt.includes('<persona'));
 
   // persona removed while global active: prompt keeps global, marker reflects it
   setb(false);

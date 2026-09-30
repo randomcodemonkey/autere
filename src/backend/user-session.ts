@@ -12,6 +12,7 @@ import { MonitorRpcClient } from './rpc-client.js';
 import { filterScopedModels, autoSessionName, readSessionUsage } from './utils.js';
 import { log, userLog } from './logger.js';
 import { ensurePiEnv, ensureSandboxHomeVolume, ensureSandboxGitconfig, ensureVolumeSubpaths, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage, DEFAULT_SANDBOX_IMAGE } from './pi-env.js';
+import { getUserMountDockerSocket } from './users.js';
 import { getEditIgnorePaths, getHistoryLimit, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getShowReadImages, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost, writeReserveTokensConfig, annotateContextUsage } from './user-settings.js';
 import { deliverToSession } from './client-hub.js';
 import { getActivePersona } from './personas.js';
@@ -165,7 +166,7 @@ export class UserSession {
     this.broadcast({ type: 'stats', data: { ...this.state.sessionStats } });
   }
 
-  constructor(user: string, sessionFile: string | null, rpcOptions: { provider?: string; model?: string; args?: string[]; cwd?: string; workdirs?: string[] }, idleTimeoutMs: number = 30 * 60 * 1000) {
+  constructor(user: string, sessionFile: string | null, rpcOptions: { provider?: string; model?: string; args?: string[]; cwd?: string; workdirs?: string[]; mountDockerSocket?: boolean }, idleTimeoutMs: number = 30 * 60 * 1000) {
     this.user = user;
     this.sessionFile = sessionFile;
     // Chat history buffer size (messages). Settings saves restart the pi
@@ -187,7 +188,7 @@ export class UserSession {
       this.resumedExistingSession = true;
       this.resumedSessionFile = sessionFile;
     }
-    // Default: sandbox every session (slopbox image). Override via the
+    // Default: sandbox every session (autere sandbox image). Override via the
     // piSandboxImage setting, AUTERE_SANDBOX_IMAGE env (off/none/disabled
     // runs pi on the host).
     const sandboxImage = resolveSandboxImage(user, getUserSetting(user, 'piSandboxImage', ''),
@@ -217,7 +218,7 @@ export class UserSession {
         ensureSandboxGitconfig(homeVolume, image);
         const plan = planSandboxMounts(user, rpcOptions.cwd || process.cwd(), piEnvDir, homeVolume, rpcOptions.workdirs);
         ensureVolumeSubpaths(plan.mounts, image);
-        return { sandboxImage: image, sandboxMounts: plan.mounts, sandboxWorkingDir: plan.cwd, args };
+        return { sandboxImage: image, sandboxMounts: plan.mounts, sandboxWorkingDir: plan.cwd, args, sandboxDockerSocket: getUserMountDockerSocket(user) };
       })(),
     });
     this.state = createInitialState();

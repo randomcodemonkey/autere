@@ -47,6 +47,8 @@ export interface SessionInfo {
   createdAt: number;
   lastActivity: number;
   cwd: string | null;
+  /** Per-session sandbox workdirs (spawn opts) — empty for host sessions */
+  workdirs?: string[];
   /** Live flags stamped by ProcessManager.listSessions */
   active?: boolean;
   streaming?: boolean;

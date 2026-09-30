@@ -20,7 +20,7 @@ import { join } from 'path';
  *  the session in the SAME workdir / docker sandbox work area. With opts
  *  only in memory, every getOrCreate that doesn't pass cwd/workdirs (all
  *  restart paths) respawns the session in the backend cwd instead. */
-interface SpawnOpts { cwd?: string; workdirs?: string[] }
+interface SpawnOpts { cwd?: string; workdirs?: string[]; mountDockerSocket?: boolean }
 const SPAWN_OPTS_FILE = 'spawn-opts.json';
 
 function loadSpawnOpts(user: string): Record<string, SpawnOpts> {
@@ -28,6 +28,11 @@ function loadSpawnOpts(user: string): Record<string, SpawnOpts> {
     const raw = JSON.parse(readFileSync(join(getPiEnvDir(user), SPAWN_OPTS_FILE), 'utf-8'));
     return raw && typeof raw === 'object' ? raw : {};
   } catch { return {}; }
+}
+
+/** Spawn opts of ONE session file (fresh read — used per-request). */
+function spawnOpts(user: string, sessionFile: string): SpawnOpts {
+  return loadSpawnOpts(user)[sessionFile] || {};
 }
 
 function saveSpawnOpts(user: string, sessionFile: string, opts: SpawnOpts): void {
@@ -95,7 +100,7 @@ export class ProcessManager {
    * sessionFile=null spawns a fresh session (pi picks id/file; the entry is
    * filed under the resolved file once start() completes).
    */
-  async getOrCreate(user: string, sessionFile: string | null, opts: { cwd?: string; workdirs?: string[] } = {}): Promise<UserSession> {
+  async getOrCreate(user: string, sessionFile: string | null, opts: { cwd?: string; workdirs?: string[]; mountDockerSocket?: boolean } = {}): Promise<UserSession> {
     if (sessionFile) {
       const existing = this.sessions.get(user)?.get(sessionFile);
       if (existing && existing.isRunning) {
@@ -122,6 +127,7 @@ export class ProcessManager {
         args: this.options.args,
         cwd: opts.cwd ?? saved?.cwd,
         workdirs: opts.workdirs ?? saved?.workdirs,
+        mountDockerSocket: opts.mountDockerSocket ?? saved?.mountDockerSocket,
       }, this.defaultIdleTimeoutMs);
 
       session.onIdle(() => {
@@ -305,6 +311,28 @@ export class ProcessManager {
    * and streaming (its turn is in flight). Disk entries carry the flags;
    * synthetic (file-less) entries are always active.
    */
+  /** Spawn opts of ONE session file (for route-level reads). */
+  getSpawnOpts(user: string, sessionFile: string): SpawnOpts {
+    return spawnOpts(user, sessionFile);
+  }
+
+  /**
+   * Replace a session's workdirs (admin action from the Sessions view):
+   * re-persist spawn opts, terminate the (idle!) pi process and respawn it
+   * so the new work roots/sandbox mounts take effect. Returns the fresh
+   * session. Caller validates workdirs + admin role + idle state.
+   */
+  async setWorkdirs(user: string, sessionFile: string, workdirs: string[]): Promise<UserSession> {
+    const saved = spawnOpts(user, sessionFile);
+    saveSpawnOpts(user, sessionFile, {
+      cwd: workdirs[0] ?? saved.cwd,
+      workdirs,
+      mountDockerSocket: saved.mountDockerSocket,
+    });
+    await this.terminate(user, sessionFile);
+    return this.getOrCreate(user, sessionFile);
+  }
+
   listSessions(user: string, viewed: Set<string | null>): SessionInfo[] {
     const map = this.sessions.get(user);
     const sessions = this.refreshSessions(user, viewed);
@@ -316,6 +344,11 @@ export class ProcessManager {
       s.active = running || this.syntheticCache.get(user)?.has(s.sessionFile) || false;
       s.streaming = running ? session!.state.sessionState.isStreaming || session!.state.sessionState.compacting : false;
       s.compacting = running && session!.state.sessionState.compacting;
+      // Spawn opts supply the workdirs (live process takes precedence) —
+      // the Sessions view edits them for the current session.
+      s.workdirs = running
+        ? (session!.rpc.getWorkdirs().length ? session!.rpc.getWorkdirs() : undefined)
+        : (spawnOpts(user, s.sessionFile).workdirs?.length ? [...spawnOpts(user, s.sessionFile).workdirs!] : undefined);
     }
     return sessions;
   }

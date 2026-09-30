@@ -180,7 +180,7 @@ export default function (pi: any) {
 	// add shared-import back only if deployment ever loads from the repo.
 	// Semantics: .git always ignored at any depth; entries match path
 	// segments — relative entries ('pgdata') at any depth, absolute entries
-	// ('/home/slop/pgdata') anchored at the root, never substring matches.
+	// ('/home/autere/pgdata') anchored at the root, never substring matches.
 	const isIgnored = (path: string): boolean => {
 		const segs = path.split("/").filter(Boolean);
 		if (segs.includes(".git")) return true;

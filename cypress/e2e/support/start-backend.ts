@@ -46,8 +46,23 @@ const RUN_RECORD = join(tmpdir(), 'autere-e2e-last-run.json');
 
 function reapPreviousRun(): void {
   try {
+    // pids may carry positive pids (detached pi processes, recorded at
+    // spawn time) and negative pgids (the backend's process group).
+    // Repo-scoped sweep too: hard-killed runs from before the run record
+    // existed (or cleared tmp) still leave pi/cmdline orphans matching
+    // the test backend's unique cmdline marker.
     const { pids } = JSON.parse(readFileSync(RUN_RECORD, 'utf-8')) as { pids: number[] };
     killPids(pids, 'SIGKILL');
+  } catch {}
+  // Cmdline-marker sweep, scoped to THIS test's unique flags (isolated
+  // env dir path baked into the cmdline via AUTERE_PI_ENVS_DIR? No — env
+  // vars aren't in /proc cmdline; the test PORT arg is though; a random
+  // 30000-50000 port is unlikely to collide with a live backend).
+  try {
+    execSync(
+      `pkill -KILL -f "tsx src/backend/index.ts --port 3" 2>/dev/null; pkill -KILL -f "tsx ../src/backend/index.ts --port 3" 2>/dev/null`,
+      { stdio: 'ignore' }
+    );
   } catch {}
   try { rmSync(RUN_RECORD, { force: true }); } catch {}
 }
@@ -137,12 +152,20 @@ export function startBackend(): Promise<void> {
         AUTERE_DIR: join(testEnvsDir, 'autere-state'),
         // sandbox points at docker + the real home volume — off for tests
         AUTERE_SANDBOX_IMAGE: 'off',
+        // Orphan record sharing: pi processes spawned by this backend
+        // append their pids to the run record (rpc-client reads it), so a
+        // SIGKILLed runner's detached pi is reaped by the next run.
+        AUTERE_RUN_RECORD_FILE: RUN_RECORD,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
     });
 
-    // Persist the group so the next run can reap it if this one is SIGKILLed
+    // Persist the group AND enable orphan recording so the next run can
+    // reap it if this one is SIGKILLed. Positive pids are added by the
+    // backend itself (rpc-client) as pi processes appear — they live in
+    // their OWN detached groups, so a group kill of the backend never
+    // reaches them.
     if (backendProcess.pid) {
       try {
         writeFileSync(RUN_RECORD, JSON.stringify({ pids: [-backendProcess.pid] }));
@@ -203,13 +226,14 @@ export function stopBackend(): Promise<void> {
     const pid = backendProcess.pid;
     console.log(`[e2e] Stopping autere backend (pid=${pid})...`);
 
-    // CRITICAL: collect the full descendant tree BEFORE killing anything.
-    // pi is spawned detached (own process group), so the backend's group
-    // kill never reaches it; and once the backend dies, its children are
-    // reparented to PID 1 and can no longer be found by ppid lookups.
+    // Also record the full descendant tree BEFORE any killing — SIGKILLed
+    // later runs have no cleanup path, so this list is what the next run
+    // reaps (negative = group, positive = detached pi already recorded
+    // by the backend via AUTERE_RUN_RECORD_FILE).
     const descendants = pid ? collectDescendants(pid) : [];
     if (descendants.length > 0) {
       console.log(`[e2e] Backend descendants: ${descendants.join(', ')}`);
+      reapRecord(descendants);
     }
 
     backendProcess.on('exit', () => {

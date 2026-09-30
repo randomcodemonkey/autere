@@ -15,9 +15,8 @@ interface SessionViewProps {
   /** Admin-only: show the sandbox workdir field in the new-session form */
   canSetWorkdir?: boolean;
   onAbort: () => void;
-  onAbortCompaction: () => void;
-  /** Creates the session: chosen persona id (null = none) + form name + sandbox workdirs */
-  onNewSession: (personaId: string | null, sessionName: string, workdirs?: string[]) => void;
+  /** Creates the session: chosen persona id (null = none) + form name + sandbox workdirs + docker.sock opt-in */
+  onNewSession: (personaId: string | null, sessionName: string, workdirs?: string[], mountDockerSocket?: boolean) => void;
   onSwitchSession: (sessionId: string) => void;
   /** True while a switch request is in flight — blocks further actions */
   switching?: boolean;
@@ -51,7 +50,7 @@ export function formatSessionTime(ts: number, locale?: string): string {
 export const SessionView: React.FC<SessionViewProps> = ({
   statusType, sessionId, sessionName,
   compacting, isStreaming, canSetWorkdir = false,
-  onAbort, onAbortCompaction, onNewSession, onSwitchSession,
+  onAbort, onNewSession, onSwitchSession,
   switching = false,
 }) => {
   const [query, setQuery] = useState('');
@@ -67,6 +66,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
   const [view, setView] = useState<'list' | 'new'>('list');
   const [newNameInput, setNewNameInput] = useState('');
   const [newWorkdirs, setNewWorkdirs] = useState<string[]>([]);
+  const [newMountDockerSocket, setNewMountDockerSocket] = useState(false);
   const [activeOnly, setActiveOnly] = useState(false);
   const searchSeq = useRef(0);
 
@@ -134,8 +134,8 @@ export const SessionView: React.FC<SessionViewProps> = ({
   }, []);
 
   const createNewSession = useCallback(() => {
-    onNewSession(personaId || null, newNameInput.trim(), canSetWorkdir ? newWorkdirs : undefined);
-  }, [onNewSession, personaId, newNameInput, newWorkdirs, canSetWorkdir]);
+    onNewSession(personaId || null, newNameInput.trim(), canSetWorkdir ? newWorkdirs : undefined, canSetWorkdir ? newMountDockerSocket : false);
+  }, [onNewSession, personaId, newNameInput, newWorkdirs, canSetWorkdir, newMountDockerSocket]);
 
   const visibleSessions = activeOnly ? results.filter((s) => s.active || s.streaming) : results;
 
@@ -177,13 +177,28 @@ export const SessionView: React.FC<SessionViewProps> = ({
           </select>
         </div>
         {canSetWorkdir && (
+          <label className="users-field-inline session-sock-row">
+            <input
+              type="checkbox"
+              checked={newMountDockerSocket}
+              onChange={(e) => setNewMountDockerSocket(e.target.checked)}
+            />
+            <span>Mount host docker.sock into the sandbox</span>
+          </label>
+        )}
+        {canSetWorkdir && newMountDockerSocket && (
+          <div className="settings-description users-sock-warning">
+            ⚠ Security risk: the docker socket grants root-equivalent access to the host.
+          </div>
+        )}
+        {canSetWorkdir && (
           <div className="settings-field session-workdirs-row">
             <label className="settings-label">Workdirs</label>
-            <div className="settings-description">If workdirs are added, a sandboxed session is created</div>
+            <div className="settings-description">If workdirs are added, a sandboxed session is created. Relative paths resolve from the server's $HOME</div>
             <SortableList
               items={newWorkdirs}
               onChange={setNewWorkdirs}
-              placeholder="/home/slop/code/…"
+              placeholder="/home/autere/code/… (or relative to $HOME)"
               addLabel="Add workdir"
             />
           </div>
@@ -199,112 +214,114 @@ export const SessionView: React.FC<SessionViewProps> = ({
 
   const listBody = (
     <>
-      <div className="session-name-input-row">
-        <input
-          className="session-name-input"
-          type="text"
-          placeholder="Session label..."
-          value={nameInput}
-          onChange={(e) => setNameInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') handleSetName(); }}
-          disabled={nameSaving}
-          maxLength={128}
-        />
-        <button
-          className="session-name-save"
-          onClick={handleSetName}
-          disabled={nameSaving || nameInput.trim() === (sessionName || '')}
-        >
-          {nameSaving ? '…' : '✓'}
-        </button>
-      </div>
-
-      <div className="session-current">
-        <div className="session-current-id">{sessionId || '—'}</div>
-      </div>
-
-      <div className="btn-group">
-        {compacting && (
+      <div className="sessions-section">
+        <div className="sessions-section-title">Current session</div>
+        <div className="session-name-input-row">
+          <input
+            className="session-name-input"
+            type="text"
+            placeholder="Session label..."
+            value={nameInput}
+            onChange={(e) => setNameInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleSetName(); }}
+            disabled={nameSaving}
+            maxLength={128}
+          />
           <button
-            className="btn btn-abort"
-            onClick={() => { if (window.confirm('Abort the compaction? Progress is discarded; the session stays as it was.')) onAbortCompaction(); }}
+            className="session-name-save"
+            onClick={handleSetName}
+            disabled={nameSaving || nameInput.trim() === (sessionName || '')}
           >
-            ⏹ Abort Compaction
+            {nameSaving ? '…' : '✓'}
           </button>
+        </div>
+
+        <div className="session-current">
+          <div className="session-current-id">{sessionId || '—'}</div>
+        </div>
+
+        {canSetWorkdir && (
+          <WorkdirEditor
+            sessionId={sessionId}
+            busy={isStreaming || compacting}
+            onSwitching={onSwitchSession}
+          />
         )}
-        <button className="btn btn-primary" onClick={openNewSessionForm} disabled={switching || statusType === 'disconnected'}>
-          ✨ New Session
-        </button>
       </div>
 
-      <input
-        className="session-search-input"
-        type="text"
-        placeholder="Search sessions by name, id or content…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-      />
-
-      <label className="session-active-toggle">
+      <div className="sessions-section">
+        <div className="sessions-section-title">Sessions</div>
+        <div className="btn-group">
+          <button className="btn btn-primary" onClick={openNewSessionForm} disabled={switching || statusType === 'disconnected'}>
+            ✨ New Session
+          </button>
+        </div>
         <input
-          type="checkbox"
-          checked={activeOnly}
-          onChange={(e) => setActiveOnly(e.target.checked)}
+          className="session-search-input"
+          type="text"
+          placeholder="Search sessions by name, id or content…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
         />
-        Active sessions only
-      </label>
 
-      {switching && (
-        <div className="session-switching">Switching session…</div>
-      )}
-      {visibleSessions.length === 0 ? (
-        <div className="session-empty">{(searching || !loaded) ? (loaded || searching ? 'Searching…' : 'Loading sessions…') : (activeOnly ? 'No active sessions' : query.trim().length >= 2 ? 'No matching sessions' : 'No sessions found')}</div>
-      ) : (
-        <div className="session-list">
-          {visibleSessions.map((session) => {
-            const isCurrentSession = session.id === sessionId;
-            return (
-              <div
-                key={session.id}
-                className={`session-item${isCurrentSession ? ' active' : ''}`}
-                onClick={() => { if (!isCurrentSession) onSwitchSession(session.id); }}
-              >
-                <div className="session-item-content">
-                  <div className="session-item-header">
-                    <span className="session-item-name">
-                      {session.sessionName || session.id}
-                      {session.streaming && <span className="badge warning session-live-flag" title="Its agent is working right now">working</span>}
-                      {!session.streaming && session.active && <span className="session-live-flag" title="pi process running">running</span>}
-                    </span>
-                    <span className="session-item-time">{formatSessionTime(session.lastActivity)}</span>
+        <label className="session-active-toggle">
+          <input
+            type="checkbox"
+            checked={activeOnly}
+            onChange={(e) => setActiveOnly(e.target.checked)}
+          />
+          Active sessions only
+        </label>
+
+        {switching && (
+          <div className="session-switching">Switching session…</div>
+        )}
+        {visibleSessions.length === 0 ? (
+          <div className="session-empty">{(searching || !loaded) ? (loaded || searching ? 'Searching…' : 'Loading sessions…') : (activeOnly ? 'No active sessions' : query.trim().length >= 2 ? 'No matching sessions' : 'No sessions found')}</div>
+        ) : (
+          <div className="session-list">
+            {visibleSessions.map((session) => {
+              const isCurrentSession = session.id === sessionId;
+              return (
+                <div
+                  key={session.id}
+                  className={`session-item${isCurrentSession ? ' active' : ''}`}
+                  onClick={() => { if (!isCurrentSession) onSwitchSession(session.id); }}
+                >
+                  <div className="session-item-content">
+                    <div className="session-item-header">
+                      <span className="session-item-name">
+                        {session.sessionName || session.id}
+                        {session.streaming && <span className="badge warning session-live-flag" title="Its agent is working right now">working</span>}
+                        {!session.streaming && session.active && <span className="session-live-flag" title="pi process running">running</span>}
+                      </span>
+                      <span className="session-item-time">{formatSessionTime(session.lastActivity)}</span>
+                    </div>
+                    <div className="session-item-id">{session.id}</div>
+                    {session.match === 'content' && (
+                      <span className="badge info session-match-tag">content match</span>
+                    )}
                   </div>
-                  <div className="session-item-id">{session.id}</div>
-                  {session.match === 'content' && (
-                    <span className="badge info session-match-tag">content match</span>
+                  {!isCurrentSession && (
+                    <button
+                      className="session-delete-btn"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteSession(session.id); }}
+                      title="Delete session"
+                    >
+                      ✕
+                    </button>
                   )}
                 </div>
-                {!isCurrentSession && (
-                  <button
-                    className="session-delete-btn"
-                    onClick={(e) => { e.stopPropagation(); handleDeleteSession(session.id); }}
-                    title="Delete session"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </div>
     </>
   );
 
   return (
     <div className="card sessions-page">
-      <div className="card-header">
-        <span className="card-title">Sessions</span>
-      </div>
       <div className="modal-body">{listBody}</div>
       {view === 'new' && (
         <Modal open onClose={() => setView('list')} className="modal-session">
@@ -315,6 +332,93 @@ export const SessionView: React.FC<SessionViewProps> = ({
           <div className="modal-body">{newSessionForm}</div>
         </Modal>
       )}
+    </div>
+  );
+};
+
+/**
+ * Admin-only workdirs editor for the CURRENT session. Loads the session's
+ * workdirs from the sessions list, allows edit/add/remove, and PUTs them
+ * (backend respawns the sandboxed pi so the mounts take effect).
+ */
+const WorkdirEditor: React.FC<{
+  sessionId: string | null;
+  busy: boolean;
+  onSwitching: (id: string) => void;
+}> = ({ sessionId, busy, onSwitching }) => {
+  const [workdirs, setWorkdirs] = useState<string[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [dirty, setDirty] = useState(false);
+
+  // Current session's workdirs from the sessions listing. Until BOTH the
+  // session id and the listing are available we stay in the loading state —
+  // no blank gap and no premature empty-list.
+  useEffect(() => {
+    if (!sessionId) return; // wait for the session state to arrive
+    let cancelled = false;
+    fetch(url(API.sessions.list))
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled && data.success) {
+          const cur = (data.data || []).find((s: { id: string }) => s.id === sessionId);
+          setWorkdirs(cur?.workdirs || []);
+        }
+      })
+      .catch(() => { if (!cancelled) setWorkdirs([]); });
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  const apply = useCallback(() => {
+    if (!workdirs || !sessionId) return;
+    setSaving(true);
+    setError('');
+    fetch(url(API.session.workdirs), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, workdirs }),
+    })
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body.success === false) {
+          setError(body.error || `Failed (${res.status})`);
+        } else {
+          setDirty(false);
+          // pi respawned — rebind this client view (no-op when same id)
+          onSwitching(sessionId);
+        }
+      })
+      .catch(() => setError('Network error'))
+      .finally(() => setSaving(false));
+  }, [workdirs, sessionId, onSwitching]);
+
+  if (workdirs === null) {
+    return (
+      <div className="session-workdirs-edit">
+        <label className="settings-label">Workdirs (applied at next pi restart — session respawns on save)</label>
+        <div className="session-workdirs-loading">Loading workdirs…</div>
+      </div>
+    );
+  }
+  const disabled = busy || saving || !dirty;
+
+  return (
+    <div className="session-workdirs-edit">
+      <label className="settings-label">Workdirs (applied at next pi restart — session respawns on save)</label>
+      <SortableList
+        items={workdirs}
+        onChange={(items) => { setWorkdirs(items); setDirty(true); }}
+        placeholder="/home/autere/code/… (or relative to $HOME)"
+        addLabel="Add workdir"
+        disabled={busy || saving}
+      />
+      {error && <div className="settings-description" style={{ color: '#e0574a' }}>{error}</div>}
+      <div className="btn-group">
+        <button className="btn btn-primary session-workdirs-save" onClick={apply} disabled={disabled}>
+          {saving ? '⏳ Restarting…' : '💾 Save workdirs'}
+        </button>
+        {busy && <span className="settings-description">Session busy — wait for the current turn to finish.</span>}
+      </div>
     </div>
   );
 };

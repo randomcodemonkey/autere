@@ -200,12 +200,9 @@ export function AppPage({
     }
   }, []);
 
-  const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[]) => {
-    const bad = (workdirs || []).find((wd) => !wd.startsWith('/'));
-    if (bad) {
-      setSessionError('Workdirs must be absolute paths');
-      return;
-    }
+  const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[], mountDockerSocket?: boolean) => {
+    // Relative (or ~) workdir paths are allowed: the backend resolves them
+    // against the autere backend container's $HOME before spawning.
     setCreatingSession(true);
     setSessionError(null);
     fetch(url(API.sessions.list), {
@@ -218,6 +215,7 @@ export function AppPage({
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         ...(personaId ? { personaId } : {}),
         ...(workdirs && workdirs.length ? { workdirs } : {}),
+        ...(mountDockerSocket ? { mountDockerSocket: true } : {}),
       }),
     })
       .then(res => res.json())
@@ -329,6 +327,7 @@ export function AppPage({
             onCompact={handleCompact}
             compacting={sessionState.compacting}
             onAbort={handleAbort}
+            onAbortCompaction={handleAbortCompaction}
             isStreaming={sessionState.isStreaming}
           />
         </div>
@@ -342,7 +341,6 @@ export function AppPage({
               isStreaming={sessionState.isStreaming}
               canSetWorkdir={userRole === 'admin'}
               onAbort={handleAbort}
-              onAbortCompaction={handleAbortCompaction}
               onNewSession={handleNewSession}
               onSwitchSession={handleSwitchSession}
               switching={switchingSession}

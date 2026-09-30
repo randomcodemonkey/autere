@@ -288,7 +288,7 @@ export function ensureSandboxHomeVolume(user: string, image: string): string {
  *  ponytail: copies at every sandboxed spawn (tiny file); a hash-compare
  *  via `docker run cmp` would trade one wasted copy for one extra container. */
 export function ensureSandboxGitconfig(volume: string, image: string): void {
-  const home = process.env.HOME || '/home/slop';
+  const home = process.env.HOME || '/home/autere';
   const src = join(home, '.gitconfig');
   if (!existsSync(src)) return;
   const uid = process.getuid?.() ?? 1001;
@@ -338,7 +338,7 @@ export function ensureVolumeSubpaths(mounts: SandboxMount[], image: string): voi
 /** Compute the mount set + translated cwd for one sandboxed spawn. */
 export function planSandboxMounts(user: string, cwd: string | undefined, agentDir: string, homeVolume?: string, extraRoots: string[] = []): SandboxPlan {
   const mounts = discoverVolumeMounts();
-  const home = process.env.HOME || '/home/slop';
+  const home = process.env.HOME || '/home/autere';
   // HOME itself need not be volume-backed (e.g. the autere container mounts
   // only ~/.autere, ~/.pi, ~/.9router) — each dir the sandbox uses is
   // resolved against its own mount. homeM only anchors subpath math.
@@ -418,7 +418,7 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
  *  $HOME/work/<name>) back to the host directory the root was mounted
  *  from. Returns null outside the work base or for unknown root names. */
 export function sandboxWorkPathToHost(user: string, containerPath: string): string | null {
-  const home = process.env.HOME || '/home/slop';
+  const home = process.env.HOME || '/home/autere';
   const workBase = `${home}/work/`;
   if (!containerPath.startsWith(workBase)) return null;
   const rest = containerPath.slice(workBase.length);

@@ -25,7 +25,7 @@ writeFileSync(usersFile, JSON.stringify({
 }));
 process.env.AUTERE_USERS_FILE = usersFile;
 process.env.AUTERE_SANDBOX_IMAGE = 'off';
-process.env.HOME = '/home/slop';
+process.env.HOME = '/home/autere';
 
 let failures = 0;
 function assert(label: string, cond: boolean) {
@@ -40,19 +40,19 @@ try {
   initUserRegistry({ adminPassword: 'x' });
 
   assert('maps a named workdir back to the host dir',
-    sandboxWorkPathToHost('tester', '/home/slop/work/workdir-a') === '/host/workdir-a');
+    sandboxWorkPathToHost('tester', '/home/autere/work/workdir-a') === '/host/workdir-a');
   assert('whole-home fallback for an admin without allowedDirs',
-    sandboxWorkPathToHost('plain-admin', '/home/slop/work/autere') === '/home/slop');
+    sandboxWorkPathToHost('plain-admin', '/home/autere/work/autere') === '/home/autere');
   assert('admin with allowedDirs does NOT get the whole-home fallback',
-    sandboxWorkPathToHost('admin2', '/home/slop/work/autere') === null);
+    sandboxWorkPathToHost('admin2', '/home/autere/work/autere') === null);
   assert('rejects paths outside the work base',
     sandboxWorkPathToHost('tester', '/other/place') === null);
   assert('rejects deeper nesting (not a per-session root)',
-    sandboxWorkPathToHost('tester', '/home/slop/work/workdir-a/sub') === null);
+    sandboxWorkPathToHost('tester', '/home/autere/work/workdir-a/sub') === null);
   assert('unknown root name → null',
-    sandboxWorkPathToHost('tester', '/home/slop/work/nope') === null);
+    sandboxWorkPathToHost('tester', '/home/autere/work/nope') === null);
   assert('the work base itself → null',
-    sandboxWorkPathToHost('tester', '/home/slop/work') === null);
+    sandboxWorkPathToHost('tester', '/home/autere/work') === null);
 
   // ── 2. ProcessManager spawn-opts persistence (cwd/workdirs inherit) ──
   // (Sandbox image off: this check exercises the cwd/workdirs inheritance

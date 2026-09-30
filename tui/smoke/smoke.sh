@@ -6,10 +6,18 @@ cd "$(dirname "$0")/.."
 TD=$(mktemp -d /tmp/autere-tui-smoke.XXXX)
 PORT=3947
 
+BACKEND_PID=
 cleanup() {
-  # kill by command-line marker — the smoke backend is the only process
-  # matching this (stale test instances from earlier runs included)
-  pkill -f "monitor-password testpw" 2>/dev/null || true
+  # Reap the smoke backend by recorded pid — a stale-cmdline pkill marker
+  # survived a flag rename and orphaned backends; the pid is authoritative.
+  # Sweep the stale-marker cmdline too, in case older runs left any.
+  if [ -n "$BACKEND_PID" ]; then
+    kill -TERM "$BACKEND_PID" 2>/dev/null
+    sleep 0.5
+    kill -KILL "$BACKEND_PID" 2>/dev/null
+    for p in $(ps -o pid= --ppid "$BACKEND_PID" 2>/dev/null); do kill -KILL "$p" 2>/dev/null; done
+  fi
+  pkill -KILL -f "autere-password testpw" 2>/dev/null || true
   [ -n "$SMOKE_DEBUG" ] && [ -f "$TD/backend.log" ] && cp "$TD/backend.log" /tmp/smoke-backend.log
   rm -rf "$TD"
 }
@@ -20,6 +28,7 @@ export AUTERE_DIR=$TD/autere AUTERE_PI_ENVS_DIR=$TD/pi-envs AUTERE_USERS_FILE=$T
   AUTERE_ADMIN_USER=admin AUTERE_ADMIN_PASSWORD=testpw PI_SANDBOX_IMAGE=off
 npx tsx ../src/backend/index.ts --port $PORT --autere-auth true --autere-password testpw \
   > "$TD/backend.log" 2>&1 &
+BACKEND_PID=$!
 for i in $(seq 1 30); do
   curl -s -o /dev/null http://127.0.0.1:$PORT/api/v1/auth/status && break
   sleep 0.5

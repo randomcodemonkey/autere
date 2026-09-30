@@ -394,19 +394,19 @@ describe('Session auto-naming helpers', () => {
   });
 
   describe('pathIsIgnored', () => {
-    const entries = ['pg', 'pgdata', '/home/slop/pgdata', '/tmp'];
+    const entries = ['pg', 'pgdata', '/home/autere/pgdata', '/tmp'];
 
     it('ignores a bare folder name as any path segment, any depth', () => {
-      expect(pathIsIgnored('/home/slop/pgdata/x/y.ts', entries)).to.eq(true);
+      expect(pathIsIgnored('/home/autere/pgdata/x/y.ts', entries)).to.eq(true);
       expect(pathIsIgnored('pgdata/x.ts', entries)).to.eq(true);
       expect(pathIsIgnored('/repo/pg/lib/a.ts', entries)).to.eq(true);
     });
 
     it('requires all parts of an absolute entry, in order', () => {
-      const abs = ['/home/slop/pgdata'];
-      expect(pathIsIgnored('/home/slop/pgdata/x.ts', abs)).to.eq(true);
+      const abs = ['/home/autere/pgdata'];
+      expect(pathIsIgnored('/home/autere/pgdata/x.ts', abs)).to.eq(true);
       // Not under that location — and no bare-name entry to match at depth.
-      expect(pathIsIgnored('/var/home/slop/pgdata/x.ts', abs)).to.eq(false);
+      expect(pathIsIgnored('/var/home/autere/pgdata/x.ts', abs)).to.eq(false);
     });
 
     it('matches segments exactly — no substring hits', () => {

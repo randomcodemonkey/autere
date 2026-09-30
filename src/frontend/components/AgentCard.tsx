@@ -17,10 +17,13 @@ interface AgentCardProps {
   extensions: ExtensionInfo[];
   /** Persona bound to the active session */
   persona: { id: string; name: string } | null | undefined;
+  /** Compact-context action + aborts — all shown in the Usage card */
   onCompact?: () => void;
   compactDisabled?: boolean;
   compacting?: boolean;
   onAbort?: () => void;
+  /** Abort the running compaction — shown in the Usage card while compacting */
+  onAbortCompaction?: () => void;
   isStreaming?: boolean;
 }
 
@@ -35,7 +38,8 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   modelProvider,
   extensions,
   persona,
-  onCompact, compactDisabled, compacting, onAbort, isStreaming,
+  onCompact, compactDisabled, compacting,
+  onAbort, onAbortCompaction, isStreaming,
 }) => {
   const { collapsed, toggle } = useCardState('agent');
 
@@ -49,8 +53,8 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       </div>
 
       <PersonaSection persona={persona} />
+      <UsageCard messageCount={messageCount} requestCount={requestCount} stats={stats} modelProvider={modelProvider} onCompact={onCompact} compactDisabled={compactDisabled} compacting={compacting} onAbort={onAbort} onAbortCompaction={onAbortCompaction} isStreaming={isStreaming} />
       <ExtensionsCard extensions={extensions} />
-      <UsageCard messageCount={messageCount} requestCount={requestCount} stats={stats} modelProvider={modelProvider} onCompact={onCompact} compactDisabled={compactDisabled} compacting={compacting} onAbort={onAbort} isStreaming={isStreaming} />
     </div>
   );
 };

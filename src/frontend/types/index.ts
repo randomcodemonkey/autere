@@ -148,7 +148,8 @@ export interface SessionInfo {
   createdAt: number;
   lastActivity: number;
   cwd: string | null;
-  /** Live flags: its pi process is running / its turn is in flight */
+  /** Per-session sandbox workdirs (spawn opts); empty for host sessions */
+  workdirs?: string[];
   active?: boolean;
   streaming?: boolean;
   /** Compact in progress */
@@ -232,4 +233,6 @@ export interface ManagedUser {
   role: 'chat' | 'control' | 'admin';
   mustChangePassword: boolean;
   allowedDirs: AllowedDir[];
+  /** Whether admin granted sandbox docker.sock mounting for this user */
+  mountDockerSocket: boolean;
 }

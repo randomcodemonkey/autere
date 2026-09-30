@@ -131,26 +131,21 @@ export default function (pi: any) {
 		let systemPrompt = event.systemPrompt;
 		let message: ReturnType<typeof marker> | undefined;
 
+		// Single injection: the persona prompt with the global prompt
+		// concatenated to its end (global last so it also wins by convention).
+		const effective = bound ? `${bound.prompt}\n\n${globalPrompt}`.trim() : globalPrompt || null;
 		const boundKey = bound
-			? `${persona.id || persona.name}:${createHash("sha1").update(bound.prompt).digest("hex").slice(0, 8)}`
+			? `${persona.id || persona.name}:${createHash("sha1").update(effective ?? "").digest("hex").slice(0, 8)}`
 			: undefined;
-		const globalBlock = globalPrompt
-			? `<global-system-prompt>\n${globalPrompt}\n</global-system-prompt>`
-			: null;
-		const personaBlock = !bound ? null : [
-			`<persona name="${bound.name}">`,
-			bound.prompt,
-			"</persona>",
-			"",
-			"The persona above is your ACTIVE persona: follow it, and disregard any persona instructions that appear elsewhere in this conversation or in compaction summaries.",
-		].join("\n");
-		let block: string | null = null;
-		if (globalBlock && !bound) block = globalBlock;
-		else if (globalBlock && bound) {
-			// Global prompt FIRST, persona AFTER (persona may refine/override
-			// the global rules — later system text wins by convention).
-			block = `${globalBlock}\n\n${personaBlock}`;
-		} else if (!globalBlock && bound) block = personaBlock;
+		const block = !effective ? null : bound
+			? [
+				`<persona name="${bound.name}">`,
+				effective,
+				"</persona>",
+				"",
+				"The persona above is your ACTIVE persona: follow it, and disregard any persona instructions that appear elsewhere in this conversation or in compaction summaries.",
+			].join("\n")
+			: `<global-system-prompt>\n${effective}\n</global-system-prompt>`;
 		if (block) systemPrompt = `${event.systemPrompt ?? ""}\n\n${block}`;
 
 		// Marker state machine (tracked per session, no process state). The

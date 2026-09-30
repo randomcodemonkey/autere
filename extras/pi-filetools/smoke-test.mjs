@@ -18,7 +18,7 @@ mkdirSync(join(agentDir, "file-changes"), { recursive: true });
 process.env.PI_CODING_AGENT_DIR = agentDir;
 // workdir lives under /tmp — override the default ignore so test files count
 // (pg/pgdata exercise the segment matcher; neither appears in the tmpdir name)
-process.env.EDIT_IGNORE_PATHS = join(agentDir, "nothing") + ":pg:pgdata:/home/slop/pgdata";
+process.env.EDIT_IGNORE_PATHS = join(agentDir, "nothing") + ":pg:pgdata:/home/autere/pgdata";
 process.chdir(work);
 
 // Import the extension (TypeScript); fall back to esbuild when this node

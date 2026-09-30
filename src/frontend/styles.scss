@@ -1513,6 +1513,7 @@ body {
 
 .usage-compact-row {
   margin-top: 0.6rem;
+  margin-bottom: 0.4rem;
   padding-top: 0.5rem;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
@@ -1520,6 +1521,11 @@ body {
   gap: 0.4rem;
 
   .btn { width: 100%; }
+
+  // Abort Compaction rides with the row — breathing room above/below
+  .session-abort-compaction {
+    margin-top: 0.4rem;
+  }
 }
 
 .session-active-toggle {
@@ -1545,6 +1551,15 @@ body {
     flex-direction: column;
     gap: 0.35rem;
     margin-top: 0.5rem;
+  }
+
+  // docker.sock opt-in + standard margin before the workdirs section
+  .session-sock-row {
+    margin-top: 1rem;
+  }
+
+  .session-workdirs-row {
+    margin-top: 1rem;
   }
 }
 
@@ -2915,6 +2930,36 @@ body {
   padding: 0.625rem;
 }
 
+// Two titled sections: Current session (top) / Sessions (list)
+.sessions-section-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+  margin: 0.25rem 0 0.5rem;
+}
+
+.sessions-section + .sessions-section {
+  margin-top: 1rem;
+}
+
+.session-workdirs-edit {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+
+  .session-workdirs-save {
+    margin-top: 0.25rem;
+  }
+
+  .session-workdirs-loading {
+    opacity: 0.6;
+    padding: 0.5rem 0;
+  }
+}
+
 .sessions-page .modal-body {
   flex: 1;
   min-height: 0;
@@ -4278,6 +4323,7 @@ textarea.settings-input {
 .persona-new-btn {
   width: auto;
   padding: 0.4rem 0.9rem;
+  margin-top: 0.75rem;
   margin-bottom: 0.75rem;
 }
 
@@ -4384,6 +4430,15 @@ textarea.settings-input {
       white-space: nowrap;
     }
   }
+
+  // Edit/Delete on ONE row (.btn-group is column by default elsewhere)
+  .users-row-actions {
+    flex-direction: row;
+    .btn:not(:first-child) {
+      margin-top: 0;
+      margin-left: 0.5rem;
+    }
+  }
 }
 
 .users-name {
@@ -4440,6 +4495,14 @@ textarea.settings-input {
   flex-direction: row;
   align-items: center;
   gap: 0.45rem;
+}
+
+// Warning note under a docker.sock opt-in (users + session modals)
+.users-sock-warning {
+  color: #f0b429;
+  border-left: 3px solid #f0b429;
+  padding-left: 0.6rem;
+  margin-bottom: 0.75rem;
 }
 
 .users-dirs {

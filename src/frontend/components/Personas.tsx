@@ -226,7 +226,7 @@ export const PersonasSettingsSection: React.FC = () => {
           spellCheck={false}
           onChange={(e) => { setGlobalPrompt(e.target.value); setGlobalDirty(true); }}
         />
-        <div className="settings-description">Applies to all sessions (persona prompts refine it, injected after it). Saved to the env the same way as a persona — picked up on each session's next turn.</div>
+        <div className="settings-description">Applies to all sessions — concatenated to the end of the active persona's prompt (one injection). Saved to the env the same way as a persona — picked up on each session's next turn.</div>
         <div className="btn-group">
           <button className="btn btn-primary" onClick={saveGlobal} disabled={!globalDirty || globalSaving}>
             {globalSaving ? 'Saving…' : 'Save Global Prompt'}

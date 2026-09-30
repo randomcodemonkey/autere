@@ -7,9 +7,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const REPO = join(new URL('..', import.meta.url).pathname, '..', '..');
-// NOTE: AUTERE_PI_ENVS_DIR must be set BEFORE importing any backend module
-// (pi-env.ts captures it at module load).
+// NOTE: AUTERE_PI_ENVS_DIR + AUTERE_USERS_FILE must be set BEFORE importing
+// any backend module (constants.js captures env at module load) — a check
+// touching the users registry must never fall through to the real file.
 process.env.AUTERE_PI_ENVS_DIR = mkdtempSync(join(tmpdir(), 'copilot-envs-'));
+process.env.AUTERE_USERS_FILE = join(process.env.AUTERE_PI_ENVS_DIR, 'users.json');
+writeFileSync(process.env.AUTERE_USERS_FILE, JSON.stringify({}));
 const { usageFromMessage, addUsage, emptyTotals, finalize, CREDIT_USD } = await import(join(REPO, 'src/backend/copilot-totals.ts'));
 
 let pass = 0, fail = 0;
@@ -47,7 +50,7 @@ mkdirSync(join(process.env.AUTERE_PI_ENVS_DIR as string, 'tester', 'sessions', '
 const sesFile = join(process.env.AUTERE_PI_ENVS_DIR as string, 'tester', 'sessions', '--home--', 's1.jsonl');
 const now = new Date().toISOString();
 writeFileSync(sesFile, [
-  JSON.stringify({ type: 'session', id: 'sid-1', cwd: process.env.HOME || '/home/slop' }),
+  JSON.stringify({ type: 'session', id: 'sid-1', cwd: process.env.HOME || '/home/autere' }),
   JSON.stringify({ type: 'message', timestamp: now, message: { role: 'assistant', provider: 'github-copilot', model: 'claude-sonnet-4-5', usage: { input: 1000, output: 100, cacheRead: 2000, cost: { total: 0.5 } } } }),
   JSON.stringify({ type: 'message', timestamp: now, message: { role: 'assistant', provider: 'other', usage: { input: 99999, cost: { total: 9 } } } }),
 ].join('\n'));

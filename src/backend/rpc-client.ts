@@ -6,7 +6,7 @@
  */
 
 import { spawn, ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import { join } from 'node:path';
 import type {
@@ -42,6 +42,8 @@ import { SandboxMount } from './pi-env.js';
 export interface RpcClientOptions {
   /** Working directory for pi */
   cwd?: string;
+  /** Per-session sandbox work roots (New Session modal / Sessions view) */
+  workdirs?: string[];
   /** Provider to use */
   provider?: string;
   /** Model ID to use */
@@ -65,7 +67,10 @@ export interface RpcClientOptions {
   /** Planned sandbox mounts (pi-env.planSandboxMounts): pi env dir path-
    *  plus master-npm and the user's work area, at fixed container paths. */
   sandboxMounts?: SandboxMount[];
-  /** Container cwd (-w); undefined = fallback /home/slop. */
+  /** Mount the host docker.sock into the sandbox (requires host access
+   *  for the in-container user — granted per-user, admin-controlled). */
+  sandboxDockerSocket?: boolean;
+  /** Container cwd (-w); undefined = fallback /home/autere. */
   sandboxWorkingDir?: string;
 }
 
@@ -127,6 +132,8 @@ export class MonitorRpcClient {
   private stderr = '';
   private exitError: Error | null = null;
   private options: RpcClientOptions;
+  /** Spawn opts (cwd/workdirs) — Sessions view reads them for editing. */
+  getWorkdirs(): string[] { return [...(this.options.workdirs || [])]; }
   private _state: RpcSessionState | null = null;
   /** Logger bound to pi process PID — available after start() */
   private piLog: Logger | null = null;
@@ -151,13 +158,13 @@ export class MonitorRpcClient {
    *
    * Mirrors the manually-verified setup:
    *   docker run --rm -i --network host --tmpfs /tmp \
-   *     -v slopbox_home:/home/slop \
+   *     -v autere-home-$user:/home/autere \
    *     --entrypoint bash <image> -c 'env ... pi --mode rpc ...'
    *
    * - The home is a NAMED docker volume (not a bind path): the daemon resolves
    *   plain paths on the HOST, so a volume must be referenced by name.
-   * - Mount at the identical /home/slop path: session files record host
-   *   paths (/home/slop/...) as cwd — they must stay valid inside.
+   * - Mount at the identical /home/autere path: session files record host
+   *   paths (/home/autere/...) as cwd — they must stay valid inside.
    * - --network host: the model router (9router) is on the host's localhost.
      */
   private buildSandboxCommand(piArgs: string[]): string[] {
@@ -173,7 +180,7 @@ export class MonitorRpcClient {
       : m.subpath !== undefined && m.subpath !== ''
       ? ['--mount', `type=volume,src=${m.volume},dst=${m.dst},volume-subpath=${m.subpath}`]
       : ['-v', `${m.volume}:${m.dst}`]).flat();
-    const cwd = this.options.sandboxWorkingDir || process.env.HOME || '/home/slop';
+    const cwd = this.options.sandboxWorkingDir || process.env.HOME || '/home/autere';
     // Escape-proofing: the sandbox NEVER runs as root (root in-container +
     // mounted docker.sock = host root via `docker run -v /:/host`). Force the
     // backend's own uid — it matches the volume ownership already; images
@@ -182,12 +189,26 @@ export class MonitorRpcClient {
     // blocks setuid/sudo escape paths (sudo/setuid/file-caps all fail).
     const uid = process.getuid?.() ?? 1001;
     const gid = process.getgid?.() ?? uid;
+    // docker.sock (per-user permission): a bind mount is a HOST path, not a
+    // volume — plain --mount src. Socket perms are the daemon's (root:root
+    // 660 typically); drop the sandbox's own GID for it.
+    const sockGid = (() => {
+      try { return statSync('/var/run/docker.sock').gid; } catch { return gid; }
+    })();
     // No shell quoting in the inner script: env vars go through docker -e
     // (verbatim argv) and pi args travel as bash positional params.
     const out = [
       'docker', 'run',
       '-w', cwd,
-      '--rm', '-i', '--init', '--network', 'host', '--user', `${uid}:${gid}`,
+      '--rm', '-i', '--init', '--network', 'host',
+      '--user', `${uid}:${gid}`,
+      // Supplementary GID of the socket: docker run only sets ONE --user
+      // group; groups= lists EXTRA groups so mode 660 root:root sockets
+      // are writable without making the whole container run as that group.
+      ...(this.options.sandboxDockerSocket ? [
+        ['--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock'],
+        ['--group-add', String(sockGid)],
+      ].flat() : []),
       '--security-opt', 'no-new-privileges',
       '--tmpfs', '/tmp:rw,size=512m',
       ...specs.map((s) => s.split(' ')).flat(),
@@ -312,6 +333,20 @@ export class MonitorRpcClient {
       process.removeListener('exit', parentExit);
     });
 
+    // Test-harness orphan record: pi lives in its own detached group, so a
+    // SIGKILLed harness runner kills the backend but leaves pi reparented
+    // to PID 1 forever. When running under the e2e/component harnesses,
+    // append this pi to the run record so the NEXT run's reaper gets it.
+    // Production spawns never set AUTERE_RUN_RECORD — zero prod cost.
+    if (process.env.AUTERE_RUN_RECORD && childProcess.pid) {
+      try {
+        const recordFile = process.env.AUTERE_RUN_RECORD_FILE!;
+        const rec = JSON.parse(readFileSync(recordFile, 'utf-8'));
+        rec.pids = [...new Set([...(!rec.pids ? [] : rec.pids), childProcess.pid])];
+        writeFileSync(recordFile, JSON.stringify(rec));
+      } catch {}
+    }
+
     // Create a PID-bound logger for pi's own output (stderr → err.log, stdout non-JSON → out.log)
     this.piLog = new Logger('pi', `pid=${childProcess.pid}`);
 
@@ -427,7 +462,11 @@ export class MonitorRpcClient {
 
   async prompt(message: string, images?: RpcImage[]): Promise<void> {
     log.rpc.debug(`RPC: prompt("${message.slice(0, 80)}${message.length > 80 ? '…' : ''}")${images?.length ? ` +${images.length} image(s)` : ''}`);
-    await this.send({ type: 'prompt', message, ...(images?.length ? { images } : {}) });
+    const res = await this.send({ type: 'prompt', message, ...(images?.length ? { images } : {}) });
+    // pi answers pre-turn failures (auth, upstream provider errors…) with a
+    // success:false response — never an event — so reject or callers (one-shot
+    // persona generation) would silently wait out their timeout.
+    if (!res.success) throw new Error((res as any).error || 'prompt failed');
   }
 
   async steer(message: string, images?: RpcImage[]): Promise<void> {

@@ -78,6 +78,7 @@ const UserForm: React.FC<UserFormProps> = ({ initial, selfUsername, onSave, onCl
   const [role, setRole] = useState<ManagedUser['role']>(initial?.role || 'chat');
   const [mustChange, setMustChange] = useState(initial ? initial.mustChangePassword : true);
   const [dirs, setDirs] = useState<AllowedDir[]>(initial?.allowedDirs || []);
+  const [mountDockerSocket, setMountDockerSocket] = useState(initial?.mountDockerSocket || false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -92,6 +93,7 @@ const UserForm: React.FC<UserFormProps> = ({ initial, selfUsername, onSave, onCl
         role,
         allowedDirs: dirs.filter((d) => d.path.trim()),
         mustChangePassword: mustChange,
+        ...(selfUsername !== username.trim() || role === 'admin' ? { mountDockerSocket } : {}),
       }, isNew);
       if (err) setError(err);
       else onClose();
@@ -149,8 +151,17 @@ const UserForm: React.FC<UserFormProps> = ({ initial, selfUsername, onSave, onCl
         {isNew && (
           <div className="settings-description">The user must change their password at first login.</div>
         )}
+        <label className="users-field users-field-inline">
+          <input type="checkbox" checked={mountDockerSocket} onChange={(e) => setMountDockerSocket(e.target.checked)} />
+          <span>Allow sandboxed sessions to mount the host docker.sock</span>
+        </label>
+        {mountDockerSocket && (
+          <div className="settings-description users-sock-warning">
+            ⚠ Security risk: the docker socket grants root-equivalent host access (any container can mount the host filesystem). Grant only to users you fully trust.
+          </div>
+        )}
         <div className="users-field">
-          <span>Allowed directories</span>
+          <span>Workdirs</span>
           <DirEditor dirs={dirs} onChange={setDirs} />
           <div className="settings-description">
             Absolute paths the user's agent may access; read/write includes write access. Per-directory.
@@ -234,7 +245,8 @@ export const UsersCard: React.FC<{ username: string | null }> = ({ username }) =
             <span className="users-dirs-count" title={u.allowedDirs.map((d) => `${d.path} (${d.access})`).join('\n')}>
               {u.allowedDirs.length} dir{u.allowedDirs.length === 1 ? '' : 's'}
             </span>
-            <span className="btn-group">
+            {u.mountDockerSocket && <span className="users-flag" title="May mount the host docker.sock in sandboxes">DOCKER</span>}
+            <span className="btn-group users-row-actions">
               <button className="btn" onClick={() => setEditing(u)}>Edit</button>
               <button
                 className="btn btn-danger"

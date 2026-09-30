@@ -19,10 +19,12 @@ interface UsageCardProps {
   compacting?: boolean;
   /** Abort the running operation — shown in the Usage card */
   onAbort?: () => void;
+  /** Abort a running compaction — shown in the Usage card while compacting */
+  onAbortCompaction?: () => void;
   isStreaming?: boolean;
 }
 
-export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount, stats, modelProvider, onCompact, compactDisabled, compacting, onAbort, isStreaming }) => {
+export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount, stats, modelProvider, onCompact, compactDisabled, compacting, onAbort, onAbortCompaction, isStreaming }) => {
   const { collapsed, toggle } = useCardState('usage');
   // GitHub Copilot: pi's $ cost is the list-price estimate — copilot billing
   // is AI Credits (1 credit = $0.01), so show credits (AIC) instead of $.
@@ -124,11 +126,21 @@ export const UsageCard: React.FC<UsageCardProps> = ({ messageCount, requestCount
       <div className="progress-bar">
         <div className="progress-fill" style={{ width: `${ctxPct}%` }} />
       </div>
-      {onCompact && (
+      {(onCompact || (compacting && onAbortCompaction)) && (
         <div className="usage-compact-row">
-          <button className="btn btn-compact" onClick={onCompact} disabled={compactDisabled}>
-            {compacting ? '⏳ Compacting…' : '🗜 Compact Context'}
-          </button>
+          {onCompact && (
+            <button className="btn btn-compact" onClick={onCompact} disabled={compactDisabled}>
+              {compacting ? '⏳ Compacting…' : '🗜 Compact Context'}
+            </button>
+          )}
+          {compacting && onAbortCompaction && (
+            <button
+              className="btn btn-abort session-abort-compaction"
+              onClick={() => { if (window.confirm('Abort the compaction? Progress is discarded; the session stays as it was.')) onAbortCompaction(); }}
+            >
+              ⏹ Abort Compaction
+            </button>
+          )}
           {onAbort && (
             <button
               className="btn btn-abort"

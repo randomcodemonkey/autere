@@ -34,6 +34,8 @@ interface StoredUser {
   role: Role;
   mustChangePassword: boolean;
   allowedDirs: AllowedDir[];
+  /** Sandbox sessions for this user may mount the host docker.sock */
+  mountDockerSocket: boolean;
 }
 
 export interface PublicUser {
@@ -41,6 +43,8 @@ export interface PublicUser {
   role: Role;
   mustChangePassword: boolean;
   allowedDirs: AllowedDir[];
+  /** Sandbox sessions may mount the host docker.sock — admin-granted */
+  mountDockerSocket: boolean;
 }
 
 const registry: Record<string, StoredUser> = {};
@@ -93,6 +97,7 @@ export function initUserRegistry(seed: UserRegistrySeed) {
             role: ROLES.includes(u.role) ? u.role : 'chat',
             mustChangePassword: !!u.mustChangePassword,
             allowedDirs: Array.isArray(u.allowedDirs) ? u.allowedDirs : [],
+            mountDockerSocket: !!u.mountDockerSocket,
           };
         }
       }
@@ -107,6 +112,7 @@ export function initUserRegistry(seed: UserRegistrySeed) {
     role: 'admin',
     mustChangePassword: false,
     allowedDirs: [],
+    mountDockerSocket: false,
   };
   saveRegistry();
 }
@@ -119,6 +125,11 @@ export function isRegisteredUser(user: string): boolean {
 
 export function getUserRole(user: string): Role {
   return registry[user]?.role ?? 'chat';
+}
+
+/** Per-user sandbox docker.sock permission — checked at every sandbox spawn. */
+export function getUserMountDockerSocket(user: string): boolean {
+  return !!registry[user]?.mountDockerSocket;
 }
 
 export function verifyUser(user: string, password: string): boolean {
@@ -182,6 +193,7 @@ function toPublic(name: string): PublicUser {
     role: u.role,
     mustChangePassword: u.mustChangePassword,
     allowedDirs: u.allowedDirs.map((d) => ({ ...d })),
+    mountDockerSocket: !!u.mountDockerSocket,
   };
 }
 
@@ -201,7 +213,7 @@ function guardAdminRemoval(actor: string, name: string, removingAdmin: boolean):
 /** Create a user. Returns an error message, or null on success. */
 export function createUser(input: {
   username: unknown; password: unknown; role: unknown; allowedDirs: unknown;
-  mustChangePassword?: unknown;
+  mustChangePassword?: unknown; mountDockerSocket?: unknown;
 }): string | null {
   const err = validateUsername(input.username);
   if (err) return err;
@@ -210,6 +222,8 @@ export function createUser(input: {
   const pwErr = validatePassword(input.password);
   if (pwErr) return pwErr;
   const role: Role = ROLES.includes(input.role as Role) ? (input.role as Role) : 'chat';
+  // docker.sock = root-equivalent host access — non-admin users never get it
+  const mountDockerSocket = !!input.mountDockerSocket && role === 'admin';
   const dirs = validateAllowedDirs(input.allowedDirs);
   if (dirs.error) return dirs.error;
   registry[name] = {
@@ -217,6 +231,7 @@ export function createUser(input: {
     role,
     mustChangePassword: input.mustChangePassword !== false,
     allowedDirs: dirs.dirs!,
+    mountDockerSocket,
   };
   saveRegistry();
   return null;
@@ -228,6 +243,7 @@ export function createUser(input: {
  */
 export function updateUser(actor: string, username: string, patch: {
   role?: unknown; allowedDirs?: unknown; password?: unknown; mustChangePassword?: unknown;
+  mountDockerSocket?: unknown;
 }): string | null {
   const entry = registry[username];
   if (!entry) return 'User not found';
@@ -254,6 +270,13 @@ export function updateUser(actor: string, username: string, patch: {
 
   if (patch.role !== undefined) entry.role = patch.role as Role;
   if (dirs !== undefined) entry.allowedDirs = dirs;
+  // docker.sock = root-equivalent host access — admins only, silently
+  // cleared when demoting a user that had it
+  if (patch.mountDockerSocket !== undefined) {
+    entry.mountDockerSocket = !!patch.mountDockerSocket && entry.role === 'admin';
+  } else if (patch.role !== undefined) {
+    entry.mountDockerSocket = entry.mountDockerSocket && entry.role === 'admin';
+  }
   if (patch.password !== undefined) {
     entry.passwordHash = hashPassword(patch.password as string);
     // Admin-set passwords force a change on next login, unless explicitly off.

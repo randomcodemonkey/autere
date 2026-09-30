@@ -4,7 +4,7 @@
  * Entries match PATH SEGMENTS:
  * - 'pgdata'            → relative entry: matches as a contiguous segment
  *                         run at any depth ('/a/pgdata/x', 'pgdata/x')
- * - '/home/slop/pgdata' → absolute entry (leading '/'): anchored at the
+ * - '/home/autere/pgdata' → absolute entry (leading '/'): anchored at the
  *                         path root, matches only paths under that location
  * - 'pg'                → does NOT match 'pgdata/…' (segment equality,
  *                         never substring)

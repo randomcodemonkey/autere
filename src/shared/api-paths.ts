@@ -70,6 +70,7 @@ export const API = {
     messages: `${P}/session/messages`,
     model: `${P}/session/model`,
     name: `${P}/session/name`,
+    workdirs: `${P}/session/workdirs`,
     persona: `${P}/session/persona`,
     abort: `${P}/session/abort`,
     restart: `${P}/session/restart`,

@@ -24,7 +24,7 @@ import { fileURLToPath } from 'url';
 import { ProcessManager } from './process-manager.js';
 import { getUser, getUserRole, hasRole, verifyCredentials, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, removeUserTokens, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, getLastSession, isRegisteredUser, userMustChangePassword, listApiTokens, createApiToken, deleteApiToken } from './auth.js';
 import { getClientSession, setClientSession, registerClient, broadcastToUser, viewedSessions, hubUsers } from './client-hub.js';
-import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword, getUserAllowedDirs } from './users.js';
+import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword, getUserAllowedDirs, getUserMountDockerSocket } from './users.js';
 import { withDedupSections, withJanitorSections } from './extension-handlers.js';
 import { copilotStatsFor } from './extension-handlers.js';
 import type { CopilotTotals } from './copilot-totals.js';
@@ -776,6 +776,12 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         if (list.length) workdirs = list;
       }
 
+      // Sandbox docker.sock opt-in (admin feature). Even when the form
+      // requests it, the USER's granted permission is what enables the
+      // mount — the checkbox only rises to "ask", permission lives in the
+      // user registry (Users card).
+      const mountDockerSocket = !!body?.mountDockerSocket && getUserMountDockerSocket(c.user);
+
       // Persona for the new session — validated BEFORE creating anything,
       // so an invalid id fails cleanly without leaving a stray session.
       const personaId = typeof body?.personaId === 'string' && body.personaId ? body.personaId : '';
@@ -793,7 +799,11 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // creation fails.
       let fresh;
       try {
-        fresh = await pm.getOrCreate(c.user, null, workdir ? { cwd: workdir, workdirs } : workdirs ? { cwd: workdirs[0], workdirs } : {});
+        fresh = await pm.getOrCreate(c.user, null, {
+          ...(workdir ? { cwd: workdir } : workdirs ? { cwd: workdirs[0] } : {}),
+          ...(workdirs ? { workdirs } : {}),
+          mountDockerSocket,
+        });
       } catch (err: any) {
         log.http.error('New session spawn failed:', err);
         sendJSON(c.res, { success: false, error: `Failed to create session: ${err?.message || err}` }, 503);
@@ -1236,6 +1246,58 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
   });
 
   route({
+    method: 'PUT', path: API.session.workdirs, template: `${API_PREFIX}/session/workdirs`,
+    role: 'chat', tag: 'Session', summary: 'Replace the workdirs of the viewed session (admin only; session must be idle — respawns pi)',
+    handler: async (c) => {
+      if (getUserRole(c.user) !== 'admin') { sendJSON(c.res, { success: false, error: 'workdirs require admin role' }, 403); return; }
+      try {
+        const body = await readBody(c.req);
+        const t = await resolveTarget(c, body.sessionId, true);
+        if (!t) { sendTargetMissing(c); return; }
+        const file = t.routedSessionFile();
+        if (!file) { sendJSON(c.res, { success: false, error: 'session has no file yet' }, 400); return; }
+        const state = t.state.sessionState;
+        if (state.isStreaming || state.compacting) {
+          sendJSON(c.res, { success: false, error: 'Session is busy — wait for the current turn/compaction to finish' }, 409);
+          return;
+        }
+        if (!Array.isArray(body.workdirs)) { sendJSON(c.res, { success: false, error: 'workdirs must be an array' }, 400); return; }
+        // Same validation as session creation (shared .resolveWorkdir logic)
+        const resolveWorkdir = (raw: string): string => {
+          let wd = raw.trim();
+          if (wd.startsWith('~/')) wd = wd.slice(1);
+          return wd;
+        };
+        const roots = (() => {
+          const dirs = isRegisteredUser(c.user) ? getUserAllowedDirs(c.user) : [];
+          return dirs.length ? dirs.map((d) => d.path) : [homedir()];
+        })();
+        const list: string[] = [];
+        for (const raw of body.workdirs) {
+          const wd = typeof raw === 'string' ? resolveWorkdir(raw) : '';
+          if (!wd) { sendJSON(c.res, { success: false, error: 'workdirs must be absolute paths' }, 400); return; }
+          const inside = roots.some((r) => { const root = r.replace(/\/+$/, ''); return wd === root || wd.startsWith(root + '/'); });
+          if (!inside) { sendJSON(c.res, { success: false, error: `workdir ${wd} is outside your allowed directories (${roots.join(', ')})` }, 403); return; }
+          try {
+            if (!statSync(wd).isDirectory()) { sendJSON(c.res, { success: false, error: `workdir ${wd} is not a directory` }, 400); return; }
+          } catch {
+            sendJSON(c.res, { success: false, error: `workdir ${wd} does not exist` }, 400); return;
+          }
+          if (!list.includes(wd)) list.push(wd.replace(/\/+$/, ''));
+        }
+        log.http.info(`set_workdirs ${JSON.stringify(list)} for ${c.user} session=${file}`);
+        const fresh = await pm.setWorkdirs(c.user, file, list);
+        setClientSession(c.user, c.clientId, fresh.routedSessionFile());
+        broadcastToUser(c.user, { type: 'sessions', data: pm.listSessions(c.user, c.viewed) });
+        sendJSON(c.res, { success: true });
+      } catch (err: any) {
+        log.http.error(`set_workdirs failed: ${err?.message || err}${err?.stack ? '\n' + err.stack : ''}`);
+        sendJSON(c.res, { success: false, error: `Failed to update workdirs: ${err.statusCode ? err.message : err}` }, err.statusCode || 500);
+      }
+    },
+  });
+
+  route({
     method: 'POST', path: API.session.compact, template: `${API_PREFIX}/session/compact`,
     role: 'chat', tag: 'Session', summary: 'Start compaction of the viewed session; responds immediately — progress arrives via the event stream (body/query: sessionId?)',
     handler: async (c) => {
@@ -1634,7 +1696,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
             };
             let off = () => {};
             const settle = (err: Error) => finish(() => reject(err));
-            const timer = setTimeout(() => settle(new Error('Persona generation timed out')), 120_000);
+            const timer = setTimeout(() => {
+              log.rpc.error('Persona generation: pi RPC produced no assistant turn in 120s — aborting (upstream/provider issue likely).');
+              settle(new Error('Persona generation timed out'));
+            }, 120_000);
             off = oneShot.onEvent((event: any) => {
               if (event.type !== 'message_end' || event.message?.role !== 'assistant') return;
               if (event.message.stopReason === 'error' || event.message.errorMessage) {
