@@ -73,7 +73,28 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
     [draftKey],
   );
   const [sending, setSending] = useState(false);
+  // User-dragged input height (in rows) — overrides the focused/collapsed default
+  const [inputRows, setInputRows] = useState<number | null>(null);
+  const [draggingInput, setDraggingInput] = useState(false);
+  const dragStart = useRef<{ y: number; rows: number } | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+
+  // Drag-to-resize: track vertical movement while the handle is held
+  useEffect(() => {
+    if (!draggingInput) return;
+    const lineHeight = parseFloat(getComputedStyle(textareaRef.current!).lineHeight) || 21;
+    const move = (e: MouseEvent) => {
+      const { y, rows } = dragStart.current!;
+      setInputRows(Math.min(30, Math.max(1, Math.round(rows - (e.clientY - y) / lineHeight))));
+    };
+    const up = () => setDraggingInput(false);
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    return () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+  }, [draggingInput]);
   const [focused, setFocused] = useState(false);
   const [images, setImages] = useState<AttachedImage[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -219,7 +240,18 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
   const expanded = focused;
 
   return (
-    <div className={`chat-input-container${expanded ? ' expanded' : ''}`}>
+    <div className={`chat-input-container${expanded ? ' expanded' : ''}${draggingInput ? ' dragging' : ''}`}>
+      <div
+        className="chat-resize-handle"
+        role="separator"
+        aria-label="Resize chat input"
+        title="Drag to resize the input"
+        onMouseDown={(e) => {
+          e.preventDefault(); // keep textarea selection/focus
+          dragStart.current = { y: e.clientY, rows: inputRows ?? (expanded ? 4 : 1) };
+          setDraggingInput(true);
+        }}
+      />
       {images.length > 0 && (
         <div className="chat-attachments">
           {images.map((img, i) => (
@@ -258,7 +290,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
           ref={textareaRef}
           className="chat-input"
           placeholder={isStreaming ? 'Steer the agent...' : 'Type a message... (/help for commands)'}
-          rows={expanded ? 4 : 1}
+          rows={inputRows ?? (expanded ? 4 : 1)}
           value={value}
           onChange={(e) => updateValue(e.target.value)}
           onKeyDown={handleKeyDown}

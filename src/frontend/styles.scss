@@ -1553,9 +1553,15 @@ body {
     margin-top: 0.5rem;
   }
 
-  // docker.sock opt-in + standard margin before the workdirs section
+  // docker.sock opt-in: row layout with standard margin before the workdirs section
   .session-sock-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
     margin-top: 1rem;
+    cursor: pointer;
+
+    input[type='checkbox'] { cursor: pointer; }
   }
 
   .session-workdirs-row {
@@ -2368,6 +2374,21 @@ body {
     flex-direction: column;
     align-items: stretch;
   }
+
+  // Drag strip on the border between chat and input — grows/shrinks the textarea
+  .chat-resize-handle {
+    position: absolute;
+    top: -4px;
+    left: 0;
+    right: 0;
+    height: 8px;
+    cursor: ns-resize;
+    touch-action: none;
+  }
+}
+
+.chat-input-container.dragging {
+  user-select: none;
 }
 
 .chat-input-row {
@@ -3148,41 +3169,55 @@ body {
   margin-top: 0.25rem;
 }
 
-.settings-per-model {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
+.models-update-btn {
   margin-top: 0.25rem;
+  font-size: 0.8125rem;
+  padding: 0.25rem 0.9rem;
 }
 
-.settings-per-model-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.3rem 0.5rem;
-  border-radius: 4px;
-  transition: background 0.12s ease;
+.models-table {
+  margin-top: 0.35rem;
+  border-collapse: collapse;
+  font-size: 0.75rem;
 
-  /* hovered or being edited (clicked = focus inside) */
-  &:hover,
-  &:focus-within {
-    background: rgba(255, 255, 255, 0.08);
+  th, td {
+    padding: 0.3rem 0.55rem;
+    text-align: left;
+    border-bottom: 1px solid #333;
   }
 
-  .settings-per-model-name {
-    flex: 1;
-    min-width: 0;
-    overflow-wrap: anywhere;
+  th {
+    color: #e0e0e0;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  td .settings-input {
+    width: 8.5rem;
+    flex-shrink: 0;
+    padding: 0.25rem 0.4rem;
     font-size: 0.75rem;
+  }
+
+  td input[type='checkbox'] {
+    accent-color: var(--c-accent, #4f9cf9);
+    display: block;
+  }
+
+  .models-table-name {
+    max-width: 22rem;
+    overflow-wrap: anywhere;
     color: #bbb;
     font-family: 'SF Mono', 'Fira Code', monospace;
   }
 
-  .settings-input {
-    width: 9rem;
-    flex-shrink: 0;
-    padding: 0.3rem 0.5rem;
-    font-size: 0.75rem;
+  tr.enabled .models-table-name { color: #e0e0e0; }
+
+  tbody tr {
+    // hovered or being edited (clicked = focus inside)
+    &:hover, &:focus-within {
+      background: rgba(255, 255, 255, 0.06);
+    }
   }
 }
 

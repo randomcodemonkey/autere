@@ -904,14 +904,6 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
     label: 'Models',
     fields: [
       {
-        key: 'enabledModels',
-        label: 'Enabled Models',
-        type: 'list',
-        description: 'Models available for selection (provider/model). Drag to reorder priority.',
-        listPlaceholder: 'e.g. anthropic/claude-sonnet-4-20250514',
-        listAddLabel: 'Add Model',
-      },
-      {
         key: 'modelThinkingLevels',
         label: 'Thinking level per model',
         type: 'perModel',

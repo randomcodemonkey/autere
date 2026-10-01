@@ -84,6 +84,10 @@ export const API = {
     schema: `${P}/settings/schema`,
   },
 
+  // Model catalog from pi (Models settings page 'Update'
+  // button): POST = (re)load pi's reported availability.
+  modelsCatalog: `${P}/models/available`,
+
   extensions: {
     root: `${P}/extensions`,
     packages: `${P}/extensions/packages`,

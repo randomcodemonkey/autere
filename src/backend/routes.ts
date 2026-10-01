@@ -30,9 +30,9 @@ import { copilotStatsFor } from './extension-handlers.js';
 import type { CopilotTotals } from './copilot-totals.js';
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionHistory } from './utils.js';
-import { getEnabledModelEntries, scopeModelsForSession } from './utils.js';
+import { getEnabledModelEntries, scopeModelsForSession, filterScopedModels } from './utils.js';
 import { isPiImagesInstalled } from './image-models.js';
-import { getPiEnvDir, validateSandboxImage } from './pi-env.js';
+import { getPiEnvDir, ensurePiEnv, validateSandboxImage } from './pi-env.js';
 import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
 import { getHistoryLimit } from './user-settings.js';
@@ -1730,6 +1730,44 @@ ${text.trim()}`).catch((err) => settle(err as Error));
   });
 
   // ── User settings ──
+
+  // Model catalog: (re)load the models pi reports as available (Models
+  // settings page 'Update' button). Uses a running pi process when there is
+  // one; otherwise spawns a short-lived ephemeral pi (—no-session: no stray
+  // session file) just to ask the catalog.
+  route({
+    method: 'POST', path: API.modelsCatalog, template: `${API_PREFIX}/models/available`,
+    role: 'chat', tag: 'Settings', summary: 'Reload available models from pi (body: nothing)',
+    handler: async (c) => {
+      const toEntries = (models: any[]) => filterScopedModels(models).map((m: any) => ({
+        provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: m.thinkingLevel,
+      }));
+      const running = pm.runningForUser(c.user);
+      if (running) {
+        try {
+          const models = await running.rpc.getAvailableModels();
+          running.state.availableModels = toEntries(models);
+          sendJSON(c.res, { success: true, data: running.state.availableModels });
+        } catch (err) {
+          log.http.error('Model catalog refresh (running session) failed:', err);
+          sendJSON(c.res, { success: false, error: `Failed to load models from pi: ${err instanceof Error ? err.message : err}` }, 500);
+        }
+        return;
+      }
+      const probe = new MonitorRpcClient({ args: ['--no-session'], agentDir: ensurePiEnv(c.user), cwd: process.cwd() });
+      try {
+        await probe.start();
+        const models = await probe.getAvailableModels();
+        sendJSON(c.res, { success: true, data: toEntries(models ?? []) });
+      } catch (err) {
+        log.http.error('Model catalog refresh (probe) failed:', err);
+        sendJSON(c.res, { success: false, error: `Failed to load models from pi: ${err instanceof Error ? err.message : err}` }, 500);
+      } finally {
+        await probe.stop().catch(() => {});
+      }
+    },
+  });
+
   route({
     method: 'GET', path: API.settings.schema, template: `${API_PREFIX}/settings/schema`,
     role: 'chat', tag: 'Settings', summary: 'Settings schema (sections, fields, option values)',

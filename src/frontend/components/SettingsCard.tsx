@@ -53,11 +53,154 @@ const FolderIgnoreAdd: React.FC<{ onAdd: (path: string) => void; items: FolderIg
   );
 };
 
+/** Models settings section: a table of ALL models pi reports (auto-loaded on
+ *  open; the Update button re-reads) with per-model enabled / thinking level /
+ *  reserved context / image mode. The enabled checkbox toggles the enabled
+ *  list (enabled-first preserves its ordering); all edits go through the SAME
+ *  draft settings keys the schema fields use — one Save path, unchanged. */
+const ModelsSection: React.FC<{
+  section?: SettingSection;
+  settings: Record<string, any>;
+  catalog: { provider: string; id: string; name: string }[] | null;
+  modelsLoading: boolean;
+  modelsError: string | null;
+  loadCatalog(): void;
+  handleChange(key: string, value: any): void;
+}> = ({ section, settings, catalog, modelsLoading, modelsError, loadCatalog, handleChange }) => {
+  if (!section) return null;
+  const thinkingField = section.fields.find((f) => f.key === 'modelThinkingLevels');
+  const visionField = section.fields.find((f) => f.key === 'visionByModel');
+  const enabled: string[] = Array.isArray(settings.enabledModels) ? settings.enabledModels : [];
+  const modelKey = (m: { provider: string; id: string }) => (m.provider ? `${m.provider}/${m.id}` : m.id);
+  // Enabled rows keep their priority order; the rest alphabetical.
+  const rows = catalog
+    ? [
+        ...enabled.map((k) => catalog.find((m) => modelKey(m) === k)).filter((m): m is { provider: string; id: string; name: string } => Boolean(m)),
+        ...catalog.filter((m) => !enabled.includes(modelKey(m))).sort((a, b) => a.name.localeCompare(b.name)).map((m) => m as { provider: string; id: string; name: string }),
+      ]
+    : [];
+  const mapVal = (fieldKey: string, k: string): any => {
+    const v = settings[fieldKey];
+    return v && typeof v === 'object' ? v[k] : undefined;
+  };
+  const setMapEntry = (fieldKey: string, k: string, v: any) => {
+    const map: Record<string, any> = { ...(settings[fieldKey] && typeof settings[fieldKey] === 'object' ? settings[fieldKey] : {}) };
+    // '' clears the entry → the row falls back to the field's default
+    if (v === '' || v === undefined) delete map[k];
+    else map[k] = v;
+    handleChange(fieldKey, map);
+  };
+  const toggleEnabled = (k: string, on: boolean) => {
+    handleChange('enabledModels', on ? [...enabled, k] : enabled.filter((e) => e !== k));
+  };
+  return (
+    <div className="settings-section">
+      <h3 className="settings-section-title">{section.label}</h3>
+      <div className="settings-section-fields">
+        {catalog === null && (
+          <div className="settings-description">{modelsLoading ? 'Loading models from pi…' : 'Update loads the model catalog from pi.'}</div>
+        )}
+        <div className="settings-field">
+          <div className="settings-description">
+            Per-model values apply to ENABLED models; saving restarts the agent.
+          </div>
+          {modelsError && <div className="settings-description">{modelsError}</div>}
+          {catalog !== null && (
+            rows.length === 0 ? (
+              <div className="settings-description">No models reported by pi.</div>
+            ) : (
+              <table className="models-table">
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Enabled</th>
+                    <th>Thinking level</th>
+                    <th>Reserved context</th>
+                    <th>Image mode</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((m) => {
+                    const k = modelKey(m);
+                    const on = enabled.includes(k);
+                    return (
+                      <tr key={k} className={on ? 'enabled' : ''}>
+                        <td className="models-table-name" title={k}>{m.name}</td>
+                        <td><input type="checkbox" checked={on} onChange={(e) => toggleEnabled(k, e.target.checked)} /></td>
+                        <td>
+                          <select
+                            className="settings-input"
+                            value={String(mapVal('modelThinkingLevels', k) ?? '')}
+                            onChange={(e) => setMapEntry('modelThinkingLevels', k, e.target.value)}
+                          >
+                            {(thinkingField?.perModel?.options || []).map((opt) => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            className="settings-input"
+                            min={0}
+                            max={90}
+                            placeholder="default"
+                            value={String(mapVal('reserveTokensPercentByModel', k) ?? '')}
+                            onChange={(e) => setMapEntry('reserveTokensPercentByModel', k, e.target.value === '' ? '' : Number(e.target.value))}
+                          />
+                        </td>
+                        <td>
+                          <select
+                            className="settings-input"
+                            value={String(mapVal('visionByModel', k) ?? '')}
+                            onChange={(e) => setMapEntry('visionByModel', k, e.target.value)}
+                          >
+                            {(visionField?.perModel?.options || []).map((opt) => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )
+          )}
+        </div>
+        <button className="btn btn-primary models-update-btn" type="button" disabled={modelsLoading} onClick={loadCatalog}>
+          {modelsLoading ? 'Loading models…' : 'Update'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   const [schema, setSchema] = useState<SettingSection[]>([]);
   const [settings, setSettings] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Model catalog for the Models section table — POST /models/available asks
+  // pi what it can actually reach. null = not loaded yet; the section
+  // auto-loads it on first open, Update re-reads it.
+  const [catalog, setCatalog] = useState<{ provider: string; id: string; name: string }[] | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const loadCatalog = useCallback(async () => {
+    setModelsLoading(true);
+    setModelsError(null);
+    try {
+      const res = await fetch(url(API.modelsCatalog), { method: 'POST' });
+      const json = await res.json();
+      if (json.success) setCatalog(json.data as { provider: string; id: string; name: string }[]);
+      else setModelsError(json.error || 'Failed to load models from pi');
+    } catch {
+      setModelsError('Failed to load models from pi');
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<true | 'deferred' | null>(null);
   const [availablePackages, setAvailablePackages] = useState<string[]>([]);
@@ -115,6 +258,10 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   const activeSection = !loading && !schema.some((s) => s.id === paramSection)
     ? (schema[0]?.id ?? '')
     : paramSection;
+  // Auto-load the catalog once the Models section is opened; Update re-reads.
+  useEffect(() => {
+    if (activeSection === 'models' && catalog === null && !modelsLoading) loadCatalog();
+  }, [activeSection, catalog, modelsLoading, loadCatalog]);
 
   const handleChange = useCallback((key: string, value: any) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -286,54 +433,6 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       );
     }
 
-    if (field.type === 'perModel') {
-      const map: Record<string, string | number> = value && typeof value === 'object' ? value : {};
-      const models: string[] = Array.isArray(settings.enabledModels) ? settings.enabledModels : [];
-      // '' clears the entry → the row falls back to the field's default
-      const setEntry = (model: string, v: string) => {
-        const next = { ...map };
-        if (v === '') delete next[model];
-        else next[model] = v;
-        handleChange(field.key, next);
-      };
-      return (
-        <FieldShell key={field.key} field={field}>
-          {models.length === 0 ? (
-            <div className="settings-description">Add enabled models first.</div>
-          ) : (
-            <div className="settings-per-model">
-              {models.map((m) => (
-                <div key={m} className="settings-per-model-row">
-                  <span className="settings-per-model-name">{m}</span>
-                  {field.perModel?.control === 'select' ? (
-                    <select
-                      className="settings-input"
-                      value={String(map[m] ?? '')}
-                      onChange={(e) => setEntry(m, e.target.value)}
-                    >
-                      {(field.perModel?.options || []).map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="number"
-                      className="settings-input"
-                      min={field.perModel?.min}
-                      max={field.perModel?.max}
-                      placeholder="default"
-                      value={String(map[m] ?? '')}
-                      onChange={(e) => setEntry(m, e.target.value)}
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </FieldShell>
-      );
-    }
-
     return (
       <FieldShell key={field.key} field={field}>
         <input
@@ -418,6 +517,16 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
               <PersonasSettingsSection />
             ) : activeSection === 'apiTokens' ? (
               <ApiTokensSection />
+            ) : activeSection === 'models' ? (
+              <ModelsSection
+                section={schema.find((s) => s.id === 'models')}
+                settings={settings}
+                catalog={catalog}
+                modelsLoading={modelsLoading}
+                modelsError={modelsError}
+                loadCatalog={loadCatalog}
+                handleChange={handleChange}
+              />
             ) : (
               schema
                 .filter((section) => section.id === activeSection)

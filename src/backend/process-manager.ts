@@ -201,6 +201,14 @@ export class ProcessManager {
     return session && session.isRunning ? session : undefined;
   }
 
+  /** Any RUNNING pi process belonging to the user (settings model catalog) */
+  runningForUser(user: string): UserSession | undefined {
+    for (const session of this.sessions.get(user)?.values() ?? []) {
+      if (session.isRunning) return session;
+    }
+    return undefined;
+  }
+
   /** Terminate one session's process (no-op when not running) */
   async terminate(user: string, sessionFile: string | null): Promise<void> {
     const map = this.sessions.get(user);

@@ -177,7 +177,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
           </select>
         </div>
         {canSetWorkdir && (
-          <label className="users-field-inline session-sock-row">
+          <label className="session-sock-row">
             <input
               type="checkbox"
               checked={newMountDockerSocket}

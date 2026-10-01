@@ -20,134 +20,29 @@ describe('autere — settings', () => {
     cy.get('.settings-card .card-title').should('contain', 'Settings');
   });
 
-  it('shows Models section with sortable list', () => {
+  it('shows Models section with the catalog table', () => {
     openModelsSection();
     cy.get('.settings-section-title').contains('Models').should('exist');
-    modelsSection().find('.sortable-list').should('exist');
+    modelsSection().find('.models-table', { timeout: 60000 }).should('exist');
+    modelsSection().find('.models-table tbody tr', { timeout: 60000 }).should('have.length.greaterThan', 0);
+  });
+
+  it('models table: Update re-reads the full pi model catalog', () => {
+    openModelsSection();
+    // Auto-loaded on open (from pi via the backend); Update re-reads it
+    modelsSection().find('.models-table tbody tr', { timeout: 60000 }).should('have.length.greaterThan', 0);
+    modelsSection().contains('button', 'Update', { timeout: 5000 }).click();
+    modelsSection().find('.models-table tbody tr', { timeout: 60000 }).should('have.length.greaterThan', 0);
+    // Columns match the requested per-model controls
+    modelsSection().find('.models-table thead th').eq(1).should('contain', 'Enabled');
+    modelsSection().find('.models-table thead th').eq(2).should('contain', 'Thinking level');
+    modelsSection().find('.models-table thead th').eq(3).should('contain', 'Reserved context');
+    modelsSection().find('.models-table thead th').eq(4).should('contain', 'Image mode');
   });
 
   it('shows 9Router section if extension is enabled', () => {
     openSettings();
     cy.get('.settings-section-title', { timeout: 5000 }).contains('9Router').should('exist');
-  });
-
-  it('shows enabled models in sortable list', () => {
-    openModelsSection();
-    modelsSection().find('.sortable-list-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
-  });
-
-  it('add model input is visible on its own row', () => {
-    openModelsSection();
-    modelsSection().find('.sortable-list-add').should('exist');
-    modelsSection().find('.sortable-list-add .sortable-list-input').should('be.visible');
-    modelsSection().find('.sortable-list-add-btn').should('contain', 'Add Model');
-  });
-
-  it('add model button is disabled when input is empty', () => {
-    openModelsSection();
-    modelsSection().find('.sortable-list-add .sortable-list-input').should('have.value', '');
-    modelsSection().find('.sortable-list-add-btn').should('be.disabled');
-  });
-
-  it('add model button enables when input has text', () => {
-    openModelsSection();
-    modelsSection().find('.sortable-list-add .sortable-list-input').type('test/model-v1');
-    modelsSection().find('.sortable-list-add-btn').should('not.be.disabled');
-  });
-
-  it('can add a model to the list', () => {
-    openModelsSection();
-
-    // Get initial count
-    modelsSection().find('.sortable-list-item').then(($items) => {
-      const initialCount = $items.length;
-
-      // Type a new model name
-      modelsSection().find('.sortable-list-add .sortable-list-input').type('test/newly-added-model');
-      modelsSection().find('.sortable-list-add-btn').click();
-
-      // Should have one more item
-      modelsSection().find('.sortable-list-item').should('have.length', initialCount + 1);
-
-      // New item's input should contain the model name
-      modelsSection().find('.sortable-list-item').last().find('.sortable-list-input').should('have.value', 'test/newly-added-model');
-
-      // Input should be cleared
-      modelsSection().find('.sortable-list-add .sortable-list-input').should('have.value', '');
-    });
-  });
-
-  it('can add multiple models sequentially', () => {
-    openModelsSection();
-
-    modelsSection().find('.sortable-list-item').then(($items) => {
-      const initialCount = $items.length;
-
-      // Add first model
-      modelsSection().find('.sortable-list-add .sortable-list-input').type('test/first-model');
-      modelsSection().find('.sortable-list-add-btn').click();
-      modelsSection().find('.sortable-list-item').should('have.length', initialCount + 1);
-
-      // Add second model
-      modelsSection().find('.sortable-list-add .sortable-list-input').type('test/second-model');
-      modelsSection().find('.sortable-list-add-btn').click();
-      modelsSection().find('.sortable-list-item').should('have.length', initialCount + 2);
-
-      // Both should be present as input values
-      modelsSection().find('.sortable-list-item').eq(initialCount).find('.sortable-list-input').should('have.value', 'test/first-model');
-      modelsSection().find('.sortable-list-item').eq(initialCount + 1).find('.sortable-list-input').should('have.value', 'test/second-model');
-    });
-  });
-
-  it('can remove a model from the list', () => {
-    openModelsSection();
-
-    // Net-zero mutation: add a fixture model, then remove exactly that one —
-    // the shared env's enabled-models list must be unchanged by this spec.
-    modelsSection().find('.sortable-list-item', { timeout: 5000 }).then(($items) => {
-      const initialCount = $items.length;
-      modelsSection().find('.sortable-list-add .sortable-list-input').type('test/removable-model');
-      modelsSection().find('.sortable-list-add-btn').click();
-      modelsSection().find('.sortable-list-item').should('have.length', initialCount + 1);
-
-      // The new item is appended last (its name lives in the input's value,
-      // not text — so locate by position, not by content)
-      modelsSection().find('.sortable-list-item').last()
-        .find('.sortable-list-input').should('have.value', 'test/removable-model');
-      modelsSection().find('.sortable-list-item').last().find('.sortable-list-remove').click();
-      modelsSection().find('.sortable-list-item').should('have.length', initialCount);
-    });
-  });
-
-  it('can focus and interact with model entry inputs', () => {
-    openModelsSection();
-
-    cy.get('.sortable-list-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
-
-    // Model entry inputs should be focusable and editable
-    cy.get('.sortable-list-item').first().find('.sortable-list-input').should('not.be.disabled');
-    cy.get('.sortable-list-item').first().find('.sortable-list-input').focus();
-    cy.get('.sortable-list-item').first().find('.sortable-list-input').should('have.focus');
-  });
-
-  it('prevents adding duplicate models', () => {
-    openModelsSection();
-
-    modelsSection().find('.sortable-list-item', { timeout: 5000 }).should('have.length.greaterThan', 0);
-
-    // Get the first model name and initial count, then try adding duplicate
-    modelsSection().find('.sortable-list-item').first().find('.sortable-list-input').invoke('val').then((existingName) => {
-      modelsSection().find('.sortable-list-item').its('length').then((initialCount) => {
-        // Try to add the same name (wait for the button to enable — a
-        // transient SSE-driven remount can clear the input mid-type)
-        modelsSection().find('.sortable-list-add .sortable-list-input').type(String(existingName));
-        modelsSection().find('.sortable-list-add-btn').should('not.be.disabled');
-        modelsSection().find('.sortable-list-add-btn').click();
-
-        // Should NOT add a duplicate — count stays the same
-        modelsSection().find('.sortable-list-item').should('have.length', initialCount);
-      });
-    });
   });
 
   it('toggle fields work correctly', () => {

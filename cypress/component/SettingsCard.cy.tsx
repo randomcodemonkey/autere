@@ -55,75 +55,6 @@ describe('SettingsCard select fields', () => {
   });
 });
 
-describe('SettingsCard per-model fields', () => {
-  const perModelSchema = [
-    {
-      id: 'models',
-      label: 'Models',
-      fields: [
-        { key: 'enabledModels', label: 'Enabled Models', type: 'list' as const },
-        { key: 'modelThinkingLevels', label: 'Thinking level per model', type: 'perModel' as const,
-          perModel: { control: 'select' as const, options: [
-            { value: '', label: 'pi default' }, { value: 'off', label: 'off' }, { value: 'high', label: 'high' },
-          ] } },
-        { key: 'reserveTokensPercentByModel', label: 'Reserved context per model (%)', type: 'perModel' as const,
-          perModel: { control: 'number' as const, min: 0, max: 90 } },
-      ],
-    },
-  ];
-
-  it('renders one row per enabled model with the stored values', () => {
-    cy.window({ log: false }).then((win) => {
-      win.fetch = (input: any, _init: any) => {
-        const u = String(input);
-        let data: any = { success: true };
-        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...perModelSchema, ...backendSections] };
-        else if (u.includes('/api/v1/settings')) data = { success: true, data: {
-          enabledModels: ['z-ai/glm-5.3-flash', 'anthropic/claude-x'],
-          modelThinkingLevels: { 'z-ai/glm-5.3-flash': 'high' },
-          reserveTokensPercentByModel: { 'anthropic/claude-x': '10' },
-        } };
-        else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
-        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
-      };
-    });
-    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
-    cy.get('.settings-per-model-row').should('have.length', 4); // 2 models × 2 fields
-    cy.get('.settings-per-model-name').first().should('contain', 'z-ai/glm-5.3-flash');
-    cy.get('select.settings-input').first().should('have.value', 'high');
-    cy.get('select.settings-input').eq(1).should('have.value', '');
-    cy.get('input[type="number"].settings-input').eq(1).should('have.value', '10');
-  });
-
-  it('saves per-model levels and drops entries reset to the default', () => {
-    let savedBody: any = null;
-    const settings = {
-      enabledModels: ['a/m1', 'a/m2'],
-      modelThinkingLevels: { 'a/m1': 'off' },
-      reserveTokensPercentByModel: {},
-    };
-    cy.window({ log: false }).then((win) => {
-      win.fetch = (input: any, init: any) => {
-        const u = String(input);
-        let data: any = { success: true };
-        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...perModelSchema, ...backendSections] };
-        else if (u.includes('/api/v1/settings') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); data = { success: true }; }
-        else if (u.includes('/api/v1/settings')) data = { success: true, data: settings };
-        else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
-        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
-      };
-    });
-    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
-    // Row 1: clear the stored 'off' → entry removed. Row 2: set 'high'.
-    cy.get('select.settings-input').first().select('');
-    cy.get('select.settings-input').eq(1).select('high');
-    cy.contains('button', 'Save').click();
-    cy.wrap(null).should(() => {
-      expect(savedBody.modelThinkingLevels).to.deep.equal({ 'a/m2': 'high' });
-    });
-  });
-});
-
 describe('SettingsCard number fields', () => {
   const numberSchema = [
     {
@@ -354,5 +285,84 @@ describe('SettingsCard section deep links', () => {
     stubTwo();
     cy.mount(<MemoryRouter initialEntries={['/session/s1/settings?section=nope']}><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.get('.settings-section-title', { timeout: 10000 }).should('contain', 'General');
+  });
+});
+
+describe('SettingsCard models catalog table', () => {
+  const modelsSchema: SettingSection[] = [
+    {
+      id: 'models',
+      label: 'Models',
+      fields: [
+        { key: 'enabledModels', label: 'Enabled Models', type: 'list' },
+        { key: 'modelThinkingLevels', label: 'Thinking level per model', type: 'perModel',
+          perModel: { control: 'select', options: [ { value: '', label: 'pi default' }, { value: 'low', label: 'low' } ] } },
+        { key: 'reserveTokensPercentByModel', label: 'Reserved context per model (%)', type: 'perModel', perModel: { control: 'number', min: 0, max: 90 } },
+        { key: 'visionByModel', label: 'Image input per model', type: 'perModel',
+          perModel: { control: 'select', options: [ { value: '', label: 'metadata' }, { value: 'on', label: 'image' } ] } },
+      ],
+    },
+    { id: 'general', label: 'General', fields: [{ key: 'a', label: 'A', type: 'text' as const }] },
+  ];
+  const cat = [
+    { provider: 'p1', id: 'm1', name: 'Model One' },
+    { provider: 'p2', id: 'm2', name: 'Model Two' },
+  ];
+
+  function stubWithCatalog(settings: Record<string, any>) {
+    cy.window({ log: false }).then((win) => {
+      win.fetch = (input: any) => {
+        const u = String(input);
+        let data: any = { success: true };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: modelsSchema };
+        else if (u.includes('/api/v1/models/available')) data = { success: true, data: cat };
+        else if (u.includes('/api/v1/settings')) data = { success: true, data: settings };
+        else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
+        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
+      };
+    });
+  }
+
+  it('auto-loads the pi catalog; rows render stored per-model values', () => {
+    stubWithCatalog({ enabledModels: ['p1/m1'], modelThinkingLevels: { 'p1/m1': 'low' }, reserveTokensPercentByModel: { 'p2/m2': '10' } });
+    cy.mount(<MemoryRouter initialEntries={['/session/s1/settings?section=models']}><SettingsCard sseConnected={true} /></MemoryRouter>);
+    // Catalog auto-loads when the section opens; Update re-reads it
+    cy.get('.models-table tbody tr', { timeout: 10000 }).should('have.length', 2);
+    cy.get('.models-table tbody tr').first().should('contain', 'Model One');
+    // Enabled first (settings order), then the rest alphabetically
+    cy.get('.models-table tbody tr').eq(0).find('input[type=checkbox]').should('be.checked');
+    cy.get('.models-table tbody tr').eq(1).find('input[type=checkbox]').should('not.be.checked');
+    // Stored per-model values show up in the row controls
+    cy.contains('.models-table tbody tr', 'Model One').find('select').first().should('have.value', 'low');
+    cy.contains('.models-table tbody tr', 'Model Two').find('input[type=number]').should('have.value', '10');
+    cy.contains('button', 'Update').click();
+    cy.get('.models-table tbody tr', { timeout: 10000 }).should('have.length', 2);
+  });
+
+  it('table controls write the same draft keys (enabled toggle appends)', () => {
+    stubWithCatalog({ enabledModels: ['p1/m1'] });
+    cy.mount(<MemoryRouter initialEntries={['/session/s1/settings?section=models']}><SettingsCard sseConnected={true} /></MemoryRouter>);
+    cy.get('.models-table tbody tr', { timeout: 10000 }).should('have.length', 2); // auto-loaded
+    // Enable Model Two → appended to the enabledModels draft
+    cy.contains('.models-table tbody tr', 'Model Two').find('input[type=checkbox]').check();
+    // Thinking level select writes modelThinkingLevels
+    cy.contains('.models-table tbody tr', 'Model Two').find('select').first().select('low');
+    cy.contains('.models-table tbody tr', 'Model Two').find('select').first().should('have.value', 'low');
+    // Edits route into the same draft keys → Save posts them all
+    let savedBody: any = null;
+    cy.window({ log: false }).then((win) => {
+      const real = win.fetch;
+      win.fetch = (input: any, init?: any) => {
+        if (String(input).includes('/api/v1/settings') && init?.method === 'PUT') {
+          savedBody = JSON.parse(init.body);
+        }
+        return real(input, init);
+      };
+    });
+    cy.contains('button', 'Save Settings').click();
+    cy.wrap(null).should(() => {
+      expect(savedBody.enabledModels).to.deep.eq(['p1/m1', 'p2/m2']);
+      expect(savedBody.modelThinkingLevels).to.deep.eq({ 'p2/m2': 'low' });
+    });
   });
 });
