@@ -20,32 +20,39 @@ RUN apt-get -y update \
     && apt-get install -y --reinstall ca-certificates \
     && apt-get -y upgrade \
     && apt-get install -y --no-install-recommends \
-      curl \
-      python3 \
-      golang \
-      build-essential \
-      automake \
       autoconf \
-      openjdk-21-jdk-headless \
+      automake \
+      apt-transport-https \
+      build-essential \
+      curl \
       emacs \
       fd-find \
+      git \
+      gnupg \
+      golang \
+      iputils-ping \
+      jq \
+      less \
       maven \
       nodejs \
-      npm \
-      git \
-      supervisor \
-      jq \
-      openssh-client \
-      ripgrep \
-      xvfb \
-      iputils-ping \
       netcat-openbsd \
+      npm \
+      openjdk-21-jdk-headless \
+      openssh-client \
+      python3 \
+      ripgrep \
+      supervisor \
+      xvfb \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
-    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" -o /etc/apt/keyrings/sbt.asc \
+    && chmod a+r /etc/apt/keyrings/*.asc \
     && printf 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: %s\nComponents: stable\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/docker.asc\n' "$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/docker.sources \
+     && printf 'Types: deb\nURIs: https://repo.scala-sbt.org/scalasbt/debian\nSuites: all\nComponents: main\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/sbt.asc\n' "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/sbt.sources \
     && apt-get -y update \
-    && apt-get install -y --no-install-recommends docker-ce-cli \
+    && apt-get install -y --no-install-recommends \
+      docker-ce-cli \
+      sbt \
     && apt-get -y clean \
     && rm -rf /var/lib/apt/lists/*
 

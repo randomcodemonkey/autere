@@ -165,7 +165,7 @@ export function readAllMessageEntries(sessionFile: string): any[] {
  */
 /** pi messages normally carry array content, but custom/persona messages can
  *  carry a plain string (or none). Text extraction must tolerate all shapes. */
-function msgText(content: any): string {
+export function msgText(content: any): string {
   if (Array.isArray(content)) {
     return content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
   }

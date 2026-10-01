@@ -23,6 +23,7 @@ import {
   splitImageEntry,
   readMessageEntries,
   buildStreamHistoryFromMessages,
+  msgText,
   accumulateUsage,
   extractImages,
 } from './stream-history.js';
@@ -1008,10 +1009,10 @@ export class UserSession {
     s.sessionState.messageCount++;
 
     const rawRole = event.message.role || '';
-    const text = event.message.content
-      ?.filter((c: any) => c.type === 'text')
-      .map((c: any) => c.text)
-      .join('') || '';
+    // Content can be a bare string (custom/persona messages) — msgText
+    // tolerates array | string | undefined; a raw .filter() would throw and
+    // abort the rest of this handler (counts/usage/history skipped).
+    const text = msgText(event.message.content) || '';
     const msgImages = extractImages(event.message.content);
 
     if (rawRole === 'assistant') {
@@ -1024,7 +1025,7 @@ export class UserSession {
       // readSessionUsage/pi getSessionStats seeding semantics).
       s.sessionState.requestCount++;
       log.userSession.forSession(s.sessionState.sessionId).debug(
-        `assistant message_end: text_len=${text.length}, stop=${stop}, content_types=[${(event.message.content || []).map((c: any) => c.type).join(',')}]`);
+        `assistant message_end: text_len=${text.length}, stop=${stop}, content_types=[${Array.isArray(event.message.content) ? event.message.content.map((c: any) => c.type).join(',') : ''}]`);
       if (stop === 'error' || stop === 'aborted') {
         log.userSession.forSession(s.sessionState.sessionId).warn(
           `assistant stream ended with stop=${stop}: ${event.message.errorMessage || '(no error message)'}`);

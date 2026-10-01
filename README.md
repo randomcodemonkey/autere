@@ -35,7 +35,7 @@ docker run -d --name autere \
   autere
 ```
 
-`/var/run/docker.sock` is required for sandboxed pi sessions - without it the backend cannot start session containers. Admin user may set 'sandbox' image to 'off' in their per-user settings, or disable sandboxing globally by setting env `AUTERE_SANDBOX_IMAGE=off`
+`/var/run/docker.sock` is required for sandboxed pi sessions - without it the backend cannot start session containers. Admin user may set 'sandbox' image to 'off' in their per-user settings, or disable sandboxing globally by setting env `AUTERE_SANDBOX_IMAGE=off`. When mounting docker.sock inside the autere container, you **must** use `--group-add <gid>` in the docker run command, where gid matches the group of the socket inside the autere container.
 
 The `/home/autere/.autere` and `/home/autere/.pi` must be mounted as named docker volumes if using sandboxed pi containers. It is strongly suggested to always mount them as named volumes (not bind mounts) so it is possible to switch to sandboxed mode later.
 

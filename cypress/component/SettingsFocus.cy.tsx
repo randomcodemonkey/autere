@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { SortableList } from '../../src/frontend/components/SortableList';
 import { SettingsCard } from '../../src/frontend/components/SettingsCard';
 
@@ -59,7 +60,7 @@ describe('SettingsCard focus retention', () => {
   });
 
   it('does not remount field inputs across a re-render', () => {
-    cy.mount(<Harness />);
+    cy.mount(<MemoryRouter><Harness /></MemoryRouter>);
     cy.get('.settings-input').first().should('exist').click();
     cy.focused().type('hello');
     cy.get('.settings-input').first().should('have.value', 'hello');
@@ -77,7 +78,7 @@ describe('SettingsCard focus retention', () => {
   });
 
   it('keeps list item focus while typing', () => {
-    cy.mount(<Harness />);
+    cy.mount(<MemoryRouter><Harness /></MemoryRouter>);
     cy.get('.sortable-list-item input').first().should('exist').click();
     cy.focused().type('x');
     cy.focused().should('have.class', 'sortable-list-input');
@@ -85,7 +86,7 @@ describe('SettingsCard focus retention', () => {
   });
 
   it('shows the save button only while dirty, hides it after save', () => {
-    cy.mount(<Harness />);
+    cy.mount(<MemoryRouter><Harness /></MemoryRouter>);
     cy.get('.settings-input').first().should('exist');
     // Clean: no save button anywhere.
     cy.get('.settings-save-btn').should('not.exist');
@@ -101,7 +102,7 @@ describe('SettingsCard focus retention', () => {
   });
 
   it('tells the user when the restart is deferred to turn end', () => {
-    cy.mount(<Harness />);
+    cy.mount(<MemoryRouter><Harness /></MemoryRouter>);
     cy.get('.settings-input').first().should('exist').click().type('hello');
     cy.intercept('PUT', '**/api/v1/settings', { success: true, deferred: true }).as('save');
     cy.get('.settings-save-btn').click();

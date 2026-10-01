@@ -3151,7 +3151,7 @@ body {
 .settings-per-model {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: 0.55rem;
   margin-top: 0.25rem;
 }
 
@@ -3159,6 +3159,15 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  transition: background 0.12s ease;
+
+  /* hovered or being edited (clicked = focus inside) */
+  &:hover,
+  &:focus-within {
+    background: rgba(255, 255, 255, 0.08);
+  }
 
   .settings-per-model-name {
     flex: 1;

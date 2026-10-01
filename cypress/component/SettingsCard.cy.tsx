@@ -1,7 +1,9 @@
 import React from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { SettingsCard } from '../../src/frontend/components/SettingsCard';
+import type { SettingSection } from '../../src/frontend/types';
 
-const schema = [
+const schema: SettingSection[] = [
   {
     id: 'images',
     label: 'Images',
@@ -39,7 +41,7 @@ function stubFetch(settings: Record<string, any>) {
 describe('SettingsCard select fields', () => {
   it('renders a select with auto option and discovered models', () => {
     stubFetch({ imageModel: '' });
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.get('select.settings-input').should('exist');
     cy.get('select.settings-input option').should('have.length', 3);
     cy.get('select.settings-input option').first().should('contain', 'Auto (first available)');
@@ -48,7 +50,7 @@ describe('SettingsCard select fields', () => {
 
   it('shows the selected value', () => {
     stubFetch({ imageModel: 'model-b' });
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.get('select.settings-input').should('have.value', 'model-b');
   });
 });
@@ -85,7 +87,7 @@ describe('SettingsCard per-model fields', () => {
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
       };
     });
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.get('.settings-per-model-row').should('have.length', 4); // 2 models × 2 fields
     cy.get('.settings-per-model-name').first().should('contain', 'z-ai/glm-5.3-flash');
     cy.get('select.settings-input').first().should('have.value', 'high');
@@ -111,7 +113,7 @@ describe('SettingsCard per-model fields', () => {
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
       };
     });
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     // Row 1: clear the stored 'off' → entry removed. Row 2: set 'high'.
     cy.get('select.settings-input').first().select('');
     cy.get('select.settings-input').eq(1).select('high');
@@ -150,7 +152,7 @@ describe('SettingsCard number fields', () => {
 
   it('renders a number input with the stored value', () => {
     stubFetchWithSave({ reserveTokensPercent: 25 }, numberSchema);
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.get('input[type="number"].settings-input').should('have.value', '25');
   });
 
@@ -171,7 +173,7 @@ describe('SettingsCard number fields', () => {
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
       };
     });
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.get('input[type="number"].settings-input').clear().type('30');
     cy.contains('button', 'Save').click();
     cy.wrap(null).should(() => {
@@ -203,7 +205,7 @@ describe('SettingsCard side menu', () => {
 
   it('renders category side menu and shows only the active section', () => {
     stubTwo();
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.get('.settings-menu-btn').should('have.length', 4); // 2 sections + Personas + API Tokens
     cy.get('.settings-menu-btn').first().should('have.class', 'active');
     cy.get('.settings-content select.settings-input').should('exist');
@@ -216,7 +218,7 @@ describe('SettingsCard side menu', () => {
   it('shows the save button under the categories only when dirty; saves', () => {
     const post = (args: any) => (window as any).__post = args;
     stubTwo(post);
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.get('.settings-save-btn').should('not.exist');
     cy.get('.settings-menu-btn').eq(1).click();
     cy.get('.settings-content input.settings-input').type('img-x');
@@ -246,7 +248,7 @@ describe('SettingsCard folderIgnores fields', () => {
       { path: '/tmp', edits: true, files: false },
       { path: 'node_modules', edits: true, files: true },
     ] });
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.get('.sortable-list-item').should('have.length', 2);
     cy.get('.sortable-list-item').first().find('input[type=text]').should('have.value', '/tmp');
     cy.get('.sortable-list-item').first().find('input[type=checkbox]').first().should('be.checked');
@@ -255,7 +257,7 @@ describe('SettingsCard folderIgnores fields', () => {
 
   it('unchecking the last flag removes the row and adding appends', () => {
     stubFetch({ folderIgnores: [{ path: '.git', edits: true, files: true }] });
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     // uncheck both flags on the row → row is dropped
     cy.get('.sortable-list-item input[type=checkbox]').first().uncheck();
     cy.get('.sortable-list-item input[type=checkbox]').last().uncheck();
@@ -282,7 +284,7 @@ describe('SettingsCard API tokens section', () => {
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
       };
     });
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.contains('.settings-menu-btn', 'API Tokens').click();
     // the validity-reset effect used to snap selection back to the first
     // schema section (e.g. 9router/Images) here
@@ -306,10 +308,51 @@ describe('SettingsCard API tokens section', () => {
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
       };
     });
-    cy.mount(<SettingsCard sseConnected={true} />);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.get('.settings-menu-btn').then(($btns) => {
       const labels = [...$btns].map((b) => b.textContent);
       expect(labels).to.deep.eq(['Alpha', 'API Tokens', 'Personas', 'Zulu']);
     });
+  });
+});
+
+describe('SettingsCard section deep links', () => {
+  const twoSections = [
+    { id: 'general', label: 'General', fields: [{ key: 'a', label: 'A', type: 'text' as const }] },
+    { id: 'models', label: 'Models', fields: [{ key: 'b', label: 'B', type: 'text' as const }] },
+  ];
+  function stubTwo() {
+    cy.window({ log: false }).then((win) => {
+      win.fetch = (input: any) => {
+        const u = String(input);
+        let data: any = { success: true };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: twoSections };
+        else if (u.includes('/api/v1/settings')) data = { success: true, data: { a: 'x', b: 'y' } };
+        else if (u.includes('/extensions/packages')) data = { success: true, data: { available: [] } };
+        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
+      };
+    });
+  }
+
+  it('opens the section named in ?section= on mount', () => {
+    stubTwo();
+    cy.mount(<MemoryRouter initialEntries={['/session/s1/settings?section=models']}><SettingsCard sseConnected={true} /></MemoryRouter>);
+    cy.get('.settings-section-title', { timeout: 10000 }).should('contain', 'Models');
+  });
+
+  it('switches section on menu click (param written → back/forward restorable)', () => {
+    stubTwo();
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
+    cy.get('.settings-menu-btn.active', { timeout: 10000 }).should('contain', 'General');
+    cy.get('.settings-menu-btn').contains('Models').click();
+    cy.get('.settings-section-title').should('contain', 'Models');
+    cy.get('.settings-menu-btn').contains('General').click();
+    cy.get('.settings-section-title').should('contain', 'General');
+  });
+
+  it('unknown ?section= falls back to the first section', () => {
+    stubTwo();
+    cy.mount(<MemoryRouter initialEntries={['/session/s1/settings?section=nope']}><SettingsCard sseConnected={true} /></MemoryRouter>);
+    cy.get('.settings-section-title', { timeout: 10000 }).should('contain', 'General');
   });
 });

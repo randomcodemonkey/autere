@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { SortableList } from './SortableList';
 import { PersonasSettingsSection } from './Personas';
 import { ApiTokensSection } from './ApiTokensSection';
@@ -64,7 +65,18 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   // Settings as loaded / last saved — the baseline the floating Save button
   // compares against (shown only while something actually differs).
   const baselineRef = useRef('{}');
-  const [activeSection, setActiveSection] = useState<string>('');
+  // Deep link: the active section lives in the ?section= query param, so
+  // browser back/forward restores the section that was open (same pattern
+  // as EditsPage's ?e/?f/?r/?c params).
+  const [params, setParams] = useSearchParams();
+  const paramSection = params.get('section') || '';
+  const selectSection = useCallback((id: string) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('section', id);
+      return next;
+    });
+  }, [setParams]);
 
   // Reset saved state when SSE reconnects after backend restart
   useEffect(() => {
@@ -97,15 +109,12 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
     });
   }, []);
 
-  // Keep the active menu item valid once the schema has loaded. Custom
-  // sections (Personas / API Tokens) are always valid — without them the
-  // validity check reset the selection back to the first schema section
-  // every time one was clicked.
-  useEffect(() => {
-    // Backend schema is the source of truth for section ids (incl. personas/apiTokens).
-    const ids = schema.map((s) => s.id);
-    if (!loading && !ids.includes(activeSection)) setActiveSection(ids[0]);
-  }, [schema, activeSection, loading]);
+  // Keep the active menu item valid: unknown/missing ?section= falls back to
+  // the first schema section (ids include the custom personas/apiTokens ones —
+  // backend schema is the source of truth).
+  const activeSection = !loading && !schema.some((s) => s.id === paramSection)
+    ? (schema[0]?.id ?? '')
+    : paramSection;
 
   const handleChange = useCallback((key: string, value: any) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -375,7 +384,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
             <select
               className="settings-menu-select"
               value={activeSection}
-              onChange={(e) => setActiveSection(e.target.value)}
+              onChange={(e) => selectSection(e.target.value)}
               aria-label="Settings category"
             >
               {menuItems.map((item) => (
@@ -388,7 +397,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
                 <button
                   key={item.id}
                   className={`settings-menu-btn${activeSection === item.id ? ' active' : ''}`}
-                  onClick={() => setActiveSection(item.id)}
+                  onClick={() => selectSection(item.id)}
                 >
                   {item.label}
                 </button>
