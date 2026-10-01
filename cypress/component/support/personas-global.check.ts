@@ -23,7 +23,7 @@ const busy = (ms: number) => { const t = Date.now(); while (Date.now() - t < ms)
 function freshEnv() {
   const env = mkdtempSync(join(tmpdir(), 'personas-global-'));
   process.env.PI_CODING_AGENT_DIR = env;
-  let handler: (e: any, ctx: any) => any;
+  let handler: (e: any, ctx: any) => any = () => undefined;
   mod.default({ on: (ev: string, fn: any) => { if (ev === 'before_agent_start') handler = fn; } });
   const ctx = { sessionManager: { getSessionFile: () => '/x/sess.jsonl' } };
   const w = (n: string, v: any) => { writeFileSync(join(env, n), JSON.stringify(v)); busy(3); };

@@ -17,8 +17,10 @@ describe('Edits feature', () => {
   const seedEntries = (now: number) => [
     { ts: now + 1000, path: 'e2e-a.txt', tool: 'write', change: 'created', diff: 'Create e2e-a.txt\n\n@@ -0,0 +1 @@\n+hello a' },
     { ts: now + 2000, path: 'e2e-b.txt', tool: 'write', change: 'created', diff: 'Create e2e-b.txt\n\n@@ -0,0 +1 @@\n+hello b' },
-    // Duplicate "created" for e2e-a — the UI must keep only the latest
-    { ts: now + 3000, path: 'e2e-a.txt', tool: 'write', change: 'created', diff: 'Create e2e-a.txt\n\n@@ -0,0 +1 @@\n+hello a v2' },
+    // EXACT duplicate of the first e2e-a entry (same ts+diff) — the UI must
+    // collapse exact duplicates (a file hit by both the sweep and the
+    // explicit-target diff); incremental edits are kept as-is.
+    { ts: now + 1000, path: 'e2e-a.txt', tool: 'write', change: 'created', diff: 'Create e2e-a.txt\n\n@@ -0,0 +1 @@\n+hello a' },
     { ts: now + 4000, path: 'e2e-a.txt', tool: 'edit', change: 'modified', diff: 'Modified e2e-a.txt\n\n@@ -1 +1 @@\n-hello a\n+goodbye a' },
   ];
 

@@ -2,7 +2,7 @@ import React from 'react';
 import { Header } from '../../src/frontend/components/Header';
 
 describe('Header', () => {
-  const mountHeader = (props: Partial<Parameters<typeof Header>[0]> = {}) => {
+  const mountHeader = (props: Partial<React.ComponentProps<typeof Header>> = {}) => {
     cy.mount(
       <Header
         statusType="connected"
@@ -11,7 +11,6 @@ describe('Header', () => {
         sessionName={null}
         activeView="chat"
         onViewChange={cy.stub()}
-        onStatusClick={cy.stub()}
         {...props}
       />
     );
@@ -79,13 +78,11 @@ describe('Header', () => {
     cy.get('.view-menu-dropdown').should('not.exist');
   });
 
-  it.skip('badge click opens the sessions modal without changing view', () => {
+  it('badge click opens the session chat view', () => {
     const onViewChange = cy.stub().as('onViewChange');
-    const onStatusClick = cy.stub().as('onStatusClick');
-    mountHeader({ onViewChange, onStatusClick });
+    mountHeader({ onViewChange });
     cy.get('.session-badge.status-connected').click({ force: true });
-    cy.get('@onStatusClick').should('have.been.calledOnce');
-    cy.get('@onViewChange').should('not.have.been.called');
+    cy.get('@onViewChange').should('have.been.calledWith', 'chat');
   });
 
   it('combined badge carries the status colour class', () => {
@@ -94,19 +91,14 @@ describe('Header', () => {
     cy.get('.session-badge .connection-dot.dot-yellow').should('exist');
   });
 
-  it.skip('session badge is clickable and triggers the status action', () => {
-    const onStatusClick = cy.stub().as('onStatusClick');
-    mountHeader({ onStatusClick });
-    cy.get('.session-badge').click();
-    cy.get('@onStatusClick').should('have.been.calledOnce');
-  });
-
-  it.skip('session badge is clickable when isActive', () => {
-    const onStatusClick = cy.stub().as('onStatusClick');
-    mountHeader({ onStatusClick, isActive: true });
-    cy.get('.session-badge').should('not.have.class', 'disabled');
-    cy.get('.session-badge').click();
-    cy.get('@onStatusClick').should('have.been.calledOnce');
+  it('mobile: badge click also toggles the sessions dropdown', () => {
+    cy.viewport(375, 667);
+    const onViewChange = cy.stub().as('onViewChange');
+    mountHeader({ onViewChange });
+    cy.get('.session-tabs-dropdown').should('not.exist');
+    cy.get('.session-badge').click({ force: true });
+    cy.get('@onViewChange').should('have.been.calledWith', 'chat');
+    cy.get('.session-tabs-dropdown').should('exist');
   });
 
   it('shows disconnected header styling', () => {
@@ -125,7 +117,6 @@ describe('Header running-session tabs', () => {
         sessionName={null}
         activeView="chat"
         onViewChange={cy.stub()}
-        onStatusClick={cy.stub()}
         {...props}
       />
     );
@@ -160,25 +151,24 @@ describe('Header session tabs: membership stable, selected becomes badge', () =>
       <Header
         statusType="connected"
         statusText="Idle"
+        sessionId={null}
         sessionName={null}
         activeView="chat"
         onViewChange={cy.stub()}
-        onStatusClick={cy.stub()}
         {...props}
       />
     );
   };
   const mk = (id: string, name: string) => ({
-    id, sessionFile: `f-${id}`, sessionName: name, parentSession: null, createdAt: 0, lastActivity: 0, active: true,
+    id, sessionFile: `f-${id}`, sessionName: name, parentSession: null, createdAt: 0, lastActivity: 0, cwd: null, active: true,
   });
 
   it('order is alphabetical and stable; selected slot renders the badge', () => {
-    const onStatusClick = cy.stub().as('onModal');
     const onRunningSessionClick = cy.stub().as('onSwitch');
     mountTabs({
       sessionId: 'x00000000000000000000000000003',
       runningSessions: [mk('x00000000000000000000000000001', 'delta'), mk('x00000000000000000000000000002', 'charlie'), mk('x00000000000000000000000000003', 'bravo'), mk('x00000000000000000000000000004', 'alpha')],
-      onStatusClick, onRunningSessionClick,
+      onRunningSessionClick,
     });
     // membership {a,b,c,d}; selected = c ('bravo') → badge at bravo's slot
     cy.get('.session-tabs .session-badge').eq(0).should('have.class', 'status-connected').and('contain', 'bravo');
@@ -218,7 +208,6 @@ describe('Header session tabs: click-through switch flow', () => {
         sessionName={sessionName}
         activeView="chat"
         onViewChange={cy.stub()}
-        onStatusClick={cy.stub()}
         runningSessions={sessions}
         onRunningSessionClick={onRunningSessionClick}
       />
@@ -276,7 +265,6 @@ describe('Header session tabs: name-matched reheaded sessions + room for extra',
         sessionName={sessionName}
         activeView="chat"
         onViewChange={cy.stub()}
-        onStatusClick={cy.stub()}
         runningSessions={sessions}
         onRunningSessionClick={cy.stub()}
       />

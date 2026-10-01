@@ -1,7 +1,7 @@
 /**
  * Run e2e tests: start backend, run cypress, stop backend.
  */
-import { startBackend, stopBackend, TEST_PORT, getTestEnvsDir } from './start-backend';
+import { startBackend, stopBackend, TEST_PORT, getTestEnvsDir, getTestModels } from './start-backend';
 import { execSync } from 'child_process';
 
 async function main() {
@@ -16,6 +16,20 @@ async function main() {
   try {
     console.log(`[run-e2e] Starting backend on port ${TEST_PORT}...`);
     await startBackend();
+
+    // Documented user settings for the test user — the model dropdown reads
+    // enabledModels from user settings (defaults would otherwise carry the
+    // master pi settings' single possibly-unroutable model, skipping the
+    // model-selection switch test).
+    const models = getTestModels();
+    if (models.length > 0) {
+      await fetch(`http://localhost:${TEST_PORT}/api/v1/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabledModels: models }),
+      });
+    }
+
     console.log(`[run-e2e] Running cypress e2e tests against port ${TEST_PORT}...`);
     const envsDir = getTestEnvsDir();
     execSync(`npx cypress run --e2e --config baseUrl=http://localhost:${TEST_PORT} ${process.env.SPEC ? `--spec ${process.env.SPEC}` : `""`}`, {

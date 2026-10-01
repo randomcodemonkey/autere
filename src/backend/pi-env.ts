@@ -108,6 +108,34 @@ function syncMasterSettings(envDir: string): void {
   }
 }
 
+/** E2E harness only: probeTestModels (start-backend.ts) provisioned working
+ *  models via AUTERE_TEST_MODELS — the test env has no user model settings,
+ *  so pi would otherwise fall back to its builtin (unroutable) default.
+ *  Runs after syncMasterSettings, which would otherwise overwrite it with
+ *  the master's list. */
+function applyTestModels(envDir: string): void {
+  const raw = process.env.AUTERE_TEST_MODELS;
+  if (!raw) return;
+  const models = raw.split(',').map((m) => m.trim()).filter(Boolean);
+  if (models.length === 0) return;
+  const envSettingsPath = join(envDir, 'settings.json');
+  let envSettings: any = {};
+  try { envSettings = JSON.parse(readFileSync(envSettingsPath, 'utf-8')); } catch { /* start fresh */ }
+  const first = models[0];
+  const slash = first.indexOf('/');
+  envSettings.enabledModels = models;
+  envSettings.defaultProvider = slash > 0 ? first.slice(0, slash) : '9router';
+  envSettings.defaultModel = slash > 0 ? first.slice(slash + 1) : first;
+  try {
+    const tmp = join(envDir, `.settings-tmp-${randomUUID()}`);
+    writeFileSync(tmp, JSON.stringify(envSettings, null, 2), 'utf-8');
+    renameSync(tmp, envSettingsPath);
+    invalidateCache(envSettingsPath);
+  } catch (err) {
+    log.piEnv.error(`Failed to apply e2e test models to ${envSettingsPath}:`, err);
+  }
+}
+
 /**
  * Ensure the per-user pi environment exists and is seeded.
  * Idempotent — safe to call on every pi spawn.
@@ -132,6 +160,7 @@ export function ensurePiEnv(user: string): string {
     // Master settings drift (new `pi install`s, default model changes)
     // reaches env copies only here — pi instances read the env settings.
     syncMasterSettings(envDir);
+    applyTestModels(envDir);
 
     // When pi runs against a non-9router provider, neutralize
     // pi-9router-ext in the env's settings.json (object form with empty

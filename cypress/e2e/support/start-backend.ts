@@ -38,6 +38,43 @@ const TEST_PORT = getAvailablePort();
 export { TEST_PORT };
 
 let backendProcess: ChildProcess | null = null;
+let testModels: string[] = [];
+
+/** Working model list probed before spawn (may be empty if no 9router). */
+export function getTestModels(): string[] { return testModels; }
+
+/** Probe the live 9router for models that can actually serve completions.
+ *  E2e envs have no user model settings, so pi would otherwise fall back to
+ *  its builtin default (provider openai), which unroutable without creds —
+ *  every model-turn test would fail. Returns up to 2 working model ids
+ *  (two so the model-selection spec has something to switch to). */
+async function probeTestModels(): Promise<string[]> {
+  const base = process.env.AUTERE_NINE_ROUTER_URL || 'http://localhost:20128';
+  let apiKey = '';
+  try {
+    apiKey = (JSON.parse(readFileSync(join(process.env.HOME || '/home/autere', '.pi', 'agent', '9router-config.json'), 'utf-8')) as { apiKey?: string }).apiKey || '';
+  } catch {}
+  const auth = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
+  try {
+    const res = await fetch(`${base}/v1/models`, { headers: auth, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return [];
+    const ids: string[] = ((await res.json()) as { data: { id: string }[] }).data.map((m) => m.id);
+    const ok: string[] = [];
+    for (const id of ids) {
+      try {
+        const r = await fetch(`${base}/v1/chat/completions`, {
+          method: 'POST', headers: auth,
+          body: JSON.stringify({ model: id, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (r.ok) ok.push(id);
+      } catch {}
+      if (ok.length >= 2) break;
+    }
+    if (ok.length === 0) console.log('[e2e] No working models found on 9router — model turns will fail');
+    return ok;
+  } catch { return []; }
+}
 
 // Record of the previous test run's backend group. If a runner is SIGKILLed
 // (no cleanup handlers run), its detached backend lives on — the next run
@@ -80,6 +117,16 @@ export function getTestEnvsDir(): string {
  * parent dies, children are reparented to PID 1 and can no longer be found
  * by ppid lookups.
  */
+/** Append pids to the run record so the next run reaps them if this one
+ *  dies before cleanup (merge, dedupe). */
+function reapRecord(pids: number[]): void {
+  try {
+    let cur: number[] = [];
+    try { cur = (JSON.parse(readFileSync(RUN_RECORD, 'utf-8')) as { pids: number[] }).pids; } catch {}
+    writeFileSync(RUN_RECORD, JSON.stringify({ pids: [...new Set([...cur, ...pids])] }));
+  } catch {}
+}
+
 function collectDescendants(pid: number, acc: number[] = []): number[] {
   try {
     const pids = execSync(
@@ -107,10 +154,14 @@ function killPids(pids: number[], signal: NodeJS.Signals): void {
   }
 }
 
-export function startBackend(): Promise<void> {
-  return new Promise((resolve, reject) => {
+export async function startBackend(): Promise<void> {
+  return new Promise(async (resolve, reject) => {
     // Kill anything a hard-killed previous run left behind
     reapPreviousRun();
+
+    const probed = await probeTestModels();
+    testModels = probed;
+    if (probed.length > 0) console.log(`[e2e] Using working model(s): ${probed.join(', ')}`);
 
     if (backendProcess) {
       resolve();
@@ -156,6 +207,9 @@ export function startBackend(): Promise<void> {
         // append their pids to the run record (rpc-client reads it), so a
         // SIGKILLed runner's detached pi is reaped by the next run.
         AUTERE_RUN_RECORD_FILE: RUN_RECORD,
+        // Harness-provisioned model list (see probeTestModels) — applied to
+        // the test env's pi settings by the backend (pi-env.ts).
+        ...(testModels.length > 0 ? { AUTERE_TEST_MODELS: testModels.join(',') } : {}),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
