@@ -105,6 +105,9 @@ const ModelsSection: React.FC<{
             Per-model values apply to ENABLED models; saving restarts the agent.
           </div>
           {modelsError && <div className="settings-description">{modelsError}</div>}
+        <button className="btn btn-primary models-update-btn" type="button" disabled={modelsLoading} onClick={loadCatalog}>
+          {modelsLoading ? 'Updating models…' : 'Update available models'}
+        </button>
           {catalog !== null && (
             rows.length === 0 ? (
               <div className="settings-description">No models reported by pi.</div>
@@ -125,9 +128,9 @@ const ModelsSection: React.FC<{
                     const on = enabled.includes(k);
                     return (
                       <tr key={k} className={on ? 'enabled' : ''}>
-                        <td className="models-table-name" title={k}>{m.name}</td>
-                        <td><input type="checkbox" checked={on} onChange={(e) => toggleEnabled(k, e.target.checked)} /></td>
-                        <td>
+                        <td className="models-table-name" title={k} data-label="Model">{m.name}</td>
+                        <td data-label="Enabled"><input type="checkbox" checked={on} onChange={(e) => toggleEnabled(k, e.target.checked)} /></td>
+                        <td data-label="Thinking level">
                           <select
                             className="settings-input"
                             value={String(mapVal('modelThinkingLevels', k) ?? '')}
@@ -138,7 +141,7 @@ const ModelsSection: React.FC<{
                             ))}
                           </select>
                         </td>
-                        <td>
+                        <td data-label="Reserved context">
                           <input
                             type="number"
                             className="settings-input"
@@ -149,7 +152,7 @@ const ModelsSection: React.FC<{
                             onChange={(e) => setMapEntry('reserveTokensPercentByModel', k, e.target.value === '' ? '' : Number(e.target.value))}
                           />
                         </td>
-                        <td>
+                        <td data-label="Image mode">
                           <select
                             className="settings-input"
                             value={String(mapVal('visionByModel', k) ?? '')}
@@ -167,11 +170,7 @@ const ModelsSection: React.FC<{
               </table>
             )
           )}
-        </div>
-        <button className="btn btn-primary models-update-btn" type="button" disabled={modelsLoading} onClick={loadCatalog}>
-          {modelsLoading ? 'Loading models…' : 'Update'}
-        </button>
-      </div>
+        </div>      </div>
     </div>
   );
 };

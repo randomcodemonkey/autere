@@ -351,6 +351,7 @@ body {
   display: flex;
   align-items: stretch;
   justify-content: flex-end;
+  border-left: 1px solid rgba(255, 255, 255, 0.08); // gray edge for the first (leftmost) tab
   border-right: 1px solid rgba(255, 255, 255, 0.08);
 
   // Never wider than the header can give — tabs shrink to fit (below)
@@ -423,6 +424,22 @@ body {
 @media (max-width: 768px) {
   // Mobile: only the selected session's badge-tab is shown (space)
   .session-tab { display: none; }
+
+  // The badge becomes the middle bar: grow into all the space between the
+  // logo (fixed) and the hamburger menu (fixed). Left border mirrors the
+  // container's existing right separator.
+  .header { grid-template-columns: auto 1fr auto; }
+  // .header prefix needed for specificity over the earlier nested mobile rule
+  .header .session-tabs {
+    justify-self: stretch; // column is 1fr — fill it (overriding an earlier justify-self:end)
+    justify-content: stretch;
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
+    border-right: none; // the menu's own border-left separates — avoid a double line
+  }
+  .session-tabs .session-badge {
+    flex: 1;
+    justify-content: center;
+  }
 }
 
 // Selected session inside the tab row renders as the regular session-badge
@@ -477,7 +494,7 @@ body {
     .session-menu-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     background: none;
     border: none;
-    color: #ddd;
+    color: var(--c-muted);
     font-size: 0.8rem;
     padding: 0.5rem 0.6rem;
     border-radius: 0.35rem;
@@ -615,6 +632,10 @@ body {
   .header {
     padding-left: 0.5rem;
     padding-right: 0.5rem;
+
+    // Session tab sits flush against the menu (gap 0) — halve the logo gap
+    // so both edges of the tab read the same
+    h1 { margin-right: 0.5rem; }
   }
 
   .view-menu {
@@ -3217,6 +3238,47 @@ body {
     // hovered or being edited (clicked = focus inside)
     &:hover, &:focus-within {
       background: rgba(255, 255, 255, 0.06);
+    }
+  }
+
+  // Mobile: rows become cards; each td a labeled field row (data-label)
+  @media (max-width: 768px) {
+    border-collapse: separate;
+
+    thead { display: none; }
+
+    tbody tr {
+      display: block;
+      margin-bottom: 0.5rem;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 0.35rem 0.5rem;
+
+      &.enabled { border-color: #3d5a80; }
+    }
+
+    td {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      border-bottom: 1px solid #2a2a2a;
+      padding: 0.3rem 0;
+
+      &:last-child { border-bottom: none; }
+
+      &::before {
+        content: attr(data-label);
+        color: #999;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+    }
+
+    .models-table-name {
+      max-width: none;
+      color: #e0e0e0;
+      font-size: inherit;
     }
   }
 }

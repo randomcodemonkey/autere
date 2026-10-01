@@ -31,7 +31,7 @@ describe('autere — settings', () => {
     openModelsSection();
     // Auto-loaded on open (from pi via the backend); Update re-reads it
     modelsSection().find('.models-table tbody tr', { timeout: 60000 }).should('have.length.greaterThan', 0);
-    modelsSection().contains('button', 'Update', { timeout: 5000 }).click();
+    modelsSection().contains('button', 'Update available models', { timeout: 5000 }).click();
     modelsSection().find('.models-table tbody tr', { timeout: 60000 }).should('have.length.greaterThan', 0);
     // Columns match the requested per-model controls
     modelsSection().find('.models-table thead th').eq(1).should('contain', 'Enabled');

@@ -335,7 +335,7 @@ describe('SettingsCard models catalog table', () => {
     // Stored per-model values show up in the row controls
     cy.contains('.models-table tbody tr', 'Model One').find('select').first().should('have.value', 'low');
     cy.contains('.models-table tbody tr', 'Model Two').find('input[type=number]').should('have.value', '10');
-    cy.contains('button', 'Update').click();
+    cy.contains('button', 'Update available models').click();
     cy.get('.models-table tbody tr', { timeout: 10000 }).should('have.length', 2);
   });
 
