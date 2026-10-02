@@ -206,12 +206,18 @@ function findExtensionConfig(ext: DiscoveredExtension): { configPath: string | n
 
 // ── Main extension reading ──
 
+/** Names found by directory discovery in the master extensions/ dir —
+ *  refilled on every readExtensions, used by enabledExtensionsFor. */
+const localExtensionNames = new Set<string>();
+
 export async function readExtensions(): Promise<void> {
   const extensions: ExtensionInfo[] = [];
 
   // Discover all enabled extensions
   const npmExts = discoverNpmExtensions();
   const localExts = discoverLocalExtensions();
+  localExtensionNames.clear();
+  for (const e of localExts) localExtensionNames.add(e.id);
   const allDiscovered = [...npmExts, ...localExts];
 
   for (const ext of allDiscovered) {
@@ -259,5 +265,8 @@ export async function readExtensions(): Promise<void> {
  */
 export function enabledExtensionsFor(user: string): ExtensionInfo[] {
   const enabled = new Set(getEnabledPackages(user).map((p) => p.replace(/^npm:/, '')));
-  return extensionsState.filter((e) => enabled.has(e.name));
+  // Local extensions (bundled in the master extensions/ dir) are loaded by
+  // pi automatically and never appear in the packages enable list — they
+  // are always visible; the toggleable filter covers npm packages only.
+  return extensionsState.filter((e) => enabled.has(e.name) || localExtensionNames.has(e.name));
 }
