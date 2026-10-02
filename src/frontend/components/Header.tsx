@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { url } from '../base-path';
+import { API } from '../../shared/api-paths';
 import type { SessionInfo } from '../types';
 
 export type ViewId = 'status' | 'sessions' | 'chat' | 'settings' | 'tasks' | 'edits' | 'users';
@@ -34,6 +35,8 @@ interface HeaderProps {
    *  tabs kept alphabetically; the selected one renders as the session
    *  badge/status button in place */
   runningSessions?: SessionInfo[];
+  /** Receive a fresh sessions list (e.g. after deleting a tab's session) */
+  onSessionsRefreshed?: (sessions: SessionInfo[]) => void;
   /** false until the first sessions list arrives — shows a loading
    *  placeholder instead of an empty tabs row */
   sessionsLoaded?: boolean;
@@ -52,6 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeView,
   onViewChange,
   runningSessions,
+  onSessionsRefreshed,
   sessionsLoaded = true,
   onRunningSessionClick,
   userRole,
@@ -75,9 +79,10 @@ export const Header: React.FC<HeaderProps> = ({
       document.removeEventListener('touchstart', onOutside, true);
     };
   }, [menuOpen, sessionsMenuOpen]);
+  // Full UUID for unnamed sessions — CSS (ellipsis) does the truncation
   const displayName = sessionName
     ? (sessionName.length > 64 ? sessionName.slice(0, 62) + '…' : sessionName)
-    : (sessionId ? sessionId.slice(0, 6) + '…' : 'session');
+    : (sessionId || 'session');
   const dotClass = statusType === 'connected' ? 'green' : statusType === 'streaming' ? 'yellow' : statusType === 'disconnected' ? 'red' : 'gray';
   // Stable membership for session tabs: the viewed session always keeps its
   // ordered slot. Legacy ids (spawn alias) resolve to the live session with
@@ -126,10 +131,27 @@ export const Header: React.FC<HeaderProps> = ({
     }
   }
   tabs = [...tabs].sort((a, b) => (a.sessionName || a.id).localeCompare(b.sessionName || b.id));
+  // Opt/Alt + digit (1..8) jumps to that session tab; the session must be
+  // known (tabs rendered) — digits beyond the cap do nothing
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      const m = /^Digit([1-9])$/.exec(e.code);
+      if (!m) return;
+      const n = Number(m[1]);
+      const target = tabs[n - 1];
+      if (!target?.id) return;
+      e.preventDefault();
+      if (target === selectedEntry || target.id === sessionId) onViewChange('chat');
+      else if (onRunningSessionClick) onRunningSessionClick(target.id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tabs, selectedEntry, sessionId, onViewChange, onRunningSessionClick]);
   const tabLabel = (s: SessionInfo) =>
     s.sessionName
       ? (s.sessionName.length > 64 ? s.sessionName.slice(0, 62) + '…' : s.sessionName)
-      : (s.id ? (s.id.length > 6 ? s.id.slice(0, 6) + '…' : s.id) : displayName);
+      : (s.id || displayName);
 
   // Users management is admin-only
   const viewIds: ViewId[] = ['status', 'sessions', 'chat', 'edits', 'settings', 'tasks'];
@@ -140,7 +162,7 @@ export const Header: React.FC<HeaderProps> = ({
       <h1><img className="logo-icon" src={url('/logo.svg')} alt="autere" /> autere</h1>
       <div className="session-tabs">
         {!sessionsLoaded && <span className="session-tabs-loading">Loading sessions…</span>}
-        {tabs.map((s) => {
+        {tabs.map((s, ti) => {
           const label = tabLabel(s);
           return s === selectedEntry ? (
             <span
@@ -156,10 +178,30 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               key={s.id}
               className={`session-tab ${statusType === 'disconnected' ? 'offline' : s.compacting ? 'compacting' : s.active ? (s.streaming ? 'working' : 'running') : 'idle'}`}
-              title={`Switch to ${s.sessionName || s.id} (running)`}
+              title={`Switch to ${s.sessionName || s.id}${ti < 9 ? ` (⌥/Alt+${ti + 1})` : ''}`}
               onClick={() => onRunningSessionClick?.(s.id)}
             >
               <span className="session-badge-text">{label}</span>
+              {/* Delete affordance: never on the viewed session or one with a
+                  turn in flight; the tab click still switches on the delete
+                  click's stopPropagation */}
+              {!s.streaming && !s.compacting && (
+                <span
+                  className="session-tab-close"
+                  title="Delete session"
+                  aria-label={`Delete session ${label}`}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    if (!window.confirm(`Delete session "${label}"? It will be moved to deleted-sessions.`)) return;
+                    try {
+                      await fetch(url(API.sessions.item(s.id)), { method: 'DELETE' });
+                      const res = await fetch(url(API.sessions.list));
+                      const d = await res.json();
+                      if (d.success) onSessionsRefreshed?.(d.data);
+                    } catch {}
+                  }}
+                >×</span>
+              )}
             </button>
           );
         })}

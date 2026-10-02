@@ -494,6 +494,19 @@ body {
   &.tab-offline   { border-bottom-color: var(--c-state-offline); }
 }
 
+// Per-tab delete affordance (hidden for the viewed / busy sessions in JSX):
+// small muted × at the tab's right edge, red on hover
+.session-tab-close {
+  margin-left: 0.5rem;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: #777;
+  cursor: pointer;
+  flex-shrink: 0;
+
+  &:hover { color: var(--c-danger, #e0574a); }
+}
+
 // Underline for non-selected tabs (incl. compacting sessions)
 .session-tab {
   &.compacting {
@@ -516,7 +529,11 @@ body {
   padding: 0.25rem;
   display: flex;
   flex-direction: column;
+  // Widen to content so session names don't truncate eagerly (same as the
+  // chat model dropdown)
   min-width: 10rem;
+  width: max-content;
+  max-width: min(90vw, 36rem);
   z-index: 100;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   .session-menu-item {
@@ -1817,7 +1834,11 @@ body {
     border: 1px solid #333;
     border-radius: 0.4rem;
     padding: 0.25rem;
-    min-width: 12rem;
+    // Widen to content; only truncate when a really long model name would
+    // overflow the viewport
+    min-width: 24rem;
+    max-width: min(90vw, 40rem);
+    width: max-content;
     max-height: 50vh;
     overflow-y: auto;
     z-index: 200;
@@ -4748,4 +4769,52 @@ textarea.settings-input {
   code {
     font-size: 0.8rem;
   }
+}
+
+// ── MCP server editor (Settings → MCP Servers) ──
+.mcp-server-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.mcp-row-line {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.mcp-name {
+  width: 9rem;
+  flex: none;
+}
+
+.mcp-kind,
+.mcp-exposure {
+  width: 10rem;
+  flex: none;
+  height: auto;
+  padding: 0.25rem 0.4rem;
+}
+
+.mcp-command {
+  flex: 1 1 18rem;
+  min-width: 10rem;
+}
+
+.mcp-args {
+  width: 12rem;
+  flex: none;
+}
+
+.mcp-enabled {
+  flex: none;
+}
+
+.mcp-description {
+  width: 100%;
+  font-size: 0.85em;
 }

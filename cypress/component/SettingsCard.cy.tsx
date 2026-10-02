@@ -366,3 +366,57 @@ describe('SettingsCard models catalog table', () => {
     });
   });
 });
+
+describe('SettingsCard codemode/mcp (pi 1.0)', () => {
+  const toolSchema = [
+    { id: 'chat', label: 'Chat', fields: [
+      { key: 'codemode', label: 'Codemode scripting', type: 'toggle' as const, description: 'Enable pi codemode' },
+      { key: 'mcpServers', label: 'MCP servers', type: 'mcpServers' as const, description: 'MCP servers' },
+    ]},
+  ];
+  const savedBodyHolder: { body: any } = { body: null };
+
+  function stub(settings: Record<string, any>, capture: boolean) {
+    cy.window({ log: false }).then((win) => {
+      win.fetch = (input: any, init: any) => {
+        const u = String(input);
+        let data: any = { success: true };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...toolSchema, ...backendSections] };
+        else if (u.includes('/api/v1/settings') && init?.method === 'PUT') {
+          if (capture) savedBodyHolder.body = JSON.parse(init.body);
+          data = { success: true };
+        }
+        else if (u.includes('/api/v1/settings')) data = { success: true, data: settings };
+        else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
+        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
+      };
+    });
+  }
+
+  it('renders the codemode toggle and MCP rows; save posts the mcpServers object', () => {
+    stub({ codemode: true, mcpServers: { fs: { command: 'npx', args: ['-y', 'pkg'], exposure: 'codemode' } } }, true);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
+    cy.get('.mcp-server-row').should('have.length', 1);
+    cy.get('.mcp-name').should('have.value', 'fs');
+    cy.get('.mcp-command').should('have.value', 'npx');
+    cy.get('.mcp-args').should('have.value', '-y, pkg');
+    // Make a change first — the save button only renders when dirty
+    cy.get('.mcp-exposure').select('deferred');
+    cy.contains('button', 'Save Settings').click();
+    cy.wrap(null).should(() => {
+      expect(savedBodyHolder.body.codemode).to.eq(true);
+      expect(savedBodyHolder.body.mcpServers.fs).to.deep.eq({ command: 'npx', args: ['-y', 'pkg'], exposure: 'deferred' });
+    });
+  });
+
+  it('add/remove rows and exposure select edit the mcp draft', () => {
+    stub({ codemode: false, mcpServers: {} }, false);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
+    cy.contains('button', '+ Add MCP Server').click();
+    cy.get('.mcp-server-row').should('have.length', 1);
+    cy.get('.mcp-exposure').select('direct');
+    cy.get('.mcp-exposure').should('have.value', 'direct');
+    cy.get('.sortable-list-remove').click();
+    cy.get('.mcp-server-row').should('have.length', 0);
+  });
+});

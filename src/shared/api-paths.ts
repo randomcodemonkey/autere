@@ -82,6 +82,8 @@ export const API = {
   settings: {
     root: `${P}/settings`,
     schema: `${P}/settings/schema`,
+    mcp: `${P}/settings/mcp`,
+    mcpServer: (name: string) => `${P}/settings/mcp/${encodeURIComponent(name)}`,
   },
 
   // Model catalog from pi (Models settings page 'Update'

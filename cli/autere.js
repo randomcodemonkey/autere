@@ -402,6 +402,32 @@ cmds['settings-put'] = {
 };
 
 // ── Extensions / Personas / Scheduler / Files / Git ──
+cmds['mcp-list'] = { desc: 'mcp-list — own MCP servers (env mcp.json)', fn: async () => out(await get('/api/v1/settings/mcp')) };
+cmds['mcp-set'] = {
+  desc: 'mcp-set <name> <config-json> — create/replace an MCP server (control). JSON or a file path: {"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","."],"exposure":"deferred"}',
+  fn: async ([name, spec]) => {
+    requireArgs([name, spec], 2, 'mcp-set <name> <config-json|@file.json>');
+    const raw = spec.startsWith('@') ? readFileSync(spec.slice(1), 'utf8') : spec;
+    let cfg;
+    try { cfg = JSON.parse(raw); } catch { console.error('config is not valid JSON'); process.exit(2); }
+    // Convenience: a whole mcpServers-style file { "<name>": {...} } works when
+    // the single entry's value is the actual config
+    if (cfg && typeof cfg === 'object' && !Array.isArray(cfg) && !cfg.command && !cfg.url && Object.keys(cfg).length === 1 && typeof Object.values(cfg)[0] === 'object') {
+      const first = Object.entries(cfg)[0];
+      cfg = first[1];
+    }
+    await request('PUT', `/api/v1/settings/mcp/${encodeURIComponent(name)}`, { body: cfg });
+    console.log(`MCP server "${name}" saved.`);
+  },
+};
+cmds['mcp-rm'] = {
+  desc: 'mcp-rm <name> — remove an MCP server (control)',
+  fn: async ([name]) => {
+    requireArgs([name], 1, 'mcp-rm <name>');
+    await request('DELETE', `/api/v1/settings/mcp/${encodeURIComponent(name)}`);
+    console.log('Removed.');
+  },
+};
 cmds.extensions = { desc: 'extensions — installed pi extensions', fn: async () => out(await get('/api/v1/extensions')) };
 cmds['extensions-packages'] = { desc: 'extensions-packages — installable extensions + enabled set', fn: async () => out(await get('/api/v1/extensions/packages')) };
 cmds['personas-list'] = { desc: 'personas-list — persona library', fn: async () => out(await get('/api/v1/personas')) };

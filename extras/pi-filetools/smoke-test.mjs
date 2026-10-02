@@ -2,7 +2,7 @@
 //   node --experimental-strip-types smoke-test.mjs
 // Verifies: chat cards cap at 10 + summary line, JSONL records all,
 // .git paths ignored everywhere.
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -81,6 +81,11 @@ entries.length = 0;
 fireBash("c2", "echo more", () => {
   writeFileSync(join(work, "f1.txt"), "changed\n");
   writeFileSync(join(work, "small.txt"), "hi\n");
+  // f1 was recorded in case 1; bump its mtime 5s ahead so the change is
+  // newer than the case-1 ledger entry (a real second edit is seconds
+  // apart, the guard window is ±2s)
+  const st = statSync(join(work, "f1.txt"));
+  utimesSync(join(work, "f1.txt"), st.atime, new Date(Date.now() + 5000));
 });
 const cards2 = entries.filter((e) => e.type === "file_change");
 assert(cards2.length === 2, `expected 2 cards, got ${cards2.length}`);
@@ -105,3 +110,32 @@ assert(!jsonl3.some((e) => e.path.split("/").includes("pg")), "'pg' segment not 
 assert(!jsonl3.some((e) => e.path.split("/").includes("pgdata")), "'pgdata' segment not ignored");
 assert(jsonl3.some((e) => e.path.endsWith(join("keep", "pgdatav2", "c.ts"))), "pgdatav2 wrongly ignored (substring match)");
 console.log("smoke-test OK: segment-based ignore matching (bare name at depth, no substring matches)");
+
+// ── Case 4: concurrent session — cross-session suppression ––
+// A second filetools instance (the user's other session, same env/cwd) must
+// NOT claim a change another instance already emitted via its ledger.
+entries.length = 0;
+const handlers2 = {};
+const entries2 = [];
+const pi2 = {
+  on: (name, fn) => { (handlers2[name] = handlers2[name] || []).push(fn); },
+  appendEntry: (type, data) => entries2.push({ type, data }),
+  registerTool: () => {},
+};
+ext(pi2);
+const fire2 = (name, event, ctx) => (handlers2[name] || []).forEach((fn) => fn(event, ctx));
+fire2("session_start", {}, { sessionManager: { getSessionFile: () => join(work, "session-test-2.jsonl") } });
+
+// Session 1 edits f-own.txt mid-command (emitted + ledgered)
+fireBash("x1", "echo one > f-own.txt", () => { writeFileSync(join(work, "f-own.txt"), "one\n"); });
+assert(entries.some((e) => e.type === "file_change" && e.data.path.endsWith("f-own.txt")), "session 1 should emit its own change");
+
+// Session 2 runs a command: sweep sees f-own.txt as changed but must NOT
+// claim it — only a file of its own.
+fire2("tool_execution_start", { toolName: "bash", toolCallId: "x2", args: { command: "echo two > f-own2.txt" } }, {});
+writeFileSync(join(work, "f-own2.txt"), "two\n");
+fire2("tool_execution_end", { toolName: "bash", toolCallId: "x2" }, {});
+const case4Cards = entries2.filter((e) => e.type === "file_change" && e.data.change !== "summary");
+assert(case4Cards.some((c) => c.data.path.endsWith("f-own2.txt")), "own change missing in session 2");
+assert(!case4Cards.some((c) => c.data.path.endsWith("f-own.txt")), "OTHER session's change leaked into session 2 chat");
+console.log("smoke-test OK: cross-session change suppression (no leaked cards)");

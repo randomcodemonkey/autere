@@ -539,7 +539,7 @@ export function useSessionStream(opts: {
     pendingUser, setPendingUser,
     extensions,
     models, setModels,
-    availableSessions,
+    availableSessions, setAvailableSessions,
     sessionsLoaded,
     sessionError, setSessionError,
     creatingSession, setCreatingSession,

@@ -92,6 +92,7 @@ Per-user pi env (under `~/.autere/pi-envs/<user>/`):
 | `9router-config.json` | 9router endpoint + per-user settings overrides |
 | `models.json` | pi model overrides (per-input-type forcing) |
 | `settings.json` | pi settings for the session environment |
+| `mcp.json` | MCP servers for this user's pi sessions (Settings → MCP Servers; seeded from the master pi env) |
 | `janitor-config.json`, `dedup-stats.json` | Extension state (live-read) |
 
 ### REST API

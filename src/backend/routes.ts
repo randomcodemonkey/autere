@@ -36,7 +36,9 @@ import { getPiEnvDir, ensurePiEnv, validateSandboxImage } from './pi-env.js';
 import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
 import { getHistoryLimit } from './user-settings.js';
+import { getMcpServers, setMcpServer, deleteMcpServer } from './mcp-config.js';
 import { extensionsState } from './state.js';
+import { enabledExtensionsFor } from './extensions.js';
 import { pathIsIgnored } from '../shared/edit-ignore.js';
 import { userFileRoots, browseList, browseRead, browseWrite, browseDelete, type BrowseResult } from './files.js';
 import { listRepos, repoDetail, fileLog, initRepo, cloneRepo, fileDiff, gitList } from './git.js';
@@ -182,6 +184,7 @@ const RE = {
   image: new RegExp(`^${API_PREFIX}/images/([a-zA-Z0-9._-]+)$`),
   genImage: new RegExp(`^${API_PREFIX}/images/generated/([a-zA-Z0-9._-]+)$`),
   file: new RegExp(`^${API_PREFIX}/files/([a-zA-Z0-9._%~-]+)$`),
+  mcpServer: new RegExp(`^${API_PREFIX}/settings/mcp/([\\w-]+)$`),
 };
 
 const STATIC_MIME: Record<string, string> = {
@@ -332,7 +335,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         historySessionId: disk.id,
         availableSessions: pm.listSessions(user, c.viewed),
         availableModels: getEnabledModelEntries(),
-        extensions: extensionsState,
+        extensions: enabledExtensionsFor(user),
       };
     }
     // Prefer the LIVE in-memory history buffer: mid-turn it holds the
@@ -1520,7 +1523,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // Dedup/janitor stats are per-user (each pi env has its own counters)
       // and are injected per request — global state must never carry them, or
       // any logged-in user could read other users' (user)names and counts.
-      const data = extensionsState.map((e) => {
+      const data = enabledExtensionsFor(c.user).map((e) => {
         if (e.name === 'pi-dedup') {
           const patched = withDedupSections(e, c.user);
           return { ...e, sections: patched.sections, status: patched.status, statusText: patched.statusText };
@@ -1806,6 +1809,47 @@ ${text.trim()}`).catch((err) => settle(err as Error));
     role: 'chat', tag: 'Settings', summary: 'Read the caller settings',
     handler: async (c) => {
       sendJSON(c.res, { success: true, data: getAllUserSettings(c.user) });
+    },
+  });
+
+  // ── MCP servers (pi mcp.json in the user's pi env) ──
+
+  route({
+    method: 'GET', path: API.settings.mcp, template: `${API_PREFIX}/settings/mcp`,
+    role: 'chat', tag: 'Settings', summary: 'List configured MCP servers',
+    handler: (c) => {
+      const servers = getMcpServers(c.user);
+      for (const cfg of Object.values(servers)) {
+        delete (cfg as any).env;
+        delete (cfg as any).headers;
+        delete (cfg as any).oauth;   // never echo credential config
+      }
+      sendJSON(c.res, { success: true, data: servers });
+    },
+  });
+
+  route({
+    method: 'PUT', path: RE.mcpServer, template: `${API_PREFIX}/settings/mcp/:name`,
+    role: 'control', tag: 'Settings', summary: 'Create or replace an MCP server (body: server config)',
+    handler: async (c, match) => {
+      const name = match?.[1] as string;
+      const server = await readBody(c.req);
+      try {
+        setMcpServer(c.user, name, server);
+        sendJSON(c.res, { success: true });
+      } catch (err: any) {
+        sendJSON(c.res, { success: false, error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+    },
+  });
+
+  route({
+    method: 'DELETE', path: RE.mcpServer, template: `${API_PREFIX}/settings/mcp/:name`,
+    role: 'control', tag: 'Settings', summary: 'Remove an MCP server',
+    handler: (c, match) => {
+      const name = match?.[1] as string;
+      if (deleteMcpServer(c.user, name)) sendJSON(c.res, { success: true });
+      else sendJSON(c.res, { success: false, error: `No MCP server named "${name}"` }, 404);
     },
   });
 
@@ -2208,10 +2252,10 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       // Push the updated extension list to every running process's state
       // and broadcast to all connected clients of all users.
       for (const session of pm.allSessions()) {
-        session.state.extensionsState = [...extensionsState];
+        session.state.extensionsState = enabledExtensionsFor(session.user);
       }
       for (const u of hubUsers()) {
-        broadcastToUser(u, { type: 'extensions', data: extensionsState });
+        broadcastToUser(u, { type: 'extensions', data: enabledExtensionsFor(u) });
       }
     }
     // Per-user session refresh, with live active/streaming flags. File-less

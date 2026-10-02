@@ -19,6 +19,7 @@ import { join, dirname } from 'path';
 import { randomUUID } from 'crypto';
 import { USER_SETTINGS_DIR, PI_DIR } from './constants.js';
 import { getPiEnvDir, ensurePiEnv } from './pi-env.js';
+import { replaceMcpServers } from './mcp-config.js';
 import { isPiImagesInstalled } from './image-models.js';
 import { matchModelMap } from '../shared/format.js';
 import { log } from './logger.js';
@@ -32,7 +33,7 @@ interface UserSettings {
 export interface SettingField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel' | 'folderIgnores';
+  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel' | 'folderIgnores' | 'mcpServers';
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;
@@ -220,6 +221,12 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
         delete piSettings.codemode;
       }
       piSettingsChanged = true;
+    }
+    if ('mcpServers' in settings) {
+      // The env mcp.json is the pi-side source of truth; the settings
+      // value (also persisted in the user settings file by the save
+      // route) is validated and written through here.
+      replaceMcpServers(user, settings.mcpServers);
     }
     if (piSettingsChanged) {
       const tmp = join(envDir, `.settings-tmp-${randomUUID()}`);
@@ -723,6 +730,13 @@ function getUserSettingsDefaults(user: string): UserSettings {
   defaults.enabledModels = readJsonCached(join(PI_DIR, 'settings.json'))?.enabledModels || [];
   defaults.packages = getEnabledPackages(user);
   defaults.codemode = false;
+  // MCP servers live in the env's mcp.json (seeded from master); the
+  // settings UI edits that file through the mcp CRUD routes — the value
+  // here is only what the schema renderer reads on load.
+  try {
+    const mcpRaw = readJsonCached(join(getPiEnvDir(user), 'mcp.json'));
+    defaults.mcpServers = mcpRaw?.mcpServers ?? {};
+  } catch { defaults.mcpServers = {}; }
 
   return defaults;
 }
@@ -985,6 +999,20 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
         description: 'Folders treated as git repositories in the Repositories view — absolute paths, or paths relative to $HOME. Must be inside your file roots.',
         listPlaceholder: '/home/user/code/project',
         listAddLabel: 'Add Repository',
+      },
+    ],
+  });
+
+  // MCP servers — the per-user pi mcp.json, edited as a server table
+  sections.push({
+    id: 'mcp',
+    label: 'MCP Servers',
+    fields: [
+      {
+        key: 'mcpServers',
+        label: 'MCP servers',
+        type: 'mcpServers',
+        description: 'Model Context Protocol servers for your pi sessions (pi reads the env mcp.json). Tools are callable from codemode scripts by default; exposure controls whether the model also sees them directly. Applies after a pi restart.',
       },
     ],
   });

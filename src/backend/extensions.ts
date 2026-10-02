@@ -15,7 +15,7 @@ import type { ExtensionInfo } from './types.js';
 import { PI_DIR, NPM_EXTENSIONS_DIR, EXTENSIONS_DIR } from './constants.js';
 import { extensionsState } from './state.js';
 import { getExtensionHandler } from './extension-handlers.js';
-import { getUserSetting } from './user-settings.js';
+import { getUserSetting, getEnabledPackages } from './user-settings.js';
 import { log } from './logger.js';
 
 // ── Extension discovery ──
@@ -248,4 +248,16 @@ export async function readExtensions(): Promise<void> {
   // Update the shared state array in place
   extensionsState.length = 0;
   extensionsState.push(...extensions);
+}
+
+/**
+ * The caller-visible extension subset: what their pi env actually loads
+ * (env settings.json packages). Global extensionsState holds every
+ * package the MASTER environment has installed — a user who has not
+ * enabled one (e.g. unchecked it in Settings → Extensions) must not see
+ * it as active on their Agent card.
+ */
+export function enabledExtensionsFor(user: string): ExtensionInfo[] {
+  const enabled = new Set(getEnabledPackages(user).map((p) => p.replace(/^npm:/, '')));
+  return extensionsState.filter((e) => enabled.has(e.name));
 }

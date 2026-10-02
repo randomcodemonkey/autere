@@ -92,6 +92,7 @@ export function AppPage({
     extensions,
     models, setModels,
     availableSessions,
+    setAvailableSessions,
     sessionsLoaded,
     sessionError, setSessionError,
     creatingSession, setCreatingSession,
@@ -294,6 +295,7 @@ export function AppPage({
         onViewChange={handleSetView}
         runningSessions={availableSessions}
         sessionsLoaded={sessionsLoaded}
+        onSessionsRefreshed={setAvailableSessions}
         onRunningSessionClick={handleSwitchSession}
         isActive={sessionState.isStreaming || sessionState.compacting}
         userRole={userRole}

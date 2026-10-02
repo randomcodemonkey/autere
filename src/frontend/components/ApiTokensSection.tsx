@@ -92,10 +92,6 @@ export const ApiTokensSection: React.FC = () => {
   return (
     <div className="settings-section">
       <h3 className="settings-section-title">API Tokens</h3>
-      <div className="settings-description">
-        Long-lived tokens for API clients (e.g. the TUI). Authenticates with{' '}
-        <code>Authorization: Bearer &lt;token&gt;</code>. The full token is shown only once — copy it immediately.
-      </div>
       {error && <div className="settings-error">{error}</div>}
 
       {created && (
@@ -112,6 +108,10 @@ export const ApiTokensSection: React.FC = () => {
 
       <div className="settings-field">
         <label className="settings-label">Create token</label>
+        <div className="settings-description">
+          Long-lived tokens for API clients (e.g. the TUI). Authenticates with{' '}
+          <code>Authorization: Bearer &lt;token&gt;</code>. The full token is shown only once — copy it immediately.
+        </div>
         <div className="sortable-list-add">
           <input
             className="sortable-list-input"

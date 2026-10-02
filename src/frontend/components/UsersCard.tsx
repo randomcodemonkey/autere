@@ -162,10 +162,10 @@ const UserForm: React.FC<UserFormProps> = ({ initial, selfUsername, onSave, onCl
         )}
         <div className="users-field">
           <span>Workdirs</span>
-          <DirEditor dirs={dirs} onChange={setDirs} />
           <div className="settings-description">
             Absolute paths the user's agent may access; read/write includes write access. Per-directory.
           </div>
+          <DirEditor dirs={dirs} onChange={setDirs} />
         </div>
         <div className={`login-error${error ? ' visible' : ''}`}>{error}</div>
         <div className="btn-group">

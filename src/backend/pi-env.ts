@@ -38,7 +38,7 @@ import { sanitizeUserName } from '../shared/format.js';
 const SHARED_DIRS = ['npm', 'extensions', 'skills', 'themes', 'bin', 'tmp'];
 
 /** Files copied into each user environment on first use */
-const SEED_FILES = ['settings.json', 'auth.json', 'models-store.json', 'models.json'];
+const SEED_FILES = ['settings.json', 'auth.json', 'models-store.json', 'models.json', 'mcp.json'];
 
 /** Neutralize pi-9router-ext in the env's settings.json packages list:
  *  rewrite its entry to object form with empty resource lists, which pi
@@ -83,9 +83,10 @@ function pathExists(path: string): boolean {
  * settings.json. Runs on every ensurePiEnv so master-side `pi install`
  * (container bootstrap, manual installs) propagates to every user env at
  * next spawn. Only keys that cannot change per session are overwritten
- * from master: packages, defaultProvider, defaultModel, enabledModels.
- * Everything else in the env copy (per-user picks, model thinking levels)
- * is preserved; a key absent from master is never deleted.
+ * from master: defaultProvider, defaultModel, enabledModels, defaultTools.
+ * `packages` is deliberately excluded (see the sync loop below); everything
+ * else in the env copy (per-user picks, model thinking levels) is preserved;
+ * a key absent from master is never deleted.
  */
 function syncMasterSettings(envDir: string): void {
   const master = readJsonCached(join(PI_DIR, 'settings.json'));
@@ -93,11 +94,16 @@ function syncMasterSettings(envDir: string): void {
   const envSettingsPath = join(envDir, 'settings.json');
   let envSettings: any = {};
   try { envSettings = JSON.parse(readFileSync(envSettingsPath, 'utf-8')); } catch { /* missing/corrupt env copy — start from master's subset */ }
-  const before = JSON.stringify([envSettings.packages, envSettings.defaultProvider, envSettings.defaultModel, envSettings.enabledModels]);
-  for (const key of ['packages', 'defaultProvider', 'defaultModel', 'enabledModels'] as const) {
+  const before = JSON.stringify([envSettings.defaultProvider, envSettings.defaultModel, envSettings.enabledModels, envSettings.defaultTools]);
+  for (const key of ['defaultProvider', 'defaultModel', 'enabledModels', 'defaultTools'] as const) {
     if (master[key] !== undefined) envSettings[key] = master[key];
   }
-  if (JSON.stringify([envSettings.packages, envSettings.defaultProvider, envSettings.defaultModel, envSettings.enabledModels]) === before) return;
+  // `packages` deliberately NOT synced: the env's packages ARE the user's
+  // enabled set (the UI's extensions toggle writes it). Stomping it from
+  // master would resurrect packages the user has disabled on the next
+  // ensurePiEnv; master installs surface as available via
+  // getAvailablePackages and activate through the settings UI.
+  if (JSON.stringify([envSettings.packages, envSettings.defaultProvider, envSettings.defaultModel, envSettings.enabledModels, envSettings.defaultTools]) === before) return;
   try {
     const tmp = join(envDir, `.settings-tmp-${randomUUID()}`);
     writeFileSync(tmp, JSON.stringify(envSettings, null, 2), 'utf-8');

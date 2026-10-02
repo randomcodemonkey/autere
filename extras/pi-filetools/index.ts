@@ -71,7 +71,58 @@ export default function (pi: any) {
 		try {
 			appendFileSync(fileChangesPath, JSON.stringify(entry) + "\n");
 			fileChangesCount++;
+			try {
+				const absRec = entry.path.startsWith("/") ? entry.path : join(process.cwd(), entry.path);
+				// Deleted files have no stat left — record the emit time instead
+				// (sweep guards compare against it, see skipClaimed below).
+				let mtimeMs: number;
+				try { mtimeMs = statSync(absRec).mtimeMs; } catch { mtimeMs = entry.ts; }
+				recordChangeInLedger(absRec, mtimeMs);
+			} catch {}
+
 		} catch {}
+	};
+
+	// ── Cross-session change ledger ──
+	// All filetools instances of an env (i.e. all of the user's sessions
+	// running in this workdir) append {ts, path}; a sweep diff in one
+	// session must not emit edit cards for changes another session's
+	// instance already claimed (concurrent turns would otherwise cross-post:
+	// B's stale cache sees A's edit and reports it as B's own).
+	const ledgerPath = join(agentDir(), "file-changes", ".changes-ledger.jsonl");
+	const ledgerSeen = new Map<string, number>();
+	let ledgerMtimeMs = 0;
+	const LEDGER_WINDOW_MS = 2000;
+	const loadLedger = (): void => {
+		// Rare reads: the file only changes via writeChange; reload it when
+		// its mtime moved. ponytail: reads the whole file; tail-truncate the
+		// ledger if envs with very long sessions ever grow it big.
+		try {
+			const st = statSync(ledgerPath);
+			if (st.mtimeMs !== ledgerMtimeMs) {
+				ledgerMtimeMs = st.mtimeMs;
+				ledgerSeen.clear();
+				for (const line of readFileSync(ledgerPath, "utf-8").split("\n")) {
+					if (!line.trim()) continue;
+					try {
+						const e = JSON.parse(line);
+						ledgerSeen.set(e.path, e.ts);
+					} catch {}
+				}
+			}
+		} catch {}
+	};
+	const recordChangeInLedger = (path: string, mtimeMs: number): void => {
+		try {
+			appendFileSync(ledgerPath, JSON.stringify({ ts: mtimeMs, path }) + "\n");
+			ledgerSeen.set(path, mtimeMs);
+			try { ledgerMtimeMs = statSync(ledgerPath).mtimeMs; } catch { ledgerMtimeMs = 0; }
+		} catch {}
+	};
+	// Another session reported a change to `path` at ~this file's mtime?
+	const ledgerHasRecentEntry = (path: string, mtimeMs: number): boolean => {
+		const seen = ledgerSeen.get(path);
+		return seen !== undefined && mtimeMs - seen < LEDGER_WINDOW_MS && mtimeMs - seen > -LEDGER_WINDOW_MS;
 	};
 
 	pi.on("session_start", (_event: any, ctx: any) => {
@@ -261,10 +312,23 @@ export default function (pi: any) {
 		const after = new Map<string, { mtimeMs: number; size: number }>();
 		walk(process.cwd(), after);
 		const paths = new Set<string>([...before.keys(), ...after.keys()]);
+		// Cross-session guard: when some OTHER filetools instance of this env
+		// already emitted a change for a file at ~this mtime, it was that
+		// session's turn, not ours — never post it here (no chat card, no own
+		// JSONL record). Only fresh changes with no ledger entry within the
+		// window can still be attributed to a session's command.
+		loadLedger();
+		const skipClaimed = (path: string): boolean => {
+			try { return ledgerHasRecentEntry(path, statSync(path).mtimeMs); } catch { return false; }
+		};
 		for (const path of paths) {
 			const b = before.get(path);
 			const a = after.get(path);
 			if (b && a && b.mtimeMs === a.mtimeMs && b.size === a.size) continue;
+			// Deletion by another session: no stat left to compare — the other
+			// instance's ledger ts postdates this command's baseline mtime
+			if (b && !a && (ledgerSeen.get(path) ?? 0) > b.mtimeMs) continue;
+			if (b && a && skipClaimed(path)) { updateCache(path, readText(path, a.size)); continue; }
 			let newContent: string | null = null;
 			if (a) { newContent = readText(path, a.size); if (newContent === null) { contentCache.delete(path); continue; } }
 			emit(path, contentCache.get(path)?.content, newContent, !!b, "bash");

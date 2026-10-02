@@ -39,12 +39,12 @@ describe('Header', () => {
     cy.get('.session-badge-text').should('contain', '…');
   });
 
-  it('renders truncated session ID when no name', () => {
+  it('renders the full session ID when no name (CSS truncates, not JS)', () => {
     mountHeader({ sessionId: 'abc123-def456', sessionName: null, runningSessions: [{
       id: 'abc123-def456', sessionName: null, active: true,
       sessionFile: '', cwd: null, createdAt: 0, lastActivity: 0, parentSession: null,
     }] });
-    cy.get('.session-badge-text').should('contain', 'abc123…');
+    cy.get('.session-badge-text').should('contain', 'abc123-def456');
   });
 
   it('shows no session tab while no sessions are known (initial load)', () => {
@@ -345,10 +345,45 @@ describe('Header session tabs: idle padding below the cap', () => {
     cy.get('.session-tabs > *').then(($c) => {
       const labels = Array.from($c).map((el) => el.textContent || '');
       // 2 running + 3 idle = 5, alphabetical: idle-1, idle-2, idle-3, run-a(badge), run-b
-      expect(labels).to.deep.eq(['idle-1', 'idle-2', 'idle-3', 'run-a', 'run-b']);
+      // Delete affordance sits inside each tab (× appended to textContent)
+      expect(labels.map((l) => l.replace(/×$/, ''))).to.deep.eq(['idle-1', 'idle-2', 'idle-3', 'run-a', 'run-b']);
       expect($c[3].className).to.contain('session-badge'); // selected running = badge
       expect($c[0].className).to.contain('idle').and.to.not.contain('running');   // idle padding = gray
       expect($c[4].className).to.contain('running'); // other alive-idle tab = bright yellow running
+    });
+  });
+});
+
+describe('Header session tab delete', () => {
+  const withTabs = (props: Partial<React.ComponentProps<typeof Header>> = {}) => {
+    cy.mount(
+      <Header
+        statusType="connected"
+        statusText="Idle"
+        sessionId="sel"
+        sessionName={null}
+        activeView="chat"
+        onViewChange={cy.stub()}
+        runningSessions={[
+          { id: 'sel', sessionFile: '/a', cwd: null, createdAt: 1, lastActivity: 1, parentSession: null, active: true } as any,
+          { id: 'idle-1', sessionFile: '/b', cwd: null, createdAt: 1, lastActivity: 1, parentSession: null, active: false } as any,
+          { id: 'busy-1', sessionFile: '/c', cwd: null, createdAt: 1, lastActivity: 1, parentSession: null, active: true, streaming: true } as any,
+        ]}
+        {...props}
+      />
+    );
+  };
+
+  it('confirm deletes the session (never on the viewed or busy one)', () => {
+    cy.intercept('DELETE', '**/api/v1/sessions/*', { success: true }).as('del');
+    const confirmStub = cy.stub(window, 'confirm').returns(true);
+    withTabs();
+    // Viewed (badge) and busy tabs carry no ×; the idle one does
+    cy.get('.session-badge .session-tab-close').should('not.exist');
+    cy.get('.session-tab.working .session-tab-close').should('not.exist');
+    cy.get('.session-tab.idle .session-tab-close').click();
+    cy.wait('@del').then(() => {
+      expect(confirmStub).to.have.been.called;
     });
   });
 });

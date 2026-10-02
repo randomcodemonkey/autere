@@ -264,6 +264,9 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
           </div>
           <div className="settings-field">
             <label className="settings-label">Model</label>
+            <div className="settings-description">
+              Model used for this task's runs. When unset, your pi default model applies.
+            </div>
             <select
               className="settings-input scheduled-input-model"
               value={form.model}
@@ -276,9 +279,6 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
                 </option>
               ))}
             </select>
-            <div className="settings-description">
-              Model used for this task's runs. When unset, your pi default model applies.
-            </div>
           </div>
           <div className="settings-field">
             <label className="settings-label">Seed script (optional)</label>

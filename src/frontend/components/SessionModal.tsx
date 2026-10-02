@@ -404,6 +404,7 @@ const WorkdirEditor: React.FC<{
   return (
     <div className="session-workdirs-edit">
       <label className="settings-label">Workdirs (applied at next pi restart — session respawns on save)</label>
+      {busy && <span className="settings-description">Session busy — wait for the current turn to finish.</span>}
       <SortableList
         items={workdirs}
         onChange={(items) => { setWorkdirs(items); setDirty(true); }}
@@ -416,7 +417,6 @@ const WorkdirEditor: React.FC<{
         <button className="btn btn-primary session-workdirs-save" onClick={apply} disabled={disabled}>
           {saving ? '⏳ Restarting…' : '💾 Save workdirs'}
         </button>
-        {busy && <span className="settings-description">Session busy — wait for the current turn to finish.</span>}
       </div>
     </div>
   );
