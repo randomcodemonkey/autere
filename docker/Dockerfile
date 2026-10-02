@@ -41,6 +41,7 @@ RUN apt-get -y update \
       openssh-client \
       python3 \
       ripgrep \
+      rsync \
       supervisor \
       xvfb \
     && install -m 0755 -d /etc/apt/keyrings \
