@@ -412,7 +412,7 @@ describe('SettingsCard codemode/mcp (pi 1.0)', () => {
   it('add/remove rows and exposure select edit the mcp draft', () => {
     stub({ codemode: false, mcpServers: {} }, false);
     cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
-    cy.contains('button', '+ Add MCP Server').click();
+    cy.contains('button', 'Add MCP Server').click();
     cy.get('.mcp-server-row').should('have.length', 1);
     cy.get('.mcp-exposure').select('direct');
     cy.get('.mcp-exposure').should('have.value', 'direct');

@@ -514,10 +514,11 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
               );
             })}
             <button
-              className="sortable-list-add"
+              className="btn btn-primary mcp-add-btn"
+              type="button"
               onClick={() => setServers({ ...servers, [`server-${names.length + 1}`]: { command: '', args: [] } })}
             >
-              + Add MCP Server
+              Add MCP Server
             </button>
           </div>
         </FieldShell>

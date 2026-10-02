@@ -4801,8 +4801,8 @@ textarea.settings-input {
 .mcp-server-row {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.4rem 0;
+  gap: 0.4rem;
+  padding: 0.5rem 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -4813,34 +4813,58 @@ textarea.settings-input {
   flex-wrap: wrap;
 }
 
-.mcp-name {
-  width: 9rem;
-  flex: none;
-}
+// Reuse the standard settings input look inside MCP rows
+.mcp-list {
+  .mcp-name,
+  .mcp-command,
+  .mcp-args,
+  .mcp-description {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 0.4rem;
+    color: #d4d4d4;
+    font-size: 0.85rem;
+    font-family: inherit;
+    padding: 0.3rem 0.45rem;
+    min-width: 0;
 
-.mcp-kind,
-.mcp-exposure {
-  width: 10rem;
-  flex: none;
-  height: auto;
-  padding: 0.25rem 0.4rem;
-}
+    &:focus {
+      outline: none;
+      border-color: #60a5fa;
+    }
 
-.mcp-command {
-  flex: 1 1 18rem;
-  min-width: 10rem;
-}
+    &::placeholder {
+      color: #666;
+    }
+  }
 
-.mcp-args {
-  width: 12rem;
-  flex: none;
-}
+  .mcp-name {
+    width: 9rem;
+    flex: none;
+  }
 
-.mcp-enabled {
-  flex: none;
-}
+  .mcp-command {
+    flex: 1 1 16rem;
+  }
 
-.mcp-description {
-  width: 100%;
-  font-size: 0.85em;
+  .mcp-args {
+    width: 12rem;
+    flex: none;
+  }
+
+  .mcp-description {
+    width: 100%;
+    font-size: 0.85em;
+    color: var(--c-muted);
+  }
+
+  // Match the other settings buttons (btn btn-primary)
+  .mcp-add-btn {
+    align-self: flex-start;
+    width: auto;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.8rem;
+    margin-top: 0.3rem;
+    touch-action: manipulation;
+  }
 }
