@@ -72,9 +72,10 @@ describe('ChatInput slash commands', () => {
   });
 });
 
-describe('ChatInput image attachments', () => {
+describe('ChatInput attachments', () => {
   // 1x1 red PNG
   const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const TXT = 'hello attachment';
 
   const attachPng = (name = 'dot.png') => {
     cy.get('input[type=file]').selectFile(
@@ -115,7 +116,7 @@ describe('ChatInput image attachments', () => {
     cy.wait('@send').its('request.body').should('deep.equal', {
       message: 'what is this?',
       type: 'prompt',
-      images: [{ mimeType: 'image/png', data: PNG_B64 }],
+      images: [{ mimeType: 'image/png', data: PNG_B64, name: 'dot.png' }],
     });
     cy.get('.chat-attachment').should('have.length', 0);
   });
@@ -130,20 +131,52 @@ describe('ChatInput image attachments', () => {
     cy.wait('@send').its('request.body').should('deep.equal', {
       message: '',
       type: 'prompt',
-      images: [{ mimeType: 'image/png', data: PNG_B64 }],
+      images: [{ mimeType: 'image/png', data: PNG_B64, name: 'dot.png' }],
     });
   });
 
-  it('rejects non-image files with an error', () => {
+  it('attaching a text file shows a removable name chip', () => {
     const onError = cy.stub().as('onError');
     cy.mount(<ChatInput onNewSession={() => {}} onError={onError} />);
     cy.get('.chat-input').focus();
-    const txt = new Blob(['hello'], { type: 'text/plain' });
     cy.get('input[type=file]').selectFile(
-      { contents: txt, fileName: 'note.txt', mimeType: 'text/plain' },
+      { contents: Cypress.Buffer.from(TXT), fileName: 'note.txt', mimeType: 'text/plain' },
       { force: true }
     );
-    cy.get('@onError').should('have.been.calledWith', 'Only image attachments are supported.');
+    cy.get('.chat-attachment.is-file').should('have.length', 1);
+    cy.get('.chat-file-name').should('have.text', 'note.txt');
+    cy.get('.chat-attachment-remove').click();
+    cy.get('.chat-attachment').should('have.length', 0);
+  });
+
+  it('sends a mixed batch: images inline, other files with name+data', () => {
+    cy.intercept('POST', '**/api/v1/session/messages', { success: true }).as('send');
+    cy.mount(<ChatInput onNewSession={() => {}} />);
+    cy.get('.chat-input').focus();
+    attachPng('pic.png');
+    cy.get('input[type=file]').selectFile(
+      { contents: Cypress.Buffer.from(TXT), fileName: 'note.txt', mimeType: 'text/plain' },
+      { force: true }
+    );
+    cy.get('.chat-input').type('both kinds');
+    cy.get('.chat-input').type('{enter}');
+    cy.wait('@send').its('request.body.images').should('deep.equal', [
+      { mimeType: 'image/png', data: PNG_B64, name: 'pic.png' },
+      { mimeType: 'text/plain', data: btoa(TXT), name: 'note.txt' },
+    ]);
+    cy.get('.chat-attachment').should('have.length', 0);
+  });
+
+  it('rejects files over 10 MB with an error', () => {
+    const onError = cy.stub().as('onError');
+    cy.mount(<ChatInput onNewSession={() => {}} onError={onError} />);
+    cy.get('.chat-input').focus();
+    const big = new ArrayBuffer(10 * 1024 * 1024 + 1);
+    cy.get('input[type=file]').selectFile(
+      { contents: Cypress.Buffer.from(big), fileName: 'big.bin', mimeType: 'application/octet-stream' },
+      { force: true }
+    );
+    cy.get('@onError').should('have.been.calledWith', '"big.bin" is too large (max 10 MB).');
     cy.get('.chat-attachment').should('have.length', 0);
   });
 
@@ -157,7 +190,7 @@ describe('ChatInput image attachments', () => {
     attachPng('d.png');
     cy.get('.chat-attachment').should('have.length', 4);
     attachPng('e.png');
-    cy.get('@onError').should('have.been.calledWith', 'At most 4 images can be attached.');
+    cy.get('@onError').should('have.been.calledWith', 'At most 4 files can be attached.');
     cy.get('.chat-attachment').should('have.length', 4);
   });
 });

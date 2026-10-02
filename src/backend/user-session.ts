@@ -333,6 +333,20 @@ export class UserSession {
     this.broadcastHistoryUpsert([imgEntry]);
   }
 
+  /** Publish a user-attached non-image file as a chat file card. */
+  pushFileEntry(name: string, savedName: string, size: number, mimeType?: string): void {
+    const fileEntry = this.tagEntry({
+      role: 'file',
+      text: '',
+      streaming: false,
+      timestamp: Date.now(),
+      file: { name, savedName, size, mimeType },
+    });
+    const buf = this.history();
+    buf.push(fileEntry);
+    this.broadcastHistoryUpsert([fileEntry]);
+  }
+
   /**
    * Record a just-sent user message in the history buffer and broadcast it
    * as a targeted upsert. This is what retires the client's optimistic

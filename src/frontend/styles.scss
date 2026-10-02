@@ -2522,6 +2522,32 @@ body {
     border-radius: 0.35rem;
     display: block;
   }
+
+  // Non-image attachments render as a name chip instead of a preview
+  &.is-file {
+    width: auto;
+    min-width: 3.5rem;
+    max-width: 14rem;
+    height: auto;
+    min-height: 2.2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.6rem;
+    background: #1b1b1b;
+  }
+
+  .chat-file-icon {
+    font-size: 0.9rem;
+  }
+
+  .chat-file-name {
+    font-size: 0.78rem;
+    color: #d4d4d4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 .chat-attachment-remove {

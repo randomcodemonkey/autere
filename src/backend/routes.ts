@@ -57,11 +57,12 @@ import type { SessionInfo } from './types.js';
 
 import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths, getFolderIgnores } from './user-settings.js';
 
-// ── Image attachment limits (session messages) ──
+// ── Attachment limits (session messages) ──
 const MAX_ATTACHED_IMAGES = 4;
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB per image (decoded)
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB per image (decoded, inline to the LLM)
+const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB per non-image attachment
 
-// Maximum accepted request body size (covers 4 base64 images + text)
+// Maximum accepted request body size (covers 4 base64 attachments + text)
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1406,7 +1407,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
   // ── Send a message to the viewed session ──
   route({
     method: 'POST', path: API.session.messages, template: `${API_PREFIX}/session/messages`,
-    role: 'chat', tag: 'Session', summary: 'Send a message (prompt, steer or follow-up) to the viewed session; optionally with base64 image attachments (body: sessionId?, message?, type? prompt|steer|followUp, images?[{mimeType,data}])',
+    role: 'chat', tag: 'Session', summary: 'Send a message (prompt, steer or follow-up) to the viewed session; optionally with base64 file attachments (body: sessionId?, message?, type? prompt|steer|followUp, images?[{mimeType,data,name?}]). Images are inlined to the LLM (max 8 MB); any other type is saved to the session env uploads dir and referenced by path (max 10 MB).',
     handler: async (c) => {
       const body = await readBody(c.req);
       const t = await resolveTarget(c, body.sessionId, true);
@@ -1417,8 +1418,11 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         sendJSON(c.res, { success: false, error: 'Message is required' }, 400);
         return;
       }
-      // Image attachments (base64, pi ImageContent format)
+      // Attachments (base64): images stay inline in the LLM message; any
+      // other type is saved into the env uploads dir and referenced by path
+      // (the agent reads it with its file tools — works on every pi version).
       let rpcImages: import('./rpc-client.js').RpcImage[] | undefined;
+      const files: { name: string; mimeType: string; data: string }[] = [];
       if (images !== undefined) {
         if (!Array.isArray(images) || images.length > MAX_ATTACHED_IMAGES) {
           sendJSON(c.res, { success: false, error: `images must be an array of at most ${MAX_ATTACHED_IMAGES} items` }, 400);
@@ -1430,19 +1434,24 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           const data = typeof img?.data === 'string' ? img.data : '';
           // Accept data: URLs too — strip the prefix
           const raw = data.startsWith('data:') ? data.replace(/^data:[^;]+;base64,/, '') : data;
-          if (!mime.startsWith('image/')) {
-            sendJSON(c.res, { success: false, error: 'Only image attachments are supported' }, 400);
-            return;
-          }
           if (!raw || Buffer.from(raw, 'base64').length === 0) {
-            sendJSON(c.res, { success: false, error: 'Invalid image data' }, 400);
+            sendJSON(c.res, { success: false, error: 'Invalid attachment data' }, 400);
             return;
           }
-          if (Buffer.from(raw, 'base64').length > MAX_IMAGE_BYTES) {
-            sendJSON(c.res, { success: false, error: 'Image too large (max 8 MB)' }, 400);
-            return;
+          const decoded = Buffer.from(raw, 'base64');
+          if (mime.startsWith('image/')) {
+            if (decoded.length > MAX_IMAGE_BYTES) {
+              sendJSON(c.res, { success: false, error: 'Image too large (max 8 MB)' }, 400);
+              return;
+            }
+            rpcImages.push({ type: 'image', data: raw, mimeType: mime });
+          } else {
+            if (decoded.length > MAX_FILE_BYTES) {
+              sendJSON(c.res, { success: false, error: '"' + (typeof img?.name === 'string' ? img.name : 'attachment') + '" is too large (max 10 MB)' }, 400);
+              return;
+            }
+            files.push({ name: typeof img?.name === 'string' && img.name ? img.name : 'attachment', mimeType: mime || 'application/octet-stream', data: raw });
           }
-          rpcImages.push({ type: 'image', data: raw, mimeType: mime });
         }
         if (rpcImages.length === 0) rpcImages = undefined;
       }
@@ -1453,8 +1462,32 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       const downgraded = (type === 'steer' || type === 'followUp') && !t.rpc.isStreaming;
       const effType = downgraded ? 'prompt' : (type || 'prompt');
       log.http.forSession(sessionState.sessionId).info(
-        `${effType}: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"${rpcImages?.length ? ` [${rpcImages.length} image(s)]` : ''}${downgraded ? ' (downgraded to prompt — session idle)' : ''}`);
+        `${effType}: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"${rpcImages?.length ? ` [${rpcImages.length} image(s)]` : ''}${files.length ? ` [${files.length} file(s)]` : ''}${downgraded ? ' (downgraded to prompt — session idle)' : ''}`);
       const queued = effType === 'steer' || effType === 'followUp';
+
+      // Non-image attachments: persist to the env uploads dir and tell the
+      // agent where they landed (works regardless of pi version — the model
+      // uses its file tools instead of inline content). Prompt path: plain
+      // path note. Steer/followUp path: pi 1.0 accepts arbitrary content
+      // blocks in {images}, but 0.87.x is image-strict — so they also go
+      // through a path note and a chat 'file' card.
+      if (files.length > 0) {
+        try {
+          const uploadsDir = join(t.getEnvDir(), 'uploads');
+          mkdirSync(uploadsDir, { recursive: true });
+          const savedPaths: string[] = [];
+          for (const [i, f] of files.entries()) {
+            const savedName = `file-${createHash('sha1').update(f.data).digest('hex').slice(0, 16)}-${f.name.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80)}`;
+            const file = join(uploadsDir, savedName);
+            writeFileSync(file, Buffer.from(f.data, 'base64'));
+            savedPaths.push(file);
+            t.pushFileEntry(f.name, savedName, Buffer.byteLength(f.data, 'base64'), f.mimeType);
+          }
+          text += `\n\n[Attached file${savedPaths.length > 1 ? 's' : ''} saved to:\n${savedPaths.join('\n')}\nRead them with your file tools (read, bash, …) — do not search for the attachment.]`;
+        } catch (err: any) {
+          log.http.error('Failed to save file attachments:', err?.message || err);
+        }
+      }
 
       // pi only runs extension input hooks on the prompt() path — steered/
       // followUp requests bypass them, so queued messages with images must get the

@@ -2,10 +2,12 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { url } from '../base-path';
 import { API } from '../api-paths';
 
-interface AttachedImage {
+interface AttachedFile {
   mimeType: string;
   /** base64 data without the data: URL prefix */
   data: string;
+  /** Original file name — non-images render as a name chip, not a preview */
+  name: string;
 }
 
 interface ChatInputProps {
@@ -28,8 +30,8 @@ interface ChatInputProps {
 // insert a newline, not submit.  Users tap the Send button instead.
 const IS_TOUCH_DEVICE = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
 
-const MAX_ATTACHED_IMAGES = 4;
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB per image (decoded) — matches backend limit
+const MAX_ATTACHED = 4;
+const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB per file — matches backend limit
 
 /** Available slash commands, shown by /help */
 const SLASH_COMMANDS: { cmd: string; description: string }[] = [
@@ -42,8 +44,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
   // Draft persistence: the chat view unmounts on tab navigation (edits,
   // settings, ...) and the input text would be lost. Keep it in localStorage
   // keyed by session so each session remembers its own draft. ponytail:
-  // attached images are NOT persisted (8 MB base64 each would blow the
-  // localStorage quota) — switch to IndexedDB if image-drafts are wanted.
+  // attached files are NOT persisted (10 MB base64 each would blow the
+  // localStorage quota) — switch to IndexedDB if attachment-drafts are wanted.
   const draftKey = `autere:draft:${sessionId ?? ''}`;
   const [value, setValue] = useState(() => {
     try {
@@ -99,7 +101,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
     };
   }, [draggingInput]);
   const [focused, setFocused] = useState(false);
-  const [images, setImages] = useState<AttachedImage[]>([]);
+  const [images, setImages] = useState<AttachedFile[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -115,19 +117,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
 
   const handleFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const room = MAX_ATTACHED_IMAGES - images.length;
+    const room = MAX_ATTACHED - images.length;
     if (room <= 0) {
-      onError?.(`At most ${MAX_ATTACHED_IMAGES} images can be attached.`);
+      onError?.(`At most ${MAX_ATTACHED} files can be attached.`);
       return;
     }
     const selected = Array.from(files).slice(0, room);
     for (const file of selected) {
-      if (!file.type.startsWith('image/')) {
-        onError?.('Only image attachments are supported.');
-        continue;
-      }
-      if (file.size > MAX_IMAGE_BYTES) {
-        onError?.(`"${file.name}" is too large (max 8 MB).`);
+      if (file.size > MAX_FILE_BYTES) {
+        onError?.(`"${file.name}" is too large (max 10 MB).`);
         continue;
       }
       try {
@@ -138,11 +136,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
           reader.readAsDataURL(file);
         });
         const base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
-        setImages((prev) =>
-          prev.length < MAX_ATTACHED_IMAGES ? [...prev, { mimeType: file.type, data: base64 }] : prev
-        );
+        setImages((prev) => prev.length < MAX_ATTACHED
+          ? [...prev, { mimeType: file.type || 'application/octet-stream', data: base64, name: file.name }]
+          : prev);
       } catch (err) {
-        console.error('Failed to read image file:', err);
+        console.error('Failed to read file:', err);
         onError?.(`Failed to read "${file.name}".`);
       }
     }
@@ -257,20 +255,36 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
       />
       {images.length > 0 && (
         <div className="chat-attachments">
-          {images.map((img, i) => (
-            <div key={i} className="chat-attachment">
-              <img src={`data:${img.mimeType};base64,${img.data}`} alt={`attachment ${i + 1}`} />
-              <button
-                type="button"
-                className="chat-attachment-remove"
-                aria-label={`Remove attachment ${i + 1}`}
-                onMouseDown={(e) => e.preventDefault()} // keep textarea focus
-                onClick={() => removeImage(i)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+          {images.map((img, i) =>
+            img.mimeType.startsWith('image/') ? (
+              <div key={i} className="chat-attachment">
+                <img src={`data:${img.mimeType};base64,${img.data}`} alt={`attachment ${i + 1}`} />
+                <button
+                  type="button"
+                  className="chat-attachment-remove"
+                  aria-label={`Remove attachment ${i + 1}`}
+                  onMouseDown={(e) => e.preventDefault()} // keep textarea focus
+                  onClick={() => removeImage(i)}
+                >
+                  ×
+                </button>
+              </div>
+            ) : (
+              <div key={i} className="chat-attachment is-file">
+                <span className="chat-file-icon">📄</span>
+                <span className="chat-file-name" title={img.name}>{img.name}</span>
+                <button
+                  type="button"
+                  className="chat-attachment-remove"
+                  aria-label={`Remove ${img.name}`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => removeImage(i)}
+                >
+                  ×
+                </button>
+              </div>
+            )
+          )}
         </div>
       )}
       {expanded && (
@@ -278,11 +292,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
           <button
             type="button"
             className="chat-tool-btn"
-            title="Attach image"
-            aria-label="Attach image"
+            title="Attach files (any type, max 10 MB each)"
+            aria-label="Attach files"
             onMouseDown={(e) => e.preventDefault()} // keep textarea focus (no blur collapse)
             onClick={() => fileInputRef.current?.click()}
-            disabled={isDisabled || images.length >= MAX_ATTACHED_IMAGES}
+            disabled={isDisabled || images.length >= MAX_ATTACHED}
           >
             ⬆️ Upload
           </button>
@@ -340,7 +354,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
         multiple
         style={{ display: 'none' }}
         onChange={(e) => handleFiles(e.target.files)}
