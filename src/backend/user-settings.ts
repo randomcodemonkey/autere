@@ -199,6 +199,28 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
       piSettings.packages = settings.packages;
       piSettingsChanged = true;
     }
+    if ('codemode' in settings) {
+      // pi 1.0 codemode tool. Empirical note: the documented pure-plus form
+      // ['+codemode'] does NOT activate the built-in on the user level
+      // (built-ins load, codemode never registers); listing it plainly
+      // next to the base tools works. So: keep non-codemode entries as
+      // they are, and ensure a plain 'codemode' when enabled. Never write
+      // an empty [] — pi treats that as "no tools".
+      const rest = Array.isArray(piSettings.defaultTools)
+        ? piSettings.defaultTools.filter((t: unknown) => t !== 'codemode' && t !== '+codemode' && t !== '-codemode')
+        : ['read', 'bash', 'edit', 'write'];
+      if (settings.codemode) {
+        piSettings.defaultTools = [...rest, 'codemode'];
+        piSettings.codemode = { mode: 'on' };
+      } else if (rest.length > 0) {
+        piSettings.defaultTools = rest;
+        delete piSettings.codemode;
+      } else {
+        delete piSettings.defaultTools;
+        delete piSettings.codemode;
+      }
+      piSettingsChanged = true;
+    }
     if (piSettingsChanged) {
       const tmp = join(envDir, `.settings-tmp-${randomUUID()}`);
       writeFileSync(tmp, JSON.stringify(piSettings, null, 2), 'utf-8');
@@ -700,6 +722,7 @@ function getUserSettingsDefaults(user: string): UserSettings {
   // Pi settings defaults
   defaults.enabledModels = readJsonCached(join(PI_DIR, 'settings.json'))?.enabledModels || [];
   defaults.packages = getEnabledPackages(user);
+  defaults.codemode = false;
 
   return defaults;
 }
@@ -870,6 +893,12 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
           { value: 'full', label: 'Full (original file)' },
         ],
         description: 'Downscale applied to attached images before the chat model sees them. Full-resolution originals are always saved to disk for tools. Applies after a pi restart.',
+      },
+      {
+        key: 'codemode',
+        label: 'Codemode scripting',
+        type: 'toggle',
+        description: "Give the model pi's codemode tool: it writes sandboxed JavaScript that calls other tools in parallel and runs classifier/image models, with only the script's output reaching the model. Applies after a pi restart.",
       },
     ],
   });

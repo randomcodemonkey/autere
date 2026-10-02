@@ -1219,7 +1219,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         const t = await resolveTarget(c, targetParam(c, body));
         if (!t) { sendTargetMissing(c); return; }
         log.http.forSession(t.state.sessionState.sessionId).info('Abort requested');
-        await t.rpc.abort();
+        // Salvage stranded queued messages: clear-then-abort (pi keeps
+        // un-consumed steers queued forever after an abort) and re-send
+        // them as prompts once the session is idle.
+        await t.abortAndRequeue();
         sendJSON(c.res, { success: true });
       } catch (err: any) {
         sendJSON(c.res, { success: false, error: `Failed to abort: ${err.statusCode ? err.message : err}` }, err.statusCode || 500);

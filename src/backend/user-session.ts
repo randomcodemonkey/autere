@@ -347,6 +347,39 @@ export class UserSession {
   }
 
   /**
+   * Salvage queued (steer/follow-up) messages stranded by an abort. pi keeps
+   * un-consumed queued messages forever while idle (verified: agent_end does
+   * not drain the queue), and steer/follow_up can't start a run when idle —
+   * only prompt() does. So: clear the queue BEFORE the abort (pi's documented
+   * clear_queue-then-abort salvage pattern), drop the stale pending history
+   * copies, and re-send the texts as prompts once the session is idle.
+   * ponytail: re-send is text-only; queued images would lose attachments
+   * (same ceiling as cancelPending). Round-trip images if that matters.
+   */
+  async abortAndRequeue(): Promise<void> {
+    const cleared = await this.rpc.clearQueue();
+    await this.rpc.abort();
+    const texts = [...cleared.steering, ...cleared.followUp].filter(Boolean);
+    if (texts.length === 0) return;
+    const sessionId = this.state.sessionState.sessionId;
+    const buf = this.history();
+    const dropped: string[] = [];
+    for (let i = buf.length - 1; i >= 0; i--) {
+      const e = buf[i];
+      if (e.role === 'user' && (e as any).pending && texts.includes(e.text)) {
+        dropped.push(e.id);
+        buf.splice(i, 1);
+      }
+    }
+    if (dropped.length) this.broadcast({ type: 'history_remove', sessionId, data: dropped });
+    // Session is idle after abort — prompt() starts the new turn.
+    for (const text of texts) {
+      this.addUserEntry(text);
+      await this.rpc.prompt(text);
+    }
+  }
+
+  /**
    * Cancel one queued (steer/follow-up) user message by text. pi's RPC only
    * offers all-or-nothing clear_queue — which returns the dropped texts — so
    * we clear, prune the match, and re-queue the rest in order.
