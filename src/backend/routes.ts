@@ -1677,7 +1677,6 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         // ProcessManager gives user sessions, so the request runs through
         // pi's own provider pipeline (never a backend chat-completions call).
         const oneShot = new MonitorRpcClient({
-          provider: model.provider || pm.spawnOptions.provider,
           model: model.id,
           args: pm.spawnOptions.args,
           agentDir: getPiEnvDir(c.user),

@@ -154,7 +154,6 @@ async function main() {
   }
 
   const pm = new ProcessManager({
-    provider: config.piProvider,
     model: config.piModel,
     args: config.piArgs,
     idleTimeoutMs: config.idleTimeoutMinutes * 60 * 1000,
@@ -163,7 +162,6 @@ async function main() {
 
   // Start the scheduler — spawns dedicated pi processes per scheduled run
   const scheduler = new Scheduler({
-    provider: config.piProvider,
     model: config.piModel,
     args: config.piArgs,
   });

@@ -47,7 +47,6 @@ function saveSpawnOpts(user: string, sessionFile: string, opts: SpawnOpts): void
 
 
 export interface ProcessManagerOptions {
-  provider?: string;
   model?: string;
   args?: string[];
   idleTimeoutMs?: number;
@@ -122,7 +121,6 @@ export class ProcessManager {
       // are planned from exactly these fields in UserSession).
       const saved = sessionFile ? loadSpawnOpts(user)[sessionFile] : undefined;
       const session = new UserSession(user, sessionFile, {
-        provider: this.options.provider,
         model: this.options.model,
         args: this.options.args,
         cwd: opts.cwd ?? saved?.cwd,

@@ -42,7 +42,6 @@ import type {
 export type { ScheduledTask, TaskRunStatus, TaskRunRecord, TaskRunLog };
 
 export interface SchedulerOptions {
-  provider?: string;
   model?: string;
   args?: string[];
   /** Tick interval in ms (default 20s) */
@@ -256,12 +255,12 @@ export class Scheduler {
   private firedMinutes = new Map<string, Set<string>>();
   private readonly tickMs: number;
   private readonly runTimeoutMs: number;
-  private readonly spawnOptions: { provider?: string; model?: string; args?: string[] };
+  private readonly spawnOptions: { model?: string; args?: string[] };
 
   constructor(options: SchedulerOptions = {}) {
     this.tickMs = options.tickMs ?? 20_000;
     this.runTimeoutMs = options.runTimeoutMs ?? 15 * 60 * 1000;
-    this.spawnOptions = { provider: options.provider, model: options.model, args: options.args };
+    this.spawnOptions = { model: options.model, args: options.args };
   }
 
   start(): void {
@@ -377,7 +376,6 @@ export class Scheduler {
     let aborted = false;
     let abortWaiter: (() => void) | null = null;
     const rpc = new MonitorRpcClient({
-      provider: this.spawnOptions.provider,
       // Per-task model override wins over the scheduler default; when unset
       // the user's pi default model applies.
       model: task.model || this.spawnOptions.model,

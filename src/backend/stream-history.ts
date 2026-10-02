@@ -261,6 +261,11 @@ function buildOneEntry(
         ? new Date(msg.timestamp).getTime()
         : (entryTimestamp ? new Date(entryTimestamp).getTime() : undefined);
 
+      // pi 1.0.0 context_edit entries (append-only provider-context edits,
+      // e.g. pi-janitor/dedup natively) are not chat messages — skip them
+      // instead of letting the unknown role fall through to the catch-all.
+      if ((msg.type === 'context_edit' || role === 'contextEdit') && !msg.role) return [];
+
       if (role === 'toolResult') {
         const toolArgs = (msg.toolCallId ? toolCallArgs.get(msg.toolCallId)?.args : undefined) || {};
         const formatted = formatToolResult(

@@ -281,9 +281,8 @@ export class MonitorRpcClient {
     this.quarantineBrokenExtensions().catch((e) => log.rpc.warn(`Extension parse check skipped: ${e}`));
 
     const args = ['--mode', 'rpc'];
-    if (this.options.provider) {
-      args.push('--provider', this.options.provider);
-    }
+    // provider deliberately not passed to pi: since pi 1.0.0 --provider
+    // requires --model, and model routing happens inside pi via settings.
     if (this.options.model) {
       args.push('--model', this.options.model);
     }
