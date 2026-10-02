@@ -61,6 +61,9 @@ export function useSessionStream(opts: {
   const [extensions, setExtensions] = useState<ExtensionInfo[]>([]);
   const [models, setModels] = useState<AvailableModel[]>([]);
   const [availableSessions, setAvailableSessions] = useState<SessionInfo[]>([]);
+  // false until the first bootstrap 'sessions' list arrives — the header
+  // shows a loading indicator instead of the tabs row before that
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [creatingSession, setCreatingSession] = useState(false);
   const [switchingSession, setSwitchingSession] = useState(false);
@@ -75,7 +78,7 @@ export function useSessionStream(opts: {
     let timer: number | undefined;
     const poll = () => {
       fetch(url(API.sessions.list)).then(r => r.json()).then(d => {
-        if (d.success) setAvailableSessions(d.data);
+        if (d.success) { setAvailableSessions(d.data); setSessionsLoaded(true); }
       }).catch(() => {});
       timer = window.setTimeout(poll, 5000);
     };
@@ -316,6 +319,7 @@ export function useSessionStream(opts: {
         break;
       case 'sessions':
         setAvailableSessions(msg.data || []);
+        setSessionsLoaded(true);
         break;
       case 'tool_start':
         setActiveTools((prev) => {
@@ -357,6 +361,7 @@ export function useSessionStream(opts: {
       setStreamHistory(d.streamHistory ?? []);
     }
     setAvailableSessions(d.availableSessions ?? []);
+    setSessionsLoaded(true);
     setModels(d.availableModels ?? []);
     setExtensions(d.extensions ?? []);
   }, []);
@@ -535,6 +540,7 @@ export function useSessionStream(opts: {
     extensions,
     models, setModels,
     availableSessions,
+    sessionsLoaded,
     sessionError, setSessionError,
     creatingSession, setCreatingSession,
     switchingSession, switchLabel,

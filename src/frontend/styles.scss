@@ -192,11 +192,13 @@ body {
   background: #222;
   padding: 0 1rem;
   border-bottom: 1px solid #333;
-  // Title takes the remaining space; status badge sits flush against the
-  // menu on the right edge (menu width varies with the active view — the
-  // badge always touches it, no gap).
+  // The middle (.session-tabs) column flexes to fill the bar between the
+  // logo (fixed) and the menu (fixed); tabs use flex:1 1 0 and grow evenly
+  // — see .session-tab
   display: grid;
-  grid-template-columns: 1fr minmax(0, max-content) auto; // tabs (incl. badge) shrink never overflow; menu fixed
+  // h1 sizes to content; the .session-tabs column flexes to fill the bar
+  // (tabs use flex:1 1 0 and grow evenly — see .session-tab)
+  grid-template-columns: auto minmax(0, 1fr) auto; // menu fixed; middle col fills the bar
   align-items: stretch;
   flex-shrink: 0;
 
@@ -222,9 +224,16 @@ body {
     align-self: stretch;
   }
 
+  // The header bar height normally comes from the session tabs (min-height
+  // 2.2rem); keep the bar that tall even while no sessions are loaded yet
+  min-height: 2.2rem;
+
   .session-tabs {
     gap: 2px;
-    justify-self: end;
+    // Stretch into the 1fr middle column so tabs fill the full header bar
+    // (justify-self:start would pin to max-content and leave dead space);
+    // the fill direction is handled by each tab's flex:1 1 0
+    justify-self: stretch;
     align-self: stretch;
   }
 
@@ -360,6 +369,16 @@ body {
   overflow: hidden;
 }
 
+// "Loading sessions…" placeholder while the first sessions list is in flight
+.session-tabs-loading {
+  color: #888;
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex: 1; // span the whole row
+  text-align: center;
+  min-width: 0;
+}
+
 .session-tab {
   height: 100%;
   min-height: 2.2rem;
@@ -368,13 +387,15 @@ body {
   font-weight: 500;
   display: inline-flex;
   align-items: center;
+  justify-content: center; // text centers when the tab grows wider than content
   border: none;
   border-left: 1px solid rgba(255, 255, 255, 0.06);
   cursor: pointer;
   overflow: hidden;
   white-space: nowrap;
+  text-overflow: ellipsis;
   min-width: 0;
-  flex: 0 1 auto;   // shrink horizontally instead of overflowing the header
+  flex: 1 1 0; // fill the header bar evenly; still shrinks with ellipsis below content width
   transition: filter 0.15s;
 
   &:hover { filter: brightness(1.25); }
@@ -443,10 +464,20 @@ body {
 }
 
 // Selected session inside the tab row renders as the regular session-badge
-// (status colors + dot); make it stretch like the tabs.
+// (status colors + dot); make it behave exactly like a .session-tab: stretch,
+// grow evenly with the tabs, shrink with ellipsis.
 .session-tabs .session-badge {
   align-self: stretch;
   height: 100%;
+  min-width: 0; // per-system ellipsis like .session-tab (overrides the badge's flex-shrink:0)
+  overflow: hidden;
+  flex: 1 1 0;
+
+  .session-badge-text {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
 }
 
 // Underline on the selected session's badge-tab too — state-colored:
@@ -2417,6 +2448,7 @@ body {
   gap: 0.5rem;
   flex: 1;
   min-width: 0;
+  align-items: flex-start; // buttons stay normal height when the textarea grows
 }
 
 // Toolbar shown when the input is expanded (focused)
@@ -2532,7 +2564,9 @@ body {
   resize: none;
   overflow-y: auto; // constant-size input: overflow scrolls inside
   min-height: 2.2rem;
-  max-height: 150px;
+  // Cap at half the viewport (drag can resize up to this); base rule keeps
+  // it reachable even when 100vh is keyboard-shrunk on mobile
+  max-height: min(50vh, 600px);
   line-height: 1.4;
 
   &:focus {
@@ -3103,7 +3137,7 @@ body {
   color: var(--c-success);
   padding: 0.75rem;
   border-radius: 0.5rem;
-  margin-bottom: 1rem;
+  margin: 0 0 1rem;
   font-size: 0.85rem;
 }
 

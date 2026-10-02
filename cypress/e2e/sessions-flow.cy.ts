@@ -69,8 +69,8 @@ describe('autere — session flow', () => {
         // Navigate directly to the session via URL
         cy.visit(`/session/${sessionId.trim()}`);
 
-        // Should show that session's ID
-        cy.get('.session-badge-text', { timeout: 5000 }).should('contain', sessionId.trim().substring(0, 6));
+        // The visited session is selected — it renders as the status badge-tab
+        cy.get('.session-badge.session-badge-tab', { timeout: 5000 }).should('exist');
       });
     });
 

@@ -74,6 +74,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
   );
   const [sending, setSending] = useState(false);
   // User-dragged input height (in rows) — overrides the focused/collapsed default
+  // (capped at ~half viewport height, per the textarea's CSS max-height)
   const [inputRows, setInputRows] = useState<number | null>(null);
   const [draggingInput, setDraggingInput] = useState(false);
   const dragStart = useRef<{ y: number; rows: number } | null>(null);
@@ -85,7 +86,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
     const lineHeight = parseFloat(getComputedStyle(textareaRef.current!).lineHeight) || 21;
     const move = (e: MouseEvent) => {
       const { y, rows } = dragStart.current!;
-      setInputRows(Math.min(30, Math.max(1, Math.round(rows - (e.clientY - y) / lineHeight))));
+      // Ceiling: half the viewport in rows (matches .chat-input max-height)
+      const maxRows = Math.max(4, Math.floor((window.innerHeight * 0.5) / lineHeight) - 1);
+      setInputRows(Math.min(maxRows, Math.max(1, Math.round(rows - (e.clientY - y) / lineHeight))));
     };
     const up = () => setDraggingInput(false);
     window.addEventListener('mousemove', move);

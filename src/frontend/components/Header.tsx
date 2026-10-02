@@ -34,6 +34,9 @@ interface HeaderProps {
    *  tabs kept alphabetically; the selected one renders as the session
    *  badge/status button in place */
   runningSessions?: SessionInfo[];
+  /** false until the first sessions list arrives — shows a loading
+   *  placeholder instead of an empty tabs row */
+  sessionsLoaded?: boolean;
   onRunningSessionClick?: (sessionId: string) => void;
   isActive?: boolean;
   /** Admin-only views (e.g. Users) are only rendered for this role */
@@ -49,6 +52,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeView,
   onViewChange,
   runningSessions,
+  sessionsLoaded = true,
   onRunningSessionClick,
   userRole,
 }) => {
@@ -101,18 +105,21 @@ export const Header: React.FC<HeaderProps> = ({
     ?? { sessionFile: '', cwd: null, createdAt: 0, lastActivity: 0, parentSession: null, id: sessionId ?? '', sessionName: sessionName ?? null, active: false };
   const running = availableTabs.filter((s) => s.active);
   const idle = availableTabs.filter((s) => !s.active);
+  const SESSION_TAB_CAP = 8; // running + most recent idle historic sessions
   // running take precedence: keep every running slot, pad with the most
   // recent idle sessions below the cap
-  let tabs = [...running.slice(0, 5), ...idle.slice(0, Math.max(0, 5 - running.length))];
+  let tabs = [...running.slice(0, SESSION_TAB_CAP), ...idle.slice(0, Math.max(0, SESSION_TAB_CAP - running.length))];
   if (tabs.length === 0) {
-    tabs = [selectedEntry];
+    // No sessions known yet (initial load) or none exist — no tabs at all,
+    // rather than a raw synthetic id placeholder
+    tabs = [];
   } else if (!tabs.some((s) => s === selectedEntry || s.id === sessionId || sessionId?.startsWith(s.id))) {
-    // Replace the last slot — constant item count, never a 6th;
+    // Replace the last slot — constant item count, never a 9th;
     // append instead when there is room below the cap.
-    if (tabs.length < 5) {
+    if (tabs.length < SESSION_TAB_CAP) {
       // selection always wins a running slot for consistency: drop the
       // tepmost idle pad if a slot was created by pad (from idle) else append
-      const lastIsPad = tabs.length > running.length && tabs[tabs.length - 1] === idle[Math.min(idle.length, 5 - running.length) - 1];
+      const lastIsPad = tabs.length > running.length && tabs[tabs.length - 1] === idle[Math.min(idle.length, SESSION_TAB_CAP - running.length) - 1];
       tabs = lastIsPad ? [...tabs.slice(0, -1), selectedEntry] : [...tabs, selectedEntry];
     } else {
       tabs = [...tabs.slice(0, -1), selectedEntry];
@@ -132,6 +139,7 @@ export const Header: React.FC<HeaderProps> = ({
     <div ref={headerRef} className={`header${statusType === 'disconnected' ? ' header-disconnected' : ''}`}>
       <h1><img className="logo-icon" src={url('/logo.svg')} alt="autere" /> autere</h1>
       <div className="session-tabs">
+        {!sessionsLoaded && <span className="session-tabs-loading">Loading sessions…</span>}
         {tabs.map((s) => {
           const label = tabLabel(s);
           return s === selectedEntry ? (

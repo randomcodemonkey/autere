@@ -92,6 +92,7 @@ export function AppPage({
     extensions,
     models, setModels,
     availableSessions,
+    sessionsLoaded,
     sessionError, setSessionError,
     creatingSession, setCreatingSession,
     switchingSession, switchLabel,
@@ -292,6 +293,7 @@ export function AppPage({
         activeView={activeView}
         onViewChange={handleSetView}
         runningSessions={availableSessions}
+        sessionsLoaded={sessionsLoaded}
         onRunningSessionClick={handleSwitchSession}
         isActive={sessionState.isStreaming || sessionState.compacting}
         userRole={userRole}

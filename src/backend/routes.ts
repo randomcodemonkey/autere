@@ -30,7 +30,7 @@ import { copilotStatsFor } from './extension-handlers.js';
 import type { CopilotTotals } from './copilot-totals.js';
 import { readExtensions } from './extensions.js';
 import { sendJSON, getDashboardHTML, readSessionHistory } from './utils.js';
-import { getEnabledModelEntries, scopeModelsForSession, filterScopedModels } from './utils.js';
+import { getEnabledModelEntries, scopeModelsForSession } from './utils.js';
 import { isPiImagesInstalled } from './image-models.js';
 import { getPiEnvDir, ensurePiEnv, validateSandboxImage } from './pi-env.js';
 import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
@@ -1739,7 +1739,9 @@ ${text.trim()}`).catch((err) => settle(err as Error));
     method: 'POST', path: API.modelsCatalog, template: `${API_PREFIX}/models/available`,
     role: 'chat', tag: 'Settings', summary: 'Reload available models from pi (body: nothing)',
     handler: async (c) => {
-      const toEntries = (models: any[]) => filterScopedModels(models).map((m: any) => ({
+      // Full pi catalog (unscoped) — the table's enabled checkboxes are the
+      // single source of truth for the enabledModels list
+      const toEntries = (models: any[]) => models.map((m: any) => ({
         provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: m.thinkingLevel,
       }));
       const running = pm.runningForUser(c.user);

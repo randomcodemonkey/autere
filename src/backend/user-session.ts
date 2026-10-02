@@ -9,7 +9,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { basename, join } from 'path';
 import { createHash } from 'crypto';
 import { MonitorRpcClient } from './rpc-client.js';
-import { filterScopedModels, autoSessionName, readSessionUsage } from './utils.js';
+import { autoSessionName, readSessionUsage, scopeModelsForSession } from './utils.js';
 import { log, userLog } from './logger.js';
 import { ensurePiEnv, ensureSandboxHomeVolume, ensureSandboxGitconfig, ensureVolumeSubpaths, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage, DEFAULT_SANDBOX_IMAGE } from './pi-env.js';
 import { getUserMountDockerSocket } from './users.js';
@@ -576,10 +576,16 @@ export class UserSession {
           }
           if (models.length > 0 || attempt === 9) {
             if (models.length === 0) log.userSession.warn('fetchInitialState: pi still reports no available models after retries — provider auth may be missing in the env');
-            this.state.availableModels = filterScopedModels(models).map((m: any) => ({
+            // Full pi catalog — chat consumers (GET /session/models, ws state)
+            // apply scopeModelsForSession at read time; the settings table
+            // needs the unscoped list to enable/disable models
+            this.state.availableModels = models.map((m: any) => ({
               provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
             }));
-            if (this.state.availableModels.length > 0) this.broadcast({ type: 'models', data: this.state.availableModels });
+            if (this.state.availableModels.length > 0)
+              // WS consumers (chat model dropdown) are enabled-scoped; the raw
+              // catalog stays in state for the settings table
+              this.broadcast({ type: 'models', data: scopeModelsForSession(this.state.availableModels, this.state.sessionState?.model) });
             return;
           }
           await new Promise((r) => setTimeout(r, 1000));

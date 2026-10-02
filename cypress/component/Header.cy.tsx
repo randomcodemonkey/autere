@@ -2,6 +2,16 @@ import React from 'react';
 import { Header } from '../../src/frontend/components/Header';
 
 describe('Header', () => {
+  // A running session the selected tab resolves against (badge renders as
+  // one of the tabs once the session list is known)
+  const withSession = (extra: Partial<React.ComponentProps<typeof Header>> = {}) => ({
+    runningSessions: [{
+      id: 'abc123', sessionName: 'My Session', active: true,
+      sessionFile: '', cwd: null, createdAt: 0, lastActivity: 0, parentSession: null,
+    }],
+    ...extra,
+  });
+
   const mountHeader = (props: Partial<React.ComponentProps<typeof Header>> = {}) => {
     cy.mount(
       <Header
@@ -17,23 +27,29 @@ describe('Header', () => {
   };
 
   it('renders with session name when provided', () => {
-    mountHeader({ sessionName: 'My Session' });
+    mountHeader(withSession({ sessionId: 'abc123' }));
     cy.get('.session-badge-text').should('contain', 'My Session');
   });
 
   it('renders truncated session name when too long', () => {
-    mountHeader({ sessionName: 'A'.repeat(100) });
+    mountHeader({ sessionName: 'A'.repeat(100), sessionId: 'abc123', runningSessions: [{
+      id: 'abc123', sessionName: 'A'.repeat(100), active: true,
+      sessionFile: '', cwd: null, createdAt: 0, lastActivity: 0, parentSession: null,
+    }] });
     cy.get('.session-badge-text').should('contain', '…');
   });
 
   it('renders truncated session ID when no name', () => {
-    mountHeader({ sessionId: 'abc123-def456', sessionName: null });
+    mountHeader({ sessionId: 'abc123-def456', sessionName: null, runningSessions: [{
+      id: 'abc123-def456', sessionName: null, active: true,
+      sessionFile: '', cwd: null, createdAt: 0, lastActivity: 0, parentSession: null,
+    }] });
     cy.get('.session-badge-text').should('contain', 'abc123…');
   });
 
-  it('renders "session" when no ID or name', () => {
+  it('shows no session tab while no sessions are known (initial load)', () => {
     mountHeader({ sessionId: null, sessionName: null });
-    cy.get('.session-badge-text').should('contain', 'session');
+    cy.get('.session-tab, .session-badge').should('not.exist');
   });
 
   it('renders the view menu with all four views', () => {
@@ -80,13 +96,16 @@ describe('Header', () => {
 
   it('badge click opens the session chat view', () => {
     const onViewChange = cy.stub().as('onViewChange');
-    mountHeader({ onViewChange });
+    mountHeader(withSession({ sessionId: 'abc123', onViewChange }));
     cy.get('.session-badge.status-connected').click({ force: true });
     cy.get('@onViewChange').should('have.been.calledWith', 'chat');
   });
 
   it('combined badge carries the status colour class', () => {
-    mountHeader({ statusType: 'streaming', statusText: 'Working' });
+    mountHeader({ statusType: 'streaming', statusText: 'Working', sessionId: 'abc123', runningSessions: [{
+      id: 'abc123', sessionName: 'My Session', active: true,
+      sessionFile: '', cwd: null, createdAt: 0, lastActivity: 0, parentSession: null,
+    }] });
     cy.get('.session-badge.status-streaming').should('exist');
     cy.get('.session-badge .connection-dot.dot-yellow').should('exist');
   });
@@ -94,7 +113,7 @@ describe('Header', () => {
   it('mobile: badge click also toggles the sessions dropdown', () => {
     cy.viewport(375, 667);
     const onViewChange = cy.stub().as('onViewChange');
-    mountHeader({ onViewChange });
+    mountHeader(withSession({ sessionId: 'abc123', onViewChange }));
     cy.get('.session-tabs-dropdown').should('not.exist');
     cy.get('.session-badge').click({ force: true });
     cy.get('@onViewChange').should('have.been.calledWith', 'chat');
