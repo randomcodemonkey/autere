@@ -128,6 +128,21 @@ Stream: `GET /api/v1/events` (per-user, scoped to the viewed session where appli
 
 History entry `role` values: `user`, `assistant`, `thinking`, `toolCall`, `toolResult`, `edit`, `file`, `image`. Non-renderable pi roles (e.g. `model_change`) are dropped.
 
+> **Moving volumes / mountpoints (e.g. between docker volumes)**: every pi
+> session transcript records its absolute `cwd` in the first JSONL line, and
+> sessions whose recorded cwd no longer exists on the host are silently
+> hidden from the Sessions list. If home directories move (new host, changed
+> volume layout, different username), rewrite the paths once:
+>
+> ```bash
+> grep -rlF '/home/OLD' ~/.autere/pi-envs/*/sessions/ \
+>   | xargs sed -i 's|/home/OLD|/home/NEW|g'
+> ```
+>
+> The dir names under `sessions/` (e.g. `--home-autere--`) are derived from
+> the cwd and can stay as-is, but the cwd *inside* each file must match a
+> directory that exists on the current host.
+
 ## License
 
 MIT
