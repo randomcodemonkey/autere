@@ -20,7 +20,7 @@ const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1_500;
 
 const RETRYABLE_400 =
-	/(\b400\b\s*:)|"code"\s*:\s*"bad_request"|\b400\s*[:\-]?\s*\{|invalid_request_error|upstream request failed/i;
+	/(\b400\b\s*:)|"code"\s*:\s*"bad_request"|\b400\s*[:-]?\s*\{|invalid_request_error|upstream request failed/i;
 
 const NON_RETRYABLE =
 	/GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing/i;

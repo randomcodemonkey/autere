@@ -6,9 +6,9 @@
  * Run: npx tsx cypress/component/support/sandbox-restart.check.ts
  * (assert-based self-check — no cypress/canvas needed)
  */
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
-import { homedir, tmpdir } from 'os';
+import { tmpdir } from 'os';
 
 const testDir = join(tmpdir(), `sandbox-restart-test-${Date.now()}`);
 

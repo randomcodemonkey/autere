@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { url } from '../base-path';
 import { API } from '../api-paths';
 import type { StreamMessage, AvailableModel } from '../types';
@@ -84,7 +84,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   // Model dropdown on the chat model row
   const [modelOpen, setModelOpen] = useState(false);
   const modelWrapperRef = useRef<HTMLSpanElement>(null);
-  const modelsList = models || [];
+  const modelsList = useMemo(() => models || [], [models]);
   const openModelDropdown = useCallback(() => {
     setModelOpen((v) => !v);
     // Fetch while the list is empty — the backend serves the scoped catalog
@@ -101,7 +101,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
         })
         .catch(() => {});
     }
-  }, [modelsList.length, onModelsFetched]);
+  }, [modelsList, onModelsFetched]);
   const selectModel = useCallback(async (provider: string, modelId: string) => {
     setModelOpen(false);
     try {
@@ -115,7 +115,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     } catch {
       onCommandError?.('Failed to change model');
     }
-  }, [onCommandError]);
+  }, [onCommandError, sessionId]);
 
   // Close the model dropdown on Escape or click outside
   useEffect(() => {

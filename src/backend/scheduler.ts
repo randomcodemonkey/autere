@@ -32,48 +32,14 @@ import { log } from './logger.js';
 import { autoSessionName } from './utils.js';
 import { getUserSetting } from './user-settings.js';
 
-// ── Types ──
+import type {
+  ScheduledTask,
+  TaskRunStatus,
+  TaskRunRecord,
+  TaskRunLog,
+} from '../shared/tasks.js';
 
-export interface ScheduledTask {
-  id: string;
-  name: string;
-  /** 5-field cron expression (minute hour dom month dow) */
-  schedule: string;
-  /** Prompt sent to the pi agent */
-  prompt: string;
-  /** Optional model override for this task's runs (falls back to the
-   *  scheduler's default / the user's pi default model when unset) */
-  model?: string;
-  /** Optional shell script whose stdout is seeded into the prompt */
-  seedScript?: string;
-  /** Optional shell script run against the final assistant message (stdin) */
-  resultScript?: string;
-  enabled: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export type TaskRunStatus = 'running' | 'success' | 'error';
-
-export interface TaskRunRecord {
-  runId: string;
-  taskId: string;
-  taskName: string;
-  trigger: 'schedule' | 'manual';
-  startedAt: number;
-  finishedAt?: number;
-  status: TaskRunStatus;
-  error?: string;
-}
-
-export interface TaskRunLog extends TaskRunRecord {
-  prompt: string;
-  seedOutput?: string;
-  agentResult?: string;
-  resultScriptOutput?: string;
-  /** Progress lines — structured so the UI renders timestamps in the user's locale/tz */
-  log: Array<{ t: number; line: string }>;
-}
+export type { ScheduledTask, TaskRunStatus, TaskRunRecord, TaskRunLog };
 
 export interface SchedulerOptions {
   provider?: string;

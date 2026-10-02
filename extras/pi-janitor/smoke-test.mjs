@@ -100,7 +100,7 @@ assertT("replay adds nothing", { sweeps: 1, stubbedToolResults: 3 });
 // 5. Post-sweep request counts as postSweep, never as a natural miss;
 //    the NEXT classify (natural cold, gap 20) is the one that counts a miss
 respond([9, 0, 30]);
-msgs = ev(1450 * S);
+ev(1450 * S);
 assertT("post-sweep separated + natural miss", { postSweepRequests: 1, naturalMisses: 1, missedTokens: 39 });
 
 // 6. Warm classify leaves miss stats untouched

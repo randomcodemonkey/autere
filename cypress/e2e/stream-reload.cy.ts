@@ -6,7 +6,7 @@
  * a reload the client had no streaming entry — every stream_delta was
  * dropped and the streaming message vanished from view.
  */
-import { waitForBackend, warmUpSession, openSessionsModal } from './support/helpers';
+import { openSessionsModal } from './support/helpers';
 
 const totalLen = ($els: JQuery) => {
   // Entries render truncated (e.g. "▸ 1234 more characters - click to

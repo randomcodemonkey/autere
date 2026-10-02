@@ -353,6 +353,22 @@ cmds['session-restart'] = {
     console.log('Restarted.');
   },
 };
+cmds['session-workdirs'] = {
+  desc: 'session-workdirs <dir...> [--session id] — replace the workdirs of a session (admin; idle only — respawns pi)',
+  fn: async (args) => {
+    const { sessionId, rest } = takeSessionFlag(args);
+    requireArgs(rest, 1, 'session-workdirs <dir...> [--session id]');
+    await put('/api/v1/session/workdirs', { sessionId, workdirs: rest });
+    console.log('Workdirs set.');
+  },
+};
+cmds['models-refresh'] = {
+  desc: 'models-refresh — reload the model catalog from pi (chat)',
+  fn: async (args) => {
+    if (args.length) { console.error('Usage: autere models-refresh'); process.exit(2); }
+    out(await post('/api/v1/models/available'));
+  },
+};
 cmds['pending-cancel'] = {
   desc: 'pending-cancel <text> [--session id] — cancel a queued steer/follow-up message',
   fn: async (args) => {
@@ -406,6 +422,15 @@ cmds['personas-update'] = {
 cmds['personas-delete'] = {
   desc: 'personas-delete <id> — delete a persona (control)',
   fn: async ([id]) => { requireArgs([id], 1, 'personas-delete <id>'); await request('DELETE', `/api/v1/personas/${id}`); console.log('Deleted.'); },
+};
+cmds['personas-global-prompt'] = {
+  desc: 'personas-global-prompt [prompt|-] — get the global system prompt, or set it ("-" clears, control)',
+  fn: async (args) => {
+    if (!args.length) { out(await get('/api/v1/personas/global-prompt')); return; }
+    const prompt = args.join(' ');
+    await put('/api/v1/personas/global-prompt', { prompt: prompt === '-' ? '' : prompt });
+    console.log(prompt === '-' ? 'Global prompt cleared.' : 'Global prompt set.');
+  },
 };
 cmds['personas-generate'] = {
   desc: 'personas-generate <notes...> [--session id] — draft a persona prompt from notes (control)',
@@ -531,6 +556,18 @@ cmds.openapi = {
     const data = await get('/api/v1/openapi.json');
     if (file) { writeFileSync(file, JSON.stringify(data, null, 2)); console.log(`Wrote ${file}`); }
     else out(data);
+  },
+};
+cmds['file-get'] = {
+  desc: 'file-get <name> [out] — download a shared file or generated image (name: file-… or gen-/edit-…)',
+  fn: async ([name, outPath]) => {
+    requireArgs([name], 1, 'file-get <name> [out]');
+    const base = name.startsWith('gen-') || name.startsWith('edit-') ? '/api/v1/images/generated/' : '/api/v1/files/';
+    const res = await request('GET', base + encodeURIComponent(name), { raw: true });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const target = outPath || name;
+    writeFileSync(target, Buffer.from(await res.arrayBuffer()));
+    console.log(`Wrote ${target} (${res.headers.get('content-type') || 'octet-stream'}).`);
   },
 };
 cmds['raw'] = {

@@ -494,7 +494,6 @@ const FileBrowser: React.FC<{
     const raw = search.toLowerCase();
     const dirMode = raw.endsWith('/');
     const qd = dirMode ? raw.replace(/\/+$/, '') : '';
-    const qName = dirMode ? '' : raw;
     let alive = true;
     const t = setTimeout(async () => {
       if (dirMode && !qd) { setMatches(null); return; }
@@ -549,7 +548,6 @@ const FileBrowser: React.FC<{
       if (alive) setScanning(false);
     }, 250);
     return () => { alive = false; clearTimeout(t); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, roots, reposMode]);
 
   // Search rows: every match plus all of its ancestors, depth sorted
@@ -577,7 +575,6 @@ const FileBrowser: React.FC<{
       }
     }
     return out.sort((a, b) => a.path.localeCompare(b.path));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches, searchDirs, roots, accessFor]);
 
   // Session-change paths are recorded relative to the agent cwd → match by suffix

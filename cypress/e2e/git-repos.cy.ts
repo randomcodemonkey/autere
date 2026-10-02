@@ -9,19 +9,15 @@
  */
 
 describe('Git repositories feature', () => {
-  let sessionId: string;
   let scratch: string;
   let settingsSnapshot: any;
   let settingsConfigured = false;
-  let settingsConfiguredGit: string[] = [];
 
-  const repo = () => `${scratch}/seedrepo`;
   const plain = () => `${scratch}/plain`;
 
   before(() => {
     cy.visit('/');
     cy.location('pathname', { timeout: 15000 }).should('match', /\/session\//);
-    cy.location('pathname').then((p) => { sessionId = p.split('/')[2]; });
   });
 
   after(() => {
@@ -39,12 +35,11 @@ describe('Git repositories feature', () => {
   /** Navigate to the Repositories view. The view can bounce back to chat
    *  (alias-resolution replace navigation, settings-save pi restart), so
    *  keep pressing Files → Repositories until the root rows actually render. */
-  const gotoEdits = (tab: string) => {
+  const gotoEdits = () => {
     cy.visit('/');
     cy.location('pathname', { timeout: 15000 }).should('match', /\/session\//);
     cy.get('.status-badge', { timeout: 30000 }).should('exist');
-    cy.location('pathname').then((p) => {
-      sessionId = p.split('/')[2];
+    cy.location('pathname').then(() => {
       const switchView = (attempt = 0): void => {
         cy.get('body').then(($b) => {
           // 2 repo roots visible = the Repositories view stuck after any bounce
@@ -100,7 +95,7 @@ describe('Git repositories feature', () => {
 
   it('shows configured repos, and the root click opens folder + repo detail', { retries: 3 }, () => {
     setup();
-    gotoEdits('Repositories');
+    gotoEdits();
 
     // Both configured folders as root rows (no auto-expansion in repos mode)
     cy.get('.files-row.files-root', { timeout: 15000 }).should('have.length', 2);
@@ -128,7 +123,7 @@ describe('Git repositories feature', () => {
 
   it('offers git init for a non-repo folder and reloads detail after the action', { retries: 3 }, () => {
     setup();
-    gotoEdits('Repositories');
+    gotoEdits();
     cy.get('.files-row.files-root', { timeout: 15000 }).should('have.length', 2);
 
     // Non-repo root: actions live under the row's status button
@@ -151,7 +146,7 @@ describe('Git repositories feature', () => {
 
   it('file click shows Editor and Commits tabs with the file history', { retries: 3 }, () => {
     setup();
-    gotoEdits('Repositories');
+    gotoEdits();
     cy.get('.files-row').contains('seedrepo', { timeout: 15000 }).click();
     // Folder opened by the root click → open the file straight away
     cy.get('.files-row').contains('seed.txt', { timeout: 10000 }).click();

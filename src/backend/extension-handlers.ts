@@ -669,9 +669,3 @@ export function getExtensionHandler(name: string): ExtensionHandler | undefined 
   return handlers.get(name);
 }
 
-/**
- * Register a new extension handler at runtime.
- */
-export function registerExtensionHandler(handler: ExtensionHandler): void {
-  handlers.set(handler.name, handler);
-}

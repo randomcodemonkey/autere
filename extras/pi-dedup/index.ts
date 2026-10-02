@@ -120,7 +120,6 @@ export default function (pi: any) {
 			`⟪pi-dedup: identical ${event.toolName} call+result earlier — re-run the tool to see it⟫`;
 		const saved = text.length - pointer.length;
 		if (saved < MIN_SAVED_CHARS) return;
-		const approxTokens = Math.round(saved / CHARS_PER_TOKEN);
 		recordElision(key, saved);
 
 		return { content: [{ type: "text", text: pointer }] };

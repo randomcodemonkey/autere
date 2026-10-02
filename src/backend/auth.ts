@@ -275,9 +275,6 @@ export function getAuthTokenExpiry(): number {
   return AUTH_TOKEN_EXPIRY_MS;
 }
 
-export function getAuthPassword(): string {
-  return authPassword;
-}
 // ── Last session per user+token (each login session tracks its own) ──
 // Stored INSIDE the user's pi environment so it is automatically scoped:
 // another user (or an isolated e2e env) can never see, resume, or corrupt

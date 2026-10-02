@@ -180,44 +180,14 @@ export interface SSEMessage {
   sessionId?: string | null;
 }
 
-// ── Scheduled tasks ──
+// ── Scheduled tasks ── (types live in src/shared/tasks.ts)
 
-export interface ScheduledTask {
-  id: string;
-  name: string;
-  /** 5-field cron expression (minute hour dom month dow) */
-  schedule: string;
-  prompt: string;
-  /** Optional model override for this task's runs */
-  model?: string;
-  seedScript?: string;
-  resultScript?: string;
-  enabled: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export type TaskRunStatus = 'running' | 'success' | 'error';
-
-export interface TaskRunRecord {
-  runId: string;
-  taskId: string;
-  taskName: string;
-  trigger: 'schedule' | 'manual';
-  startedAt: number;
-  finishedAt?: number;
-  status: TaskRunStatus;
-  error?: string;
-}
-
-export interface TaskRunLog extends TaskRunRecord {
-  prompt: string;
-  seedOutput?: string;
-  agentResult?: string;
-  resultScriptOutput?: string;
-  /** Progress lines — t is UTC epoch ms, formatted in the user's locale/tz on render */
-  log: Array<{ t: number; line: string }>;
-}
+export type {
+  ScheduledTask,
+  TaskRunStatus,
+  TaskRunRecord,
+  TaskRunLog,
+} from '../../shared/tasks';
 
 // ── User management ──
 

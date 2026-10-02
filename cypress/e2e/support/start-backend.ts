@@ -155,116 +155,115 @@ function killPids(pids: number[], signal: NodeJS.Signals): void {
 }
 
 export async function startBackend(): Promise<void> {
-  return new Promise(async (resolve, reject) => {
-    // Kill anything a hard-killed previous run left behind
-    reapPreviousRun();
+  // Kill anything a hard-killed previous run left behind
+  reapPreviousRun();
 
-    const probed = await probeTestModels();
-    testModels = probed;
-    if (probed.length > 0) console.log(`[e2e] Using working model(s): ${probed.join(', ')}`);
+  const probed = await probeTestModels();
+  testModels = probed;
+  if (probed.length > 0) console.log(`[e2e] Using working model(s): ${probed.join(', ')}`);
 
-    if (backendProcess) {
-      resolve();
-      return;
-    }
+  if (backendProcess) return;
 
-    // Start autere backend on test port with auth disabled
-    // Isolated pi envs dir: tests must not read/write real user sessions
-    // (the default ~/.autere/pi-envs/admin is shared with the real
-    // dashboard instance for the admin user).
-    testEnvsDir = mkdtempSync(join(tmpdir(), 'autere-e2e-envs-'));
+  // Start autere backend on test port with auth disabled
+  // Isolated pi envs dir: tests must not read/write real user sessions
+  // (the default ~/.autere/pi-envs/admin is shared with the real
+  // dashboard instance for the admin user).
+  testEnvsDir = mkdtempSync(join(tmpdir(), 'autere-e2e-envs-'));
 
-    const args = [
-      'src/backend/index.ts',
-      '--port', String(TEST_PORT),
-      '--autere-auth', 'false',
-      // Always start a fresh pi session — resuming the last session would
-      // attach to whatever state a previous run left behind.
-      '--new-session',
-    ];
+  const args = [
+    'src/backend/index.ts',
+    '--port', String(TEST_PORT),
+    '--autere-auth', 'false',
+    // Always start a fresh pi session — resuming the last session would
+    // attach to whatever state a previous run left behind.
+    '--new-session',
+  ];
 
-    console.log(`[e2e] Starting autere backend on port ${TEST_PORT}...`);
+  console.log(`[e2e] Starting autere backend on port ${TEST_PORT}...`);
 
-    // Spawn detached so we get a process group we can safely kill later
-    backendProcess = spawn('npx', ['tsx', ...args], {
-      cwd: PROJECT_ROOT,
-      env: {
-        ...process.env,
-        PI_MONITOR_AUTH: 'false',
-        AUTERE_PI_ENVS_DIR: testEnvsDir,
-        // Users registry must not seed the real ~/.autere/autere-users.json
-        AUTERE_USERS_FILE: join(testEnvsDir, 'autere-users.json'),
-        // AUTERE_DIR covers per-user settings (gitRepositories etc.) —
-        // without it e2e writes into the REAL ~/.autere/users/<user>!
-        // 9router: piggyback on the live one (dev env) or own it (CI).
-        // 9router kills every other 9router process on startup, so exactly
-        // one 9router per machine — test backends never spawn their own.
-        AUTERE_NINE_ROUTER_URL: 'http://localhost:20128',
-        AUTERE_DIR: join(testEnvsDir, 'autere-state'),
-        // sandbox points at docker + the real home volume — off for tests
-        AUTERE_SANDBOX_IMAGE: 'off',
-        // Orphan record sharing: pi processes spawned by this backend
-        // append their pids to the run record (rpc-client reads it), so a
-        // SIGKILLed runner's detached pi is reaped by the next run.
-        AUTERE_RUN_RECORD_FILE: RUN_RECORD,
-        // Harness-provisioned model list (see probeTestModels) — applied to
-        // the test env's pi settings by the backend (pi-env.ts).
-        ...(testModels.length > 0 ? { AUTERE_TEST_MODELS: testModels.join(',') } : {}),
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: true,
-    });
+  // Spawn detached so we get a process group we can safely kill later
+  backendProcess = spawn('npx', ['tsx', ...args], {
+  cwd: PROJECT_ROOT,
+  env: {
+    ...process.env,
+    PI_MONITOR_AUTH: 'false',
+    AUTERE_PI_ENVS_DIR: testEnvsDir,
+    // Users registry must not seed the real ~/.autere/autere-users.json
+    AUTERE_USERS_FILE: join(testEnvsDir, 'autere-users.json'),
+    // AUTERE_DIR covers per-user settings (gitRepositories etc.) —
+    // without it e2e writes into the REAL ~/.autere/users/<user>!
+    // 9router: piggyback on the live one (dev env) or own it (CI).
+    // 9router kills every other 9router process on startup, so exactly
+    // one 9router per machine — test backends never spawn their own.
+    AUTERE_NINE_ROUTER_URL: 'http://localhost:20128',
+    AUTERE_DIR: join(testEnvsDir, 'autere-state'),
+    // sandbox points at docker + the real home volume — off for tests
+    AUTERE_SANDBOX_IMAGE: 'off',
+    // Orphan record sharing: pi processes spawned by this backend
+    // append their pids to the run record (rpc-client reads it), so a
+    // SIGKILLed runner's detached pi is reaped by the next run.
+    AUTERE_RUN_RECORD_FILE: RUN_RECORD,
+    // Harness-provisioned model list (see probeTestModels) — applied to
+    // the test env's pi settings by the backend (pi-env.ts).
+    ...(testModels.length > 0 ? { AUTERE_TEST_MODELS: testModels.join(',') } : {}),
+  },
+  stdio: ['pipe', 'pipe', 'pipe'],
+  detached: true,
+  });
 
-    // Persist the group AND enable orphan recording so the next run can
-    // reap it if this one is SIGKILLed. Positive pids are added by the
-    // backend itself (rpc-client) as pi processes appear — they live in
-    // their OWN detached groups, so a group kill of the backend never
-    // reaches them.
-    if (backendProcess.pid) {
-      try {
-        writeFileSync(RUN_RECORD, JSON.stringify({ pids: [-backendProcess.pid] }));
-      } catch {}
-    }
+  // Persist the group AND enable orphan recording so the next run can
+  // reap it if this one is SIGKILLed. Positive pids are added by the
+  // backend itself (rpc-client) as pi processes appear — they live in
+  // their OWN detached groups, so a group kill of the backend never
+  // reaches them.
+  if (backendProcess.pid) {
+  try {
+    writeFileSync(RUN_RECORD, JSON.stringify({ pids: [-backendProcess.pid] }));
+  } catch {}
+  }
 
+  const proc = backendProcess;
+
+  return new Promise((resolve, reject) => {
     let started = false;
     const timeout = setTimeout(() => {
-      if (!started) {
-        reject(new Error('Backend startup timeout'));
-      }
-    }, 30000);
+    if (!started) {
+      reject(new Error('Backend startup timeout'));
+    }
+  }, 30000);
 
-    backendProcess.stdout?.on('data', (data) => {
-      const output = data.toString();
-      console.log('[e2e stdout]', output.trim());
-      
-      if (output.includes('Dashboard running at') && !started) {
-        started = true;
-        clearTimeout(timeout);
-        console.log('[e2e] Backend started successfully');
-        resolve();
-      }
-    });
+    proc.stdout?.on('data', (data) => {
+    const output = data.toString();
+    console.log('[e2e stdout]', output.trim());
+    
+    if (output.includes('Dashboard running at') && !started) {
+      started = true;
+      clearTimeout(timeout);
+      console.log('[e2e] Backend started successfully');
+      resolve();
+    }
+  });
 
-    backendProcess.stderr?.on('data', (data) => {
-      const output = data.toString();
-      console.log('[e2e stderr]', output.trim());
-    });
+    proc.stderr?.on('data', (data) => {
+    const output = data.toString();
+    console.log('[e2e stderr]', output.trim());
+  });
 
-    backendProcess.on('error', (error) => {
-      if (!started) {
-        clearTimeout(timeout);
-        reject(error);
-      }
-    });
+    proc.on('error', (error) => {
+    if (!started) {
+      clearTimeout(timeout);
+      reject(error);
+    }
+  });
 
-    backendProcess.on('exit', (code) => {
-      console.log(`[e2e] Backend exited with code ${code}`);
-      backendProcess = null;
-      if (!started) {
-        clearTimeout(timeout);
-        reject(new Error(`Backend exited with code ${code}`));
-      }
-    });
+    proc.on('exit', (code) => {
+    console.log(`[e2e] Backend exited with code ${code}`);
+    backendProcess = null;
+    if (!started) {
+      clearTimeout(timeout);
+      reject(new Error(`Backend exited with code ${code}`));
+    }
+  });
   });
 }
 

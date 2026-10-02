@@ -14,7 +14,6 @@ interface SessionViewProps {
   isStreaming: boolean;
   /** Admin-only: show the sandbox workdir field in the new-session form */
   canSetWorkdir?: boolean;
-  onAbort: () => void;
   /** Creates the session: chosen persona id (null = none) + form name + sandbox workdirs + docker.sock opt-in */
   onNewSession: (personaId: string | null, sessionName: string, workdirs?: string[], mountDockerSocket?: boolean) => void;
   onSwitchSession: (sessionId: string) => void;
@@ -50,7 +49,7 @@ export function formatSessionTime(ts: number, locale?: string): string {
 export const SessionView: React.FC<SessionViewProps> = ({
   statusType, sessionId, sessionName,
   compacting, isStreaming, canSetWorkdir = false,
-  onAbort, onNewSession, onSwitchSession,
+  onNewSession, onSwitchSession,
   switching = false,
 }) => {
   const [query, setQuery] = useState('');

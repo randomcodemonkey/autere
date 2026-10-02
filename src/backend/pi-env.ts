@@ -238,7 +238,7 @@ const OFF = /^(off|none|disabled)$/i;
 export function resolveSandboxImage(user: string, setting?: string, env?: string): string {
   const admin = isRegisteredUser(user) && getUserRole(user) === 'admin';
   let set = String(setting ?? '').trim();
-  let envv = String(env ?? '').trim();
+  const envv = String(env ?? '').trim();
 
   // The off/none/disabled setting is an admin-only escape hatch; a
   // server-level AUTERE_SANDBOX_IMAGE=off is the operator kill switch (e2e).

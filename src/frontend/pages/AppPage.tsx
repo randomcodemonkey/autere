@@ -12,8 +12,8 @@ import { SessionView } from '../components/SessionModal';
 import { url, basePath } from '../base-path';
 import { API } from '../api-paths';
 import { uiSessionName } from '../session-name';
-import { useSessionStream, EMPTY_STATS } from '../hooks/useSessionStream';
-import type { StreamMessage, SSEMessage } from '../types';
+import { useSessionStream } from '../hooks/useSessionStream';
+import type { SSEMessage } from '../types';
 
 /** Combine base auth/SSE status with session streaming state */
 function computeStatus(baseType: string, baseText: string, s: { compacting?: boolean; isStreaming?: boolean }): { type: string; text: string } {
@@ -132,12 +132,7 @@ export function AppPage({
         body: JSON.stringify({ text, sessionId: targetSessionRef.current }),
       });
     } catch {}
-  }, []);
-
-  // Badge click: on desktop the status card lives in the always-visible left
-  // column — scroll it into view and flash it so the click gives visible
-  // feedback. (On mobile onViewChange('status') shows the card full-screen.)
-  const handleStatusClick = useCallback(() => {}, []);
+  }, [setPendingUser, targetSessionRef]);
 
   const handleLogout = useCallback(async () => {
     await logout();
@@ -163,7 +158,7 @@ export function AppPage({
   const handleRestart = useCallback(async () => {
     setRestarting(true);
     try { await fetch(url(API.session.restart), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) }); } catch {}
-  }, [setRestarting]);
+  }, [setRestarting, targetSessionRef]);
 
   const handleRestartBackend = useCallback(async () => {
     if (!confirm('Restart the entire autere backend? All users will be disconnected.')) return;
@@ -175,7 +170,7 @@ export function AppPage({
 
   const handleAbort = useCallback(async () => {
     try { await fetch(url(API.session.abort), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) }); } catch {}
-  }, []);
+  }, [targetSessionRef]);
 
   const handleCompact = useCallback(async () => {
     try {
@@ -186,7 +181,7 @@ export function AppPage({
       console.error('Failed to compact:', err);
       setSessionError('Failed to compact');
     }
-  }, []);
+  }, [setSessionError, targetSessionRef]);
 
   const handleAbortCompaction = useCallback(async () => {
     // Confirm lives at the button (SessionModal) — this handler must fire directly.
@@ -198,7 +193,7 @@ export function AppPage({
       console.error('Failed to abort compaction:', err);
       setSessionError('Failed to abort compaction');
     }
-  }, []);
+  }, [setSessionError, targetSessionRef]);
 
   const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[], mountDockerSocket?: boolean) => {
     // Relative (or ~) workdir paths are allowed: the backend resolves them
@@ -244,7 +239,7 @@ export function AppPage({
         setCreatingSession(false);
         setSessionError('Failed to create session');
       });
-  }, [navigate, resetSessionUI]);
+  }, [navigate, resetSessionUI, setCreatingSession, setSessionError, setSessionState]);
 
   const handleSwitchSession = useCallback((sessionId: string) => {
     setSessionError(null);
@@ -256,7 +251,7 @@ export function AppPage({
     // switch.) The modal stays open with a "Switching session…" indicator
     // until the switch completes — it's closed on success below.
     navigate(`/session/${sessionId}`);
-  }, [navigate]);
+  }, [navigate, setSessionError]);
 
   const activeModelId = sessionState.model?.id || null;
   // Optimistic pending copies whose text is already committed to the real
@@ -340,7 +335,6 @@ export function AppPage({
               compacting={sessionState.compacting}
               isStreaming={sessionState.isStreaming}
               canSetWorkdir={userRole === 'admin'}
-              onAbort={handleAbort}
               onNewSession={handleNewSession}
               onSwitchSession={handleSwitchSession}
               switching={switchingSession}

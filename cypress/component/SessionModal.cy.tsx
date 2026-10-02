@@ -17,7 +17,6 @@ function mountModal(props: Partial<Parameters<typeof SessionView>[0]> = {}) {
       sessionName="First"
       compacting={false}
       isStreaming={false}
-      onAbort={cy.stub()}
       onNewSession={cy.stub().as('onNewSession')}
       onSwitchSession={cy.stub().as('onSwitchSession')}
       {...props}

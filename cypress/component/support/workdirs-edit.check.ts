@@ -4,7 +4,7 @@
  * 2. ProcessManager.setWorkdirs — persists opts, respawns, inherits
  * Run: npx tsx cypress/component/support/workdirs-edit.check.ts
  */
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 

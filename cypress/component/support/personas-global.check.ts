@@ -6,7 +6,6 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = join(new URL('..', import.meta.url).pathname, '..', '..');
 const mod = await import(join(REPO_ROOT, 'extras/pi-personas/index.ts'));
@@ -18,7 +17,7 @@ const check = (label: string, cond: boolean) => {
 };
 
 /** sleep synchronously — statSync().mtimeMs granularity vs same-ms writes */
-const busy = (ms: number) => { const t = Date.now(); while (Date.now() - t < ms) {} };
+const busy = (ms: number) => { const t = Date.now(); while (Date.now() - t < ms) ; };
 
 function freshEnv() {
   const env = mkdtempSync(join(tmpdir(), 'personas-global-'));
@@ -31,7 +30,7 @@ function freshEnv() {
 }
 
 {
-  const { env, ctx, handler, w } = freshEnv() as any;
+  const { ctx, handler, w } = freshEnv() as any;
 
   // 1: no global, no persona -> inert
   check('inert', handler({ systemPrompt: 'BASE' }, ctx) === undefined);
@@ -63,7 +62,7 @@ function freshEnv() {
 {
   // Persona-marker semantics with a global prompt present
   const { ctx, handler, w } = freshEnv() as any;
-  const busy = (ms: number) => { const t = Date.now(); while (Date.now() - t < ms) {} };
+  const busy = (ms: number) => { const t = Date.now(); while (Date.now() - t < ms) ; };
   const setg = (g: string) => { busy(3); w('persona-global.json', { prompt: g }); busy(3); };
   const setb = (b: boolean) => { busy(3); w('persona-active.json', { 'sess.jsonl': b ? { id: 'p1', name: 'Derp', prompt: 'PERSONA RULES' } : {} }); busy(3); };
 

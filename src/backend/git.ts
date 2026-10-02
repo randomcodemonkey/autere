@@ -6,13 +6,12 @@
  * helpers below directly from routes with an unvalidated path.
  */
 
-import { execFile, execFileSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { existsSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { resolve } from 'path';
 import type { DirEntry } from './files.js';
 import { resolveInRoots, type FileRoot, type BrowseResult } from './files.js';
-import { log } from './logger.js';
 import { getGitRepos } from './user-settings.js';
 
 export interface RepoEntry extends FileRoot { isRepo: boolean }
@@ -69,12 +68,6 @@ export function fileDiff(user: string, path: string): BrowseResult<{ diff: strin
     return { error: `git diff failed: ${err.message}`, status: 500 };
   }
 }
-
-const async = (p: string, args: string[]) =>
-  new Promise<string>((res, rej) => execFile('git', ['-C', p, ...args], { maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
-    if (err) rej(new Error((stderr || err.message).trim()));
-    else res(stdout);
-  }));
 
 const sync = (p: string, args: string[]) =>
   execFileSync('git', ['-C', p, ...args], { maxBuffer: 8 * 1024 * 1024 }).toString();
@@ -215,7 +208,7 @@ export function cloneRepo(user: string, path: string, remote: unknown): BrowseRe
   if (typeof remote !== 'string' || !remote.trim()) return { error: 'Remote URL is required', status: 400 };
   const url = remote.trim();
   // Trust-boundary validation: shell-safe charset, no option injection
-  if (!/^[a-zA-Z0-9~._\/:@+-]+$/.test(url) || url.startsWith('-')) return { error: 'Invalid remote URL', status: 400 };
+  if (!/^[a-zA-Z0-9~._/:@+-]+$/.test(url) || url.startsWith('-')) return { error: 'Invalid remote URL', status: 400 };
   const t = resolveInRepos(user, path);
   if ('error' in t) return t;
   if (t.access !== 'rw') return { error: 'Directory is read-only', status: 403 };

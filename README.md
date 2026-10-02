@@ -39,7 +39,13 @@ docker run -d --name autere \
 
 The `/home/autere/.autere` and `/home/autere/.pi` must be mounted as named docker volumes if using sandboxed pi containers. It is strongly suggested to always mount them as named volumes (not bind mounts) so it is possible to switch to sandboxed mode later.
 
-Once started, the web app is available at **http://localhost:3456**. Default user `admin`, password via `INITIAL_PASSWORD` (`admin` when unset) and 9router, if enabled, is available at **http://localhost:20128**
+Once started, the web app is available at **http://localhost:3456**; 9router, if enabled, at **http://localhost:20128**.
+
+### Authentication
+
+Auth is on by default (`AUTERE_AUTH=false` disables it — only for private/dev instances). The fixed `admin` account is seeded on first start from `--autere-password` (config file) or `INITIAL_PASSWORD` (defaults to `admin`) and is not forced to rotate it — **set a real `INITIAL_PASSWORD` with `-e INITIAL_PASSWORD=<secret>`** before first start. Users created later (via the admin Users page, or `autere user-create`) must change their generated/seed password at first login before the API accepts anything else.
+
+The CLI authenticates with the same accounts (`autere login admin <password>`), storing its token in `~/.autere/cli-config.json`.
 
 Autere can also be ran without 9router, by defining the `AUTERE_PROVIDER` env value to a valid `pi` provider. With this mode, you must manually configure the provider with `pi` through the running autere docker container
 
@@ -56,7 +62,7 @@ Enter `/login` to pi and follow the instructions for configuring your selected p
 |----------|---------|-------------|
 | `AUTERE_PORT` | 3456 | HTTP server port |
 | `AUTERE_AUTH` | true | Enable/disable authentication |
-| `INITIAL_PASSWORD` | `admin` | Initial password for Autere `admin` user and 9router |
+| `INITIAL_PASSWORD` | `admin` | First-boot password for the `admin` user and 9router — should always be set in docker deployments |
 | `AUTERE_PROVIDER` | - | Pi provider |
 | `AUTERE_MODEL` | - | Pi model ID |
 | `AUTERE_IDLE_TIMEOUT` | 30 | Minutes before idle pi process is killed |
