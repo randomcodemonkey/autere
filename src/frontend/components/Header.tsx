@@ -131,11 +131,12 @@ export const Header: React.FC<HeaderProps> = ({
     }
   }
   tabs = [...tabs].sort((a, b) => (a.sessionName || a.id).localeCompare(b.sessionName || b.id));
-  // Opt/Alt + digit (1..8) jumps to that session tab; the session must be
-  // known (tabs rendered) — digits beyond the cap do nothing
+  // Ctrl+Shift + digit (1..8) jumps to that session tab; the session must be
+  // known (tabs rendered) — digits beyond the cap do nothing. (Alt/opt is
+  // reserved for typing special characters on many layouts.)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey) return;
       const m = /^Digit([1-9])$/.exec(e.code);
       if (!m) return;
       const n = Number(m[1]);
@@ -178,7 +179,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               key={s.id}
               className={`session-tab ${statusType === 'disconnected' ? 'offline' : s.compacting ? 'compacting' : s.active ? (s.streaming ? 'working' : 'running') : 'idle'}`}
-              title={`Switch to ${s.sessionName || s.id}${ti < 9 ? ` (⌥/Alt+${ti + 1})` : ''}`}
+              title={`Switch to ${s.sessionName || s.id}${ti < 9 ? ` (Ctrl+Shift+${ti + 1})` : ''}`}
               onClick={() => onRunningSessionClick?.(s.id)}
             >
               <span className="session-badge-text">{label}</span>
