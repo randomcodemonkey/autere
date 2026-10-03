@@ -4,7 +4,7 @@ export interface ThemeOption { id: ThemeId; name: string; }
 
 export const THEMES: ThemeOption[] = [
   { id: 'midnight', name: 'Midnight' },
-  { id: 'gray', name: 'Gray' },
+  { id: 'gray', name: 'AI Gray' },
   { id: 'light', name: 'Light' },
 ];
 
