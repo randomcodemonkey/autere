@@ -20,6 +20,7 @@ export const API = {
     logout: `${P}/auth/logout`,
     status: `${P}/auth/status`,
     changePassword: `${P}/auth/change-password`,
+    theme: `${P}/auth/theme`,
   },
 
   tokens: {

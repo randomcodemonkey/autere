@@ -87,7 +87,7 @@ describe('Header', () => {
     cy.get('.view-menu-dropdown').should('not.exist');
     cy.get('.view-menu-toggle').click({ force: true });
     cy.get('.view-menu-dropdown').should('exist');
-    cy.get('.view-menu-item').should('have.length', 6);
+    cy.get('.view-menu-item').should('have.length', 7);
     cy.get('.view-menu-item.active').should('contain', 'Chat');
     cy.get('.view-menu-item').contains('Agent/System').click({ force: true });
     cy.get('@onViewChange').should('have.been.calledWith', 'status');

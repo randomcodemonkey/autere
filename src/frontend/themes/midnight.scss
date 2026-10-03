@@ -1,0 +1,100 @@
+// "Midnight tide" — dark blue-charcoal surfaces, moonlit cool text,
+// aurora teal-cyan accent. Default theme.
+:root {
+  // surfaces (deepest first)
+  --c-surface-deep: #12141c; // near-black panels
+  --c-surface: #161923;      // standard panel/input background
+  --c-surface-2: #1e2230;    // raised surface / button base
+  --c-surface-3: #232839;    // slightly raised surface
+  --c-muted-bg: #1a1e2b;     // muted background band
+  --c-surface-tinted: #14202b;      // teal-tinged dark panels
+  --c-surface-tinted-2: #1b3847;
+
+  --c-white: #ffffff;        // button text on dark pill backgrounds
+  --c-input-bg: #262b3d;     // chat input — a step brighter than the card
+
+  // borders
+  --c-border: #2e3548;
+  --c-border-2: #3f4862;     // stronger border / hover border
+
+  // text (cool moonlit whites, bright to faint)
+  --c-text: #e7eaf3;         // primary text
+  --c-text-2: #dde1ec;       // slightly dimmer primary
+  --c-text-muted: #c6ccdb;
+  --c-text-dim: #b6bdd0;
+  --c-text-soft: #a7afc4;
+  --c-text-faint: #939bb2;
+  --c-text-ghost: #8189a2;
+  --c-text-ghost-2: #7f879e;
+  --c-text-dimmer: #767e95;
+  --c-text-dimmest: #6b7389;
+
+  --c-overlay-dark: rgba(0, 0, 0, 0.85);
+  --c-overlay: rgba(0, 0, 0, 0.5);
+  --c-overlay-2: rgba(0, 0, 0, 0.4);
+  --c-overlay-3: rgba(0, 0, 0, 0.6);
+  --c-hover-tint: rgba(255, 255, 255, 0.06);
+  --c-hover-tint-2: rgba(255, 255, 255, 0.08);
+  --c-hover-tint-3: rgba(255, 255, 255, 0.1);
+  --c-hover-tint-4: rgba(255, 255, 255, 0.12);
+  --c-hover-tint-5: rgba(255, 255, 255, 0.15);
+  --c-hover-tint-6: rgba(255, 255, 255, 0.25);
+  --c-hover-tint-7: rgba(255, 255, 255, 0.04);
+  --c-white-tint: rgba(255, 255, 255, 0.7);
+  --c-white: #fff;
+
+  // status colors
+  --c-success: #4ade80;
+  --c-success-bg: #0a3322;
+  --c-success-border: #2a5a3a;
+  --c-success-bright: #86efac;
+  --c-green: #7bc47f;
+  --c-green-strong: #4caf50;
+  --c-green-border: #1a4a2a;
+  --c-green-deep: #14532d;
+  --c-green-tint: #1a2a1a;
+  --c-danger: #f87171;
+  --c-danger-bg: #3b1216;
+  --c-danger-strong: #f44336;
+  --c-danger-bright: #fca5a5;
+  --c-danger-border: #5c1a1a;
+  --c-danger-deep: #450a0a;
+  --c-danger-tint: #5a2a2a;
+  --c-danger-glow: rgba(239, 68, 68, 0.08);
+  --c-red-deep: #a33;
+  --c-warning: #fbbf24;
+  --c-warning-bg: #3d3000;
+  --c-warning-bright: #fde68a;
+  --c-info: #60a5fa;
+  --c-info-bg: #1e293b;
+  --c-info-bright: #93c5fd;
+  --c-info-soft: #9cc4e4;
+  --c-amber: #d97706;
+
+  // accent blues + brand one-offs
+  --c-accent: #3b6ea5;
+  --c-accent-ring: rgba(59, 110, 165, 0.4);
+  --c-accent-dim: #1e3a5f;
+  --c-accent-deep: #1a2332;
+  --c-accent-border: #2a4060;
+  --c-accent-alt: #3d5a80;
+  --c-blue-strong: #2563eb;
+  --c-blue-bg: #0a1a2a;
+  --c-gold: #f0b429;
+  --c-gold-dim: #d7a45f;
+  --c-gold-bg: #4a3a00;
+  --c-brown-bg: #33291d;
+  --c-gold-bg-3: #2a2200;
+  --c-gold-border: #1f1900;
+  --c-indigo: var(--c-indigo);
+  --c-purple: #a78bfa;
+  --c-purple-deep: #6d28d9;
+  --c-purple-deepest: #4c1d95;
+  --c-pink: #f0abfc;
+  --c-gray-blue: #9ca3af;
+  --c-gray-blue-dim: #6b7280;
+
+  // legacy aliases
+  --c-muted: var(--c-text-ghost);
+  --c-muted-bg-legacy: var(--c-muted-bg);
+}

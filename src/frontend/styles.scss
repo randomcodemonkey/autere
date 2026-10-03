@@ -2,103 +2,11 @@
 // Converted from inline styles in index.html
 
 // -- Design tokens ---------------------------------------------------------------
-// Single source of truth for semantic colors. Components should reference
-// these instead of raw hex values so the UI stays consistent.
-:root {
-  // surfaces (dark grays, deepest first)
-  --c-surface-deep: #181818; // near-black panels
-  --c-surface: #1a1a1a;      // standard panel/input background
-  --c-surface-2: #222;       // raised surface / button base
-  --c-surface-3: #252525;    // slightly raised surface
-  --c-muted-bg: var(--c-muted-bg);     // muted background band
-  --c-surface-tinted: #1d1d27;      // indigo-tinged dark panels
-  --c-surface-tinted-2: #2a2a4e;
-
-  // borders
-  --c-border: #333;
-  --c-border-2: #444;        // stronger border / hover border
-
-  // text grays (bright to faint)
-  --c-text: #e0e0e0;         // primary text
-  --c-text-2: #ddd;          // slightly dimmer primary (merged with #d4d4d4)
-  --c-text-muted: #ccc;
-  --c-text-dim: #bbb;
-  --c-text-soft: #aaa;
-  --c-text-faint: #999;      // alias: --c-muted
-  --c-text-ghost: #888;      // alias: --c-muted (legacy)
-  --c-text-ghost-2: #777;
-  --c-text-dimmer: #666;
-  --c-text-dimmest: #555;
-
-  // overlays & tints
-  --c-overlay-dark: rgba(0, 0, 0, 0.85);
-  --c-overlay: rgba(0, 0, 0, 0.5);
-  --c-overlay-2: rgba(0, 0, 0, 0.4);
-  --c-overlay-3: rgba(0, 0, 0, 0.6);
-  --c-hover-tint: rgba(255, 255, 255, 0.06);
-  --c-hover-tint-2: rgba(255, 255, 255, 0.08);
-  --c-hover-tint-3: rgba(255, 255, 255, 0.1);
-  --c-hover-tint-4: rgba(255, 255, 255, 0.12);
-  --c-hover-tint-5: rgba(255, 255, 255, 0.15);
-  --c-hover-tint-6: rgba(255, 255, 255, 0.25);
-  --c-hover-tint-7: rgba(255, 255, 255, 0.04);
-  --c-white-tint: rgba(255, 255, 255, 0.7);
-  --c-white: #fff;
-
-  // status colors
-  --c-success: #4ade80;
-  --c-success-bg: #0a3322;
-  --c-success-border: #2a5a3a;
-  --c-success-bright: #86efac;
-  --c-green: #7bc47f;
-  --c-green-strong: #4caf50;
-  --c-green-border: #1a4a2a;
-  --c-green-deep: #14532d;
-  --c-green-tint: #1a2a1a;
-  --c-danger: #f87171;
-  --c-danger-bg: #3b1216;
-  --c-danger-strong: #f44336;
-  --c-danger-bright: #fca5a5;
-  --c-danger-border: #5c1a1a;
-  --c-danger-deep: #450a0a;
-  --c-danger-tint: #5a2a2a;
-  --c-danger-glow: rgba(239, 68, 68, 0.08);
-  --c-red-deep: #a33;
-  --c-warning: #fbbf24;
-  --c-warning-bg: #3d3000;
-  --c-warning-bright: #fde68a;
-  --c-info: #60a5fa;
-  --c-info-bg: #1e293b;
-  --c-info-bright: #93c5fd;
-  --c-info-soft: #9cc4e4;
-  --c-amber: #d97706;
-
-  // accent blues + brand one-offs
-  --c-accent: #3b6ea5;
-  --c-accent-ring: rgba(59, 110, 165, 0.4);
-  --c-accent-dim: #1e3a5f;
-  --c-accent-deep: #1a2332;
-  --c-accent-border: #2a4060;
-  --c-accent-alt: #3d5a80;
-  --c-blue-strong: #2563eb;
-  --c-blue-bg: #0a1a2a;
-  --c-gold: #f0b429;
-  --c-gold-dim: #d7a45f;
-  --c-gold-bg: #4a3a00;
-  --c-brown-bg: #33291d;
-  --c-gold-bg-3: #2a2200;
-  --c-indigo: var(--c-indigo);
-  --c-purple: #a78bfa;
-  --c-purple-deep: #6d28d9;
-  --c-purple-deepest: #4c1d95;
-  --c-pink: #f0abfc;
-  --c-gray-blue: #9ca3af;
-  --c-gray-blue-dim: #6b7280;
-
-  // legacy aliases
-  --c-muted: var(--c-text-ghost);
-  --c-muted-bg-legacy: var(--c-muted-bg);
-}
+// Theme palettes live in src/frontend/themes/*.scss — one file per theme.
+// midnight is the :root default; others override via html[data-theme='…'].
+@use './themes/midnight';
+@use './themes/gray';
+@use './themes/light';
 
 // -- Badges ----------------------------------------------------------------------
 // Small pill labels. Base class provides shape/typography; semantic
@@ -900,7 +808,6 @@ body {
   border-radius: 0.75rem;
   border: 1px solid var(--c-border);
   padding: 0.5rem 0.625rem;
-  min-height: 18rem;
   flex-shrink: 0;
 
   &.collapsed {
@@ -932,7 +839,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.625rem;
   cursor: pointer;
   user-select: none;
   // Separator under every card header, like the settings section heads
@@ -989,7 +896,9 @@ body {
     overflow-y: visible;
   }
 
-  // Mobile: one full-screen card at a time (driven by .view-* on #main-app)
+  // Mobile: one full-screen card at a time — StatusCard is mounted on every
+  // view, so .cards-scroll shows only in the status view; .chat-wrapper holds
+  // conditionally-rendered views and can stay generic.
   #main-app .cards-scroll {
     display: none;
   }
@@ -1001,16 +910,14 @@ body {
     min-height: 0;
   }
 
-  #main-app .chat-wrapper {
+  // status view renders nothing in the chat area — free it from flexing
+  // against .cards-scroll (which it would split 50/50)
+  #main-app.view-status .chat-wrapper {
     display: none;
   }
 
-  #main-app.view-chat .chat-wrapper,
-  #main-app.view-settings .chat-wrapper,
-  #main-app.view-tasks .chat-wrapper,
-  #main-app.view-edits .chat-wrapper,
-  #main-app.view-users .chat-wrapper,
-  #main-app.view-sessions .chat-wrapper {
+
+  #main-app .chat-wrapper {
     display: flex;
   }
 
@@ -1581,20 +1488,20 @@ body {
 .stat-value {
   font-size: 1.75rem;
   font-weight: 700;
-  color: var(--c-text);
+  color: var(--c-text-soft);
   font-variant-numeric: tabular-nums;
 }
 
 .stat-value-compact {
   font-size: 1.2rem;
   font-weight: 700;
-  color: var(--c-text);
+  color: var(--c-text-soft);
   font-variant-numeric: tabular-nums;
 }
 
 .stat-label {
   font-size: 0.75rem;
-  color: var(--c-text-ghost-2);
+  color: var(--c-text-faint);
   margin-top: 0.25rem;
 }
 
@@ -1733,7 +1640,7 @@ body {
 .context-info {
   font-size: 1.2rem;
   font-weight: 700;
-  color: var(--c-text);
+  color: var(--c-text-soft); // same prominence as the other usage numbers
 }
 
 // -- Progress Bar ---------------------------------------------------------------
@@ -1850,13 +1757,11 @@ body {
 .agent-card > .card {
   background: transparent;
   border: none;
-  border-top: 1px solid var(--c-border);
   border-radius: 0;
   padding: 0.5rem 0.625rem 0.625rem;
-
-  &:first-of-type {
-    border-top: none;
-  }
+  // nested flat subsections, not view cards — no .card fill-height/min-height
+  min-height: 0;
+  flex: none;
 }
 
 // Pending steer/follow-up count badge on chat action buttons
@@ -2691,7 +2596,7 @@ body {
 
 .chat-input {
   flex: 1;
-  background: var(--c-surface-deep);
+  background: var(--c-input-bg);
   border: 1px solid var(--c-border-2);
   border-radius: 0.5rem;
   padding: 0.6rem 0.75rem;
@@ -2754,6 +2659,12 @@ body {
 .chat-followup-btn {
   background: var(--c-accent-dim) !important;
   border-color: var(--c-blue-strong) !important;
+}
+
+// Both use "dark pill" backgrounds in every theme — text stays light.
+.chat-steer-btn,
+.chat-followup-btn {
+  color: var(--c-white) !important;
 }
 
 // -- Tools ----------------------------------------------------------------------
@@ -3561,7 +3472,6 @@ body {
 
   .card-header {
     padding: 0.5rem 0.625rem;
-    margin-bottom: 0;
   }
 
   .settings-error,
@@ -3681,7 +3591,7 @@ body {
   }
 
   // Mobile: dropdown replaces the category list
-  .settings-menu-select { display: block; margin-top: 0.75rem; }
+  .settings-menu-select { display: block; }
   .settings-menu { display: none; }
 
   // The selected section scrolls inside the card while the category dropdown
@@ -3914,7 +3824,7 @@ body {
 
 .btn-abort {
   background: var(--c-gold-bg-3);
-  border-color: var(--c-gold-bg);
+  border-color: var(--c-gold-border);
   color: var(--c-warning);
 
   &:hover:not(:disabled) {
@@ -4995,4 +4905,27 @@ textarea.settings-input {
       min-width: 12rem;
     }
   }
+}
+
+// -- User card (self service) ---------------------------------------------------
+.user-card {
+  overflow-y: auto;
+
+  .settings-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem; // standard section gap (== settings-layout)
+  }
+
+  .user-card-name {
+    color: var(--c-text-faint);
+    font-size: 0.8rem;
+  }
+  .user-card-msg { color: var(--c-warning); font-size: 0.8rem; }
+  .btn-row-wrap { margin-top: 0.25rem; }
+}
+
+// Settings-field-width rule: fields can hold inline buttons
+:where(.user-card) .data-table-actions {
+  justify-content: flex-end;
 }

@@ -24,7 +24,7 @@ import { fileURLToPath } from 'url';
 import { ProcessManager } from './process-manager.js';
 import { getUser, getUserRole, hasRole, verifyCredentials, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, removeUserTokens, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, getLastSession, isRegisteredUser, userMustChangePassword, listApiTokens, createApiToken, deleteApiToken } from './auth.js';
 import { getClientSession, setClientSession, registerClient, broadcastToUser, viewedSessions, hubUsers } from './client-hub.js';
-import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword, getUserAllowedDirs, getUserMountDockerSocket } from './users.js';
+import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword, getUserAllowedDirs, getUserMountDockerSocket, getUserTheme, setUserTheme } from './users.js';
 import { withDedupSections, withJanitorSections } from './extension-handlers.js';
 import { copilotStatsFor } from './extension-handlers.js';
 import type { CopilotTotals } from './copilot-totals.js';
@@ -454,8 +454,21 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           user,
           role: user ? getUserRole(user) : null,
           mustChangePassword: user && getAuthEnabled() ? userMustChangePassword(user) : false,
+          theme: user ? getUserTheme(user) : null,
         },
       });
+    },
+  });
+
+  // Self-service UI theme ("User" view) — nothing else is self-changeable
+  route({
+    method: 'PUT', path: `${API_PREFIX}/auth/theme`, template: `${API_PREFIX}/auth/theme`,
+    role: 'chat', tag: 'Auth', summary: 'Set the caller UI theme',
+    handler: async (c) => {
+      const body = await readBody(c.req);
+      const err = setUserTheme(c.user, String(body.theme ?? ''));
+      if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
+      sendJSON(c.res, { success: true });
     },
   });
 

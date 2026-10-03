@@ -36,6 +36,8 @@ interface StoredUser {
   allowedDirs: AllowedDir[];
   /** Sandbox sessions for this user may mount the host docker.sock */
   mountDockerSocket: boolean;
+  /** UI color theme (selected by the user, applied per browser) */
+  theme?: string;
 }
 
 export interface PublicUser {
@@ -45,6 +47,7 @@ export interface PublicUser {
   allowedDirs: AllowedDir[];
   /** Sandbox sessions may mount the host docker.sock — admin-granted */
   mountDockerSocket: boolean;
+  theme?: string;
 }
 
 const registry: Record<string, StoredUser> = {};
@@ -98,6 +101,7 @@ export function initUserRegistry(seed: UserRegistrySeed) {
             mustChangePassword: !!u.mustChangePassword,
             allowedDirs: Array.isArray(u.allowedDirs) ? u.allowedDirs : [],
             mountDockerSocket: !!u.mountDockerSocket,
+            theme: typeof u.theme === 'string' ? u.theme : undefined,
           };
         }
       }
@@ -194,7 +198,25 @@ function toPublic(name: string): PublicUser {
     mustChangePassword: u.mustChangePassword,
     allowedDirs: u.allowedDirs.map((d) => ({ ...d })),
     mountDockerSocket: !!u.mountDockerSocket,
+    theme: u.theme,
   };
+}
+
+// ── UI theme (per user, self-service) ──
+
+export const THEMES = ['midnight', 'gray', 'light'] as const;
+
+export function getUserTheme(user: string): string {
+  return registry[user]?.theme ?? 'midnight';
+}
+
+export function setUserTheme(username: string, theme: string): string | null {
+  const entry = registry[username];
+  if (!entry) return 'User not found';
+  if (!(THEMES as readonly string[]).includes(theme)) return 'Unknown theme';
+  entry.theme = theme;
+  saveRegistry();
+  return null;
 }
 
 export function listUsers(): PublicUser[] {

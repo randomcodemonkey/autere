@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { url } from '../base-path';
+import { applyTheme } from '../theme';
 import { API } from '../api-paths';
 
 export function useAuth() {
@@ -27,6 +28,7 @@ export function useAuth() {
       setUserRole(data.data.role || null);
       setUsername(data.data.user || null);
       setMustChangePassword(!!data.data.mustChangePassword);
+      applyTheme(data.data.theme); // per-user theme, persisted server-side
       return true;
     } catch {
       return false;

@@ -1,0 +1,89 @@
+// "Daylight" — light mode: airy cool paper surfaces, graphite text.
+// Inherits status hue families from the midnight :root but re-tunes them
+// for contrast on light surfaces.
+html[data-theme='light'] {
+  // surfaces (deepest first — on light, deepest = page background)
+  --c-surface-deep: #e9ecf3; // near-white page background
+  --c-surface: #f7f8fb;      // standard panel/input background
+  --c-surface-2: #f2f4f9;    // raised surface / button base
+  --c-surface-3: #e3e7ef;    // slightly raised surface
+  --c-muted-bg: #e7eaf1;     // muted background band
+  --c-surface-tinted: #e7eef4;      // teal-tinged panels
+  --c-surface-tinted-2: #d2e3ec;
+
+  // borders
+  --c-border: #ccd2df;
+  --c-border-2: #b3bacb;     // stronger border / hover border
+
+  // text (graphite, dark to faint — high contrast on paper surfaces)
+  --c-text: #161b26;         // primary text
+  --c-text-2: #222837;
+  --c-text-muted: #333a4c;
+  --c-text-dim: #454d61;
+  --c-text-soft: #565e73;
+  --c-text-faint: #67708a;
+  --c-text-ghost: #8089a0;
+  --c-text-ghost-2: #8f98ad;
+  --c-text-dimmer: #9ca5b6;
+  --c-text-dimmest: #b8bec9;
+  --c-input-bg: #ffffff;
+
+  // overlays & tints re-tuned for light
+  --c-overlay-dark: rgba(15, 18, 28, 0.72);
+  --c-overlay: rgba(15, 18, 28, 0.4);
+  --c-overlay-2: rgba(15, 18, 28, 0.32);
+  --c-overlay-3: rgba(15, 18, 28, 0.48);
+  --c-hover-tint: rgba(16, 20, 32, 0.05);
+  --c-hover-tint-2: rgba(16, 20, 32, 0.08);
+  --c-hover-tint-3: rgba(16, 20, 32, 0.1);
+  --c-hover-tint-4: rgba(16, 20, 32, 0.12);
+  --c-hover-tint-5: rgba(16, 20, 32, 0.16);
+  --c-hover-tint-6: rgba(16, 20, 32, 0.25);
+  --c-hover-tint-7: rgba(16, 20, 32, 0.03);
+
+  // status families
+  --c-success: #15803d;
+  --c-success-bg: #ddf3e3;
+  --c-success-border: #9fd4af;
+  --c-success-bright: #1da54d;
+  --c-green: #2f855a;
+  --c-green-strong: #15803d;
+  --c-green-border: #b8dfc6;
+  --c-green-deep: #eaf6ee;
+  --c-green-tint: #e4f2e8;
+  --c-danger: #dc2626;
+  --c-danger-bg: #fce4e4;
+  --c-danger-strong: #dc2626;
+  --c-danger-bright: #ef6a6a;
+  --c-danger-border: #efa9a9;
+  --c-danger-deep: #feecec;
+  --c-danger-tint: #fadddd;
+  --c-danger-glow: rgba(239, 68, 68, 0.12);
+  --c-red-deep: #c0392b;
+  --c-warning: #b45309;
+  --c-warning-bg: #fdf0d5;
+  --c-warning-bright: #d97706;
+  --c-info: #1d6fb8;
+  --c-info-bg: #e3edfa;
+  --c-info-bright: #2d86d8;
+  --c-info-soft: #6b93c4;
+  --c-amber: #b45309;
+
+  // gold family: light-orange backgrounds + dark orange text (e.g. Abort)
+  --c-gold: #d97706;
+  --c-gold-dim: #b45309;
+  --c-gold-bg: #fdeecd;
+  --c-gold-bg-3: #fbe9c8;
+  --c-gold-border: #e5c884;
+  --c-brown-bg: #fdf3de;
+
+  // accent: the same teal family, deepened on light
+  --c-accent: #15808f;
+  --c-accent-ring: rgba(21, 128, 143, 0.35);
+  --c-accent-dim: #124e58;
+  --c-accent-deep: #d9eef1;
+  --c-accent-border: #a5dbe3;
+  --c-accent-alt: #2a8f9e;
+  --c-blue-strong: #1d69b8;
+  --c-blue-bg: #e3edfa;
+}

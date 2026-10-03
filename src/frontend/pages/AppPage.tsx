@@ -6,6 +6,7 @@ import { SettingsCard } from '../components/SettingsCard';
 import { ScheduledTasksCard } from '../components/ScheduledTasksCard';
 import { EditsPage } from '../components/EditsPage';
 import { UsersCard } from '../components/UsersCard';
+import { UserCard } from '../components/UserCard';
 import { StreamCard } from '../components/StreamCard';
 import { Modal } from '../components/Modal';
 import { SessionView } from '../components/SessionModal';
@@ -32,6 +33,7 @@ function resolveView(view: string | undefined, userRole: string | null): ViewId 
     case 'sessions':
     case 'tasks':
     case 'edits':
+    case 'user':
       return view;
     case 'users':
       return userRole === 'admin' ? 'users' : 'chat';
@@ -360,6 +362,9 @@ export function AppPage({
           )}
           {activeView === 'users' && (
             <UsersCard username={username} />
+          )}
+          {activeView === 'user' && (
+            <UserCard username={username} />
           )}
         </div>
       </div>

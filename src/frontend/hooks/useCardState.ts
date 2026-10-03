@@ -22,9 +22,9 @@ export function useCardState(cardId: string, defaultCollapsed = false) {
   const [collapsed, setCollapsed] = useState(() => {
     const stored = localStorage.getItem(storageKey);
     if (stored !== null) return stored === '1';
-    // No stored preference: mobile defaults to collapsed (except chat),
-    // desktop defaults to expanded
-    if (isMobile && cardId !== 'chat') return true;
+    // No stored preference: mobile defaults to collapsed (except chat and
+    // the status-view cards, which stack full-height)
+    if (isMobile && !['chat', 'agent', 'system'].includes(cardId)) return true;
     if (!isMobile && cardId !== 'chat') return false;
     return defaultCollapsed;
   });
@@ -36,8 +36,8 @@ export function useCardState(cardId: string, defaultCollapsed = false) {
     if (stored !== null) {
       setCollapsed(stored === '1');
     } else {
-      // First visit to this layout: mobile collapses non-chat cards, desktop expands all
-      if (isMobile && cardId !== 'chat') setCollapsed(true);
+      // First visit to this layout: mobile collapses non-status cards, desktop expands all
+      if (isMobile && !['chat', 'agent', 'system'].includes(cardId)) setCollapsed(true);
       else if (!isMobile) setCollapsed(false);
       else setCollapsed(defaultCollapsed);
     }

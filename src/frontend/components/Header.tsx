@@ -3,7 +3,7 @@ import { url } from '../base-path';
 import { API } from '../../shared/api-paths';
 import type { SessionInfo } from '../types';
 
-export type ViewId = 'status' | 'sessions' | 'chat' | 'settings' | 'tasks' | 'edits' | 'users';
+export type ViewId = 'status' | 'sessions' | 'chat' | 'settings' | 'tasks' | 'edits' | 'users' | 'user';
 
 const VIEW_LABELS: Record<ViewId, string> = {
   status: 'Status',
@@ -11,6 +11,7 @@ const VIEW_LABELS: Record<ViewId, string> = {
   chat: 'Chat',
   settings: 'Settings',
   tasks: 'Tasks',
+  user: 'User',
   edits: 'Files',
   users: 'Users',
 };
@@ -155,7 +156,7 @@ export const Header: React.FC<HeaderProps> = ({
       : (s.id || displayName);
 
   // Users management is admin-only
-  const viewIds: ViewId[] = ['status', 'sessions', 'chat', 'edits', 'settings', 'tasks'];
+  const viewIds: ViewId[] = ['status', 'sessions', 'chat', 'edits', 'settings', 'tasks', 'user'];
   if (userRole === 'admin') viewIds.push('users');
 
   return (
