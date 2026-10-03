@@ -215,7 +215,10 @@ export const PersonasSettingsSection: React.FC = () => {
 
   return (
     <div className="settings-section">
-      <h3 className="settings-section-title">Personas</h3>
+      <div className="settings-section-head">
+        <h3 className="settings-section-title">Personas</h3>
+        <button type="button" className="btn btn-primary btn-row persona-new-btn" onClick={openCreate}>New Persona</button>
+      </div>
       <div className="settings-field">
         <label className="settings-label">Global system prompt</label>
         <div className="settings-description">Applies to all sessions — concatenated to the end of the active persona's prompt (one injection). Saved to the env the same way as a persona — picked up on each session's next turn.</div>
@@ -234,7 +237,7 @@ export const PersonasSettingsSection: React.FC = () => {
         </div>
         {globalError && <div className="settings-error">{globalError}</div>}
       </div>
-      <button className="btn btn-default persona-new-btn" onClick={openCreate}>+ New Persona</button>
+
       {personas.length === 0 ? (
         <div className="settings-description">No personas yet — create one to give your agent a standing role and select it when creating a session.</div>
       ) : (
@@ -245,8 +248,8 @@ export const PersonasSettingsSection: React.FC = () => {
                 <span className="persona-name">{p.name}</span>
                 {p.description && <span className="persona-description">{p.description}</span>}
               </div>
-              <button className="btn btn-default persona-item-btn" onClick={() => openDetails(p)}>Details</button>
-              <button className="btn btn-danger persona-item-btn" onClick={() => remove(p.id)}>Delete</button>
+              <button className="btn btn-default btn-row persona-item-btn" onClick={() => openDetails(p)}>Details</button>
+              <button className="btn btn-danger btn-row persona-item-btn" onClick={() => remove(p.id)}>Delete</button>
             </div>
           ))}
         </div>

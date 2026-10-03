@@ -371,8 +371,8 @@ export function AppPage({
             top: '3rem',
             left: '50%',
             transform: 'translateX(-50%)',
-            background: '#2563eb',
-            color: '#fff',
+            background: 'var(--c-blue-strong)',
+            color: 'var(--c-white)',
             fontSize: '0.75rem',
             fontWeight: 600,
             padding: '0.35rem 1rem',
@@ -390,7 +390,7 @@ export function AppPage({
           <button className="modal-close" onClick={() => setSessionError(null)}>✕</button>
         </div>
         <div className="modal-body">
-          <div style={{ color: '#f44336' }}>{sessionError}</div>
+          <div style={{ color: 'var(--c-danger-strong)' }}>{sessionError}</div>
           <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
             {/* No auto-retry button: the error may be a command/model failure
                 rather than session creation, and a blind "Try Again" spawn

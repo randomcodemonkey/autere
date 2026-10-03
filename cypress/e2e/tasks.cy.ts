@@ -39,7 +39,7 @@ describe('autere — scheduled tasks', () => {
     cy.get('.scheduled-input-result').type('cat > /dev/null && echo result-script-ok');
     cy.get('.scheduled-save-btn').click();
     cy.get('.scheduled-task', { timeout: 5000 }).should('contain', TASK_NAME);
-    cy.get('.scheduled-task').should('contain', 'echo e2e-seed-data');
+    cy.get('.scheduled-task-detail').should('contain', 'echo e2e-seed-data');
   });
 
   it('runs the task now via the Run now button and records a log', function() {
@@ -51,15 +51,15 @@ describe('autere — scheduled tasks', () => {
       .find('.scheduled-run-btn').click();
 
     // The run appears in the (auto-expanded) runs list, eventually succeeding
-    cy.get('.scheduled-task').contains(TASK_NAME).parents('.scheduled-task')
-      .find('.sched-run-status.sched-run-success', { timeout: 150000 }).should('exist');
+    // Runs render in a sibling row (auto-expanded after Run now)
+    cy.get('.sched-run-status.sched-run-success', { timeout: 150000 }).should('exist');
   });
 
   it('shows the run log with seed output, agent result and result script output', () => {
     openTasks();
     cy.get('.scheduled-task').contains(TASK_NAME).parents('.scheduled-task')
       .find('.scheduled-toggle-runs-btn').click();
-    cy.get('.sched-run-log-btn').first().click();
+    cy.get('.sched-run-log-btn', { timeout: 30000 }).first().click();
 
     cy.get('.modal-sched-log', { timeout: 5000 }).should('be.visible');
     cy.get('.sched-log-meta').should('contain', 'success');

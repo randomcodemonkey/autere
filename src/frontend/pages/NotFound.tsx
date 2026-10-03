@@ -11,7 +11,7 @@ export function NotFound() {
           <div className="card-header">
             <div className="card-title">404 — Not Found</div>
           </div>
-          <div style={{ padding: '1rem', color: '#888', fontSize: '0.85rem', lineHeight: '1.5' }}>
+          <div style={{ padding: '1rem', color: 'var(--c-text-ghost)', fontSize: '0.85rem', lineHeight: '1.5' }}>
             The page you are looking for does not exist or has been moved.
           </div>
           <div style={{ padding: '0 1rem 1rem' }}>

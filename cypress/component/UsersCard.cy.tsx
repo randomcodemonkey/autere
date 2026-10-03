@@ -111,6 +111,19 @@ describe('UsersCard', () => {
     });
   });
 
+  it('table: data-label cells + responsive wrapper (collapses to labeled cards on mobile via CSS)', () => {
+    cy.stub(window, 'fetch').callsFake(stubFetch(USERS).fetch);
+    cy.mount(<UsersCard username="admin" />);
+    cy.get('.users-row').should('have.length', 2);
+    // every data cell carries its column label — the mobile card layout
+    // (styles.scss .data-table @media) renders these as field names
+    cy.get('.users-row td[data-label="User"]').contains('admin');
+    cy.get('.users-row td[data-label="Role"]').should('have.length', 2);
+    cy.get('.users-row td[data-label="Actions"]').should('have.length', 2);
+    // bootstrap-table-responsive: internal scroll wrapper (CSS: overflow-x auto)
+    cy.get('.users-table').parents('.table-responsive').should('exist');
+  });
+
   it('disables self-delete', () => {
     cy.stub(window, 'fetch').callsFake(stubFetch(USERS).fetch);
     cy.mount(<UsersCard username="admin" />);

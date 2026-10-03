@@ -249,7 +249,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
       </div>
 
       <div className="sessions-section">
-        <div className="sessions-section-title">Sessions</div>
         <div className="btn-group">
           <button className="btn btn-primary" onClick={openNewSessionForm} disabled={switching || statusType === 'disconnected'}>
             ✨ New Session
@@ -321,6 +320,9 @@ export const SessionView: React.FC<SessionViewProps> = ({
 
   return (
     <div className="card sessions-page">
+      <div className="card-header">
+        <span className="card-title">Sessions</span>
+      </div>
       <div className="modal-body">{listBody}</div>
       {view === 'new' && (
         <Modal open onClose={() => setView('list')} className="modal-session">
@@ -412,7 +414,7 @@ const WorkdirEditor: React.FC<{
         addLabel="Add workdir"
         disabled={busy || saving}
       />
-      {error && <div className="settings-description" style={{ color: '#e0574a' }}>{error}</div>}
+      {error && <div className="settings-description" style={{ color: 'var(--c-danger-strong)' }}>{error}</div>}
       <div className="btn-group">
         <button className="btn btn-primary session-workdirs-save" onClick={apply} disabled={disabled}>
           {saving ? '⏳ Restarting…' : '💾 Save workdirs'}

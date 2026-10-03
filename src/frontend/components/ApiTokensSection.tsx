@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { url } from '../base-path';
 import { API } from '../api-paths';
+import { DataTable } from './DataTable';
 
 interface ApiToken {
   id: string;
@@ -91,7 +92,7 @@ export const ApiTokensSection: React.FC = () => {
 
   return (
     <div className="settings-section">
-      <h3 className="settings-section-title">API Tokens</h3>
+      <div className="settings-section-head"><h3 className="settings-section-title">API Tokens</h3></div>
       {error && <div className="settings-error">{error}</div>}
 
       {created && (
@@ -134,23 +135,27 @@ export const ApiTokensSection: React.FC = () => {
       ) : tokens.length === 0 ? (
         <div className="settings-empty">No API tokens.</div>
       ) : (
-        <div className="api-token-list">
+        <DataTable
+          columns={[
+            { key: 'name', label: 'Name' },
+            { key: 'prefix', label: 'Prefix' },
+            { key: 'created', label: 'Created' },
+            { key: 'remove', label: '' },
+          ]}
+        >
           {tokens.map((t) => (
-            <div key={t.id} className="api-token-row">
-              <div className="api-token-info">
-                <span className="api-token-name">{t.name}</span>
-                <span className="api-token-meta">
-                  <code>{t.prefix}</code>
-                  {' · created '}
-                  {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '—'}
-                </span>
-              </div>
-              <button className="btn btn-danger btn-sm" type="button" onClick={() => remove(t.id)}>
-                Remove
-              </button>
-            </div>
+            <tr key={t.id} className="api-token-row">
+              <td data-label="Name"><span className="api-token-name">{t.name}</span></td>
+              <td data-label="Prefix"><code>{t.prefix}</code></td>
+              <td data-label="Created">{t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '—'}</td>
+              <td data-label="">
+                <button className="btn btn-danger btn-sm" type="button" onClick={() => remove(t.id)}>
+                  Remove
+                </button>
+              </td>
+            </tr>
           ))}
-        </div>
+        </DataTable>
       )}
     </div>
   );

@@ -25,6 +25,143 @@ const FieldShell: React.FC<{ field: SettingField; children: React.ReactNode }> =
   </div>
 );
 
+// Per-user pi mcp.json editor. One row per server: name, stdio command
+// (+args) or http url, exposure, enabled. Rendered as a full section so the
+// Add button can sit on the section title row.
+const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChange: (key: string, v: Record<string, any>) => void }> = ({ field, value, onChange }) => {
+  const servers: Record<string, any> = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {};
+  const names = Object.keys(servers);
+  const patch = (oldName: string, name: string, s: any) => {
+    const next: Record<string, any> = {};
+    for (const n of names) next[n === oldName ? name : n] = servers[n];
+    next[name] = { ...next[name], ...s };
+    onChange(field.key, next);
+  };
+  // args round-trip through a comma-separated string; entries with
+  // spaces/commas need the JSON-escape hatch (edit args via CLI/API).
+  const argsText = (s: any) => Array.isArray(s.args) ? s.args.join(', ') : '';
+  return (
+    <div className="settings-section">
+      <div className="settings-section-head">
+        <h3 className="settings-section-title">{field.label}</h3>
+        <button
+          className="btn btn-primary btn-row mcp-add-btn"
+          type="button"
+          onClick={() => onChange(field.key, { ...servers, [`server-${names.length + 1}`]: { command: '', args: [] } })}
+        >
+          Add MCP Server
+        </button>
+      </div>
+      {field.description && <div className="settings-description">{field.description}</div>}
+      <div className="sortable-list mcp-list">
+        {names.map((name) => {
+          const s = servers[name] || {};
+          return (
+            <div key={name} className="mcp-server-row">
+              <div className="mcp-row-line">
+                <div className="mcp-field">
+                  <span className="mcp-field-label">Name</span>
+                  <input
+                    className="sortable-list-input mcp-name"
+                    type="text"
+                    value={name}
+                    title="Server name (letters, digits, _ -)"
+                    spellCheck={false}
+                    onChange={(e) => patch(name, e.target.value.replace(/[^\w-]/g, '_'), s)}
+                    placeholder="name"
+                  />
+                </div>
+                <div className="mcp-field">
+                  <span className="mcp-field-label">Type</span>
+                  <select
+                    className="settings-input mcp-kind"
+                    value={s.command !== undefined ? 'stdio' : 'http'}
+                    onChange={(e) => patch(name, name, e.target.value === 'stdio' ? { command: '', url: undefined } : { url: '', command: undefined })}
+                  >
+                    <option value="stdio">stdio</option>
+                    <option value="http">http</option>
+                  </select>
+                </div>
+                {s.command !== undefined ? (
+                  <>
+                    <div className="mcp-field">
+                      <span className="mcp-field-label">Command</span>
+                      <input
+                        className="sortable-list-input mcp-command"
+                        type="text"
+                        value={s.command || ''}
+                        placeholder="npx -y @modelcontextprotocol/server-everything"
+                        spellCheck={false}
+                        onChange={(e) => patch(name, name, { command: e.target.value })}
+                      />
+                    </div>
+                    <div className="mcp-field">
+                      <span className="mcp-field-label">Args</span>
+                      <input
+                        className="sortable-list-input mcp-args"
+                        type="text"
+                        value={argsText(s)}
+                        placeholder="args, comma separated"
+                        spellCheck={false}
+                        onChange={(e) => patch(name, name, { args: e.target.value.split(',').map((a: string) => a.trim()).filter(Boolean) })}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="mcp-field">
+                    <span className="mcp-field-label">URL</span>
+                    <input
+                      className="sortable-list-input mcp-command"
+                      type="text"
+                      value={s.url || ''}
+                      placeholder="https://example.com/mcp"
+                      spellCheck={false}
+                      onChange={(e) => patch(name, name, { url: e.target.value })}
+                    />
+                  </div>
+                )}
+                <div className="mcp-field">
+                  <span className="mcp-field-label">Exposure</span>
+                  <select
+                    className="settings-input mcp-exposure"
+                    value={s.exposure || 'codemode'}
+                    title="How the server's tools reach the model"
+                    onChange={(e) => patch(name, name, { exposure: e.target.value })}
+                  >
+                    <option value="codemode">codemode</option>
+                    <option value="deferred">deferred (tool search)</option>
+                    <option value="direct">direct</option>
+                    <option value="hidden">hidden</option>
+                  </select>
+                </div>
+                <button className="sortable-list-remove mcp-remove" onClick={() => onChange(field.key, Object.fromEntries(names.filter((n) => n !== name).map((n) => [n, servers[n]])))} title={`Remove ${name}`}>✕</button>
+              </div>
+              <div className="mcp-field mcp-field-wide">
+                <span className="mcp-field-label">Description</span>
+                <input
+                  className="sortable-list-input mcp-description"
+                  type="text"
+                  value={s.description || ''}
+                  placeholder="What this server offers (shown in the system prompt and used by tool search)"
+                  onChange={(e) => patch(name, name, { description: e.target.value })}
+                />
+              </div>
+              <div className="mcp-enabled-row">
+                <label className="settings-label">Enabled</label>
+                <label className="settings-toggle" title="Connect this server when the session starts">
+                  <input type="checkbox" checked={s.enabled !== false} onChange={(e) => patch(name, name, { enabled: e.target.checked })} />
+                  <span className="settings-toggle-slider" />
+                </label>
+                <span className="settings-description">Enable or disable this server. When off, pi keeps the entry but does not connect to it.</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 // "Add folder" input row: enter a path, then submit — no phantom empty row.
 // Duplicate paths are rejected (the backend also dedupes).
 const FolderIgnoreAdd: React.FC<{ onAdd: (path: string) => void; items: FolderIgnoreEntry[] }> = ({ onAdd, items }) => {
@@ -95,7 +232,12 @@ const ModelsSection: React.FC<{
   };
   return (
     <div className="settings-section">
-      <h3 className="settings-section-title">{section.label}</h3>
+      <div className="settings-section-head">
+        <h3 className="settings-section-title">{section.label}</h3>
+        <button className="btn btn-primary btn-row models-update-btn" type="button" disabled={modelsLoading} onClick={loadCatalog}>
+          {modelsLoading ? 'Updating models…' : 'Update available models'}
+        </button>
+      </div>
       <div className="settings-section-fields">
         {catalog === null && (
           <div className="settings-description">{modelsLoading ? 'Loading models from pi…' : 'Update loads the model catalog from pi.'}</div>
@@ -105,14 +247,11 @@ const ModelsSection: React.FC<{
             Per-model values apply to ENABLED models; saving restarts the agent.
           </div>
           {modelsError && <div className="settings-description">{modelsError}</div>}
-        <button className="btn btn-primary models-update-btn" type="button" disabled={modelsLoading} onClick={loadCatalog}>
-          {modelsLoading ? 'Updating models…' : 'Update available models'}
-        </button>
           {catalog !== null && (
             rows.length === 0 ? (
               <div className="settings-description">No models reported by pi.</div>
             ) : (
-              <table className="models-table">
+              <table className="data-table models-table">
                 <thead>
                   <tr>
                     <th>Model</th>
@@ -418,111 +557,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
     }
 
     if (field.type === 'mcpServers') {
-      // Per-user pi mcp.json editor. One row per server: name, stdio
-      // command (+args) or http url, exposure, enabled. codemode-exposed
-      // tools reach the model only via codemode scripts (pi default).
-      const servers: Record<string, any> = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {};
-      const names = Object.keys(servers);
-      const setServers = (next: Record<string, any>) => handleChange(field.key, next);
-      const patch = (oldName: string, name: string, s: any) => {
-        const next: Record<string, any> = {};
-        for (const n of names) next[n === oldName ? name : n] = servers[n];
-        next[name] = { ...next[name], ...s };
-        setServers(next);
-      };
-      // args round-trip through a comma-separated string; entries with
-      // spaces/commas need the JSON-escape hatch (edit args via CLI/API).
-      const argsText = (s: any) => Array.isArray(s.args) ? s.args.join(', ') : '';
-      return (
-        <FieldShell key={field.key} field={field}>
-          <div className="sortable-list mcp-list">
-            {names.map((name) => {
-              const s = servers[name] || {};
-              return (
-                <div key={name} className="mcp-server-row">
-                  <div className="mcp-row-line">
-                    <input
-                      className="sortable-list-input mcp-name"
-                      type="text"
-                      value={name}
-                      title="Server name (letters, digits, _ -)"
-                      spellCheck={false}
-                      onChange={(e) => patch(name, e.target.value.replace(/[^\w-]/g, '_'), s)}
-                      placeholder="name"
-                    />
-                    <select
-                      className="settings-input mcp-kind"
-                      value={s.command !== undefined ? 'stdio' : 'http'}
-                      onChange={(e) => patch(name, name, e.target.value === 'stdio' ? { command: '', url: undefined } : { url: '', command: undefined })}
-                    >
-                      <option value="stdio">stdio</option>
-                      <option value="http">http</option>
-                    </select>
-                    {s.command !== undefined ? (
-                      <>
-                        <input
-                          className="sortable-list-input mcp-command"
-                          type="text"
-                          value={s.command || ''}
-                          placeholder="npx -y @modelcontextprotocol/server-everything"
-                          spellCheck={false}
-                          onChange={(e) => patch(name, name, { command: e.target.value })}
-                        />
-                        <input
-                          className="sortable-list-input mcp-args"
-                          type="text"
-                          value={argsText(s)}
-                          placeholder="args, comma separated"
-                          spellCheck={false}
-                          onChange={(e) => patch(name, name, { args: e.target.value.split(',').map((a: string) => a.trim()).filter(Boolean) })}
-                        />
-                      </>
-                    ) : (
-                      <input
-                        className="sortable-list-input mcp-command"
-                        type="text"
-                        value={s.url || ''}
-                        placeholder="https://example.com/mcp"
-                        spellCheck={false}
-                        onChange={(e) => patch(name, name, { url: e.target.value })}
-                      />
-                    )}
-                    <select
-                      className="settings-input mcp-exposure"
-                      value={s.exposure || 'codemode'}
-                      title="How the server's tools reach the model"
-                      onChange={(e) => patch(name, name, { exposure: e.target.value })}
-                    >
-                      <option value="codemode">codemode</option>
-                      <option value="deferred">deferred (tool search)</option>
-                      <option value="direct">direct</option>
-                      <option value="hidden">hidden</option>
-                    </select>
-                    <label className="settings-ig-toggle mcp-enabled" title="Connect this server">
-                      <input type="checkbox" checked={s.enabled !== false} onChange={(e) => patch(name, name, { enabled: e.target.checked })} /> on
-                    </label>
-                    <button className="sortable-list-remove" onClick={() => setServers(Object.fromEntries(names.filter((n) => n !== name).map((n) => [n, servers[n]])))} title={`Remove ${name}`}>✕</button>
-                  </div>
-                  <input
-                    className="sortable-list-input mcp-description"
-                    type="text"
-                    value={s.description || ''}
-                    placeholder="What this server offers (shown in the system prompt and used by tool search)"
-                    onChange={(e) => patch(name, name, { description: e.target.value })}
-                  />
-                </div>
-              );
-            })}
-            <button
-              className="btn btn-primary mcp-add-btn"
-              type="button"
-              onClick={() => setServers({ ...servers, [`server-${names.length + 1}`]: { command: '', args: [] } })}
-            >
-              Add MCP Server
-            </button>
-          </div>
-        </FieldShell>
-      );
+      return <McpServersSection key={field.key} field={field} value={value} onChange={handleChange} />;
     }
 
     if (field.type === 'textarea') {
@@ -637,14 +672,24 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
             ) : (
               schema
                 .filter((section) => section.id === activeSection)
-                .map((section) => (
-                  <div key={section.id} className="settings-section">
-                    <h3 className="settings-section-title">{section.label}</h3>
-                    <div className="settings-section-fields">
-                      {section.fields.map(renderField)}
+                .map((section) => {
+                  // Single-field MCP editor owns its own header row (title +
+                  // Add button); anything else renders fields under the title.
+                  if (section.fields.length === 1 && section.fields[0].type === 'mcpServers') {
+                    const f = section.fields[0];
+                    return (
+                      <McpServersSection key={section.id} field={f} value={settings[f.key]} onChange={handleChange} />
+                    );
+                  }
+                  return (
+                    <div key={section.id} className="settings-section">
+                      <div className="settings-section-head"><h3 className="settings-section-title">{section.label}</h3></div>
+                      <div className="settings-section-fields">
+                        {section.fields.map(renderField)}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
             )}
           </div>
         </div>

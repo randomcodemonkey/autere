@@ -70,7 +70,7 @@ describe('PersonasSettingsSection', () => {
     stubFetch({ list: [] });
     cy.mount(<PersonasSettingsSection />);
     cy.contains('No personas yet').should('exist');
-    cy.contains('button', '+ New Persona').should('exist');
+    cy.contains('button', 'New Persona').should('exist');
   });
 
   it('details button opens a modal with an editable prompt, regenerates and saves', () => {
@@ -97,7 +97,7 @@ describe('PersonasSettingsSection', () => {
   it('create modal: generate button appears only after prompt text is entered, and calls the generate endpoint', () => {
     stubFetch();
     cy.mount(<PersonasSettingsSection />);
-    cy.contains('button', '+ New Persona').click();
+    cy.contains('button', 'New Persona').click();
     cy.get('.modal').should('be.visible');
     cy.contains('button', 'Generate prompt').should('not.exist');
     cy.get('.modal textarea.settings-input').type('A terse assistant');
@@ -116,7 +116,7 @@ describe('PersonasSettingsSection', () => {
   it('create modal: saves a new persona', () => {
     stubFetch();
     cy.mount(<PersonasSettingsSection />);
-    cy.contains('button', '+ New Persona').click();
+    cy.contains('button', 'New Persona').click();
     cy.get('.modal input.settings-input').eq(0).type('Tester');
     cy.get('.modal textarea.settings-input').type('You test things.');
     cy.contains('button', 'Create Persona').click();

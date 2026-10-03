@@ -3,6 +3,7 @@ import { Modal } from './Modal';
 import { url } from '../base-path';
 import { API } from '../api-paths';
 import type { ManagedUser, AllowedDir, DirAccess } from '../types';
+import { DataTable } from './DataTable';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 const ROLES: ManagedUser['role'][] = ['chat', 'control', 'admin'];
@@ -16,44 +17,58 @@ interface DirEditorProps {
 const DirEditor: React.FC<DirEditorProps> = ({ dirs, onChange }) => {
   return (
     <div className="users-dirs">
-      {dirs.map((d, i) => (
-        <div className="users-dir-row" key={i}>
-          <input
-            className="settings-input users-dir-path"
-            type="text"
-            placeholder="/absolute/path"
-            value={d.path}
-            onChange={(e) => {
-              const next = dirs.slice();
-              next[i] = { ...d, path: e.target.value };
-              onChange(next);
-            }}
-          />
-          <select
-            className="settings-input users-dir-access"
-            value={d.access}
-            onChange={(e) => {
-              const next = dirs.slice();
-              next[i] = { ...d, access: e.target.value as DirAccess };
-              onChange(next);
-            }}
-          >
-            <option value="read">read</option>
-            <option value="rw">read/write</option>
-          </select>
-          <button
-            type="button"
-            className="btn btn-danger users-dir-remove"
-            title="Remove directory"
-            onClick={() => onChange(dirs.filter((_, j) => j !== i))}
-          >
-            ✕
-          </button>
-        </div>
-      ))}
+      <DataTable
+        columns={[
+          { key: 'path', label: 'Path' },
+          { key: 'access', label: 'Access' },
+          { key: 'remove', label: '' },
+        ]}
+      >
+        {dirs.map((d, i) => (
+          <tr className="users-dir-row" key={i}>
+            <td data-label="Path">
+              <input
+                className="settings-input users-dir-path"
+                type="text"
+                placeholder="/absolute/path"
+                value={d.path}
+                onChange={(e) => {
+                  const next = dirs.slice();
+                  next[i] = { ...d, path: e.target.value };
+                  onChange(next);
+                }}
+              />
+            </td>
+            <td data-label="Access">
+              <select
+                className="settings-input users-dir-access"
+                value={d.access}
+                onChange={(e) => {
+                  const next = dirs.slice();
+                  next[i] = { ...d, access: e.target.value as DirAccess };
+                  onChange(next);
+                }}
+              >
+                <option value="read">read</option>
+                <option value="rw">read/write</option>
+              </select>
+            </td>
+            <td data-label="">
+              <button
+                type="button"
+                className="btn btn-danger btn-row users-dir-remove"
+                title="Remove directory"
+                onClick={() => onChange(dirs.filter((_, j) => j !== i))}
+              >
+                ✕
+              </button>
+            </td>
+          </tr>
+        ))}
+      </DataTable>
       <button
         type="button"
-        className="btn users-dir-add"
+        className="btn btn-row users-dir-add"
         onClick={() => onChange([...dirs, { path: '', access: 'read' }])}
       >
         + Add directory
@@ -232,34 +247,53 @@ export const UsersCard: React.FC<{ username: string | null }> = ({ username }) =
         <div className="card-title">Users</div>
         <button className="btn btn-primary" onClick={() => setCreating(true)}>Add user</button>
       </div>
-      <div className="users-list">
-        {error && !users && <div className="users-error">{error}</div>}
-        {!users && !error && <div className="users-loading">Loading…</div>}
-        {users?.map((u) => (
-          <div className="users-row" key={u.username}>
-            <span className="users-name" title={u.username}>
-              {u.username}
-              {u.mustChangePassword && <span className="users-flag" title="Must change password at next login">PW</span>}
-            </span>
-            <span className={`users-role users-role-${u.role}`}>{u.role}</span>
-            <span className="users-dirs-count" title={u.allowedDirs.map((d) => `${d.path} (${d.access})`).join('\n')}>
-              {u.allowedDirs.length} dir{u.allowedDirs.length === 1 ? '' : 's'}
-            </span>
-            {u.mountDockerSocket && <span className="users-flag" title="May mount the host docker.sock in sandboxes">DOCKER</span>}
-            <span className="btn-group users-row-actions">
-              <button className="btn" onClick={() => setEditing(u)}>Edit</button>
-              <button
-                className="btn btn-danger"
-                disabled={u.username === username}
-                title={u.username === username ? 'You cannot delete your own account' : 'Delete user'}
-                onClick={() => remove(u.username)}
-              >
-                Delete
-              </button>
-            </span>
-          </div>
-        ))}
-      </div>
+      {error && !users && <div className="users-error">{error}</div>}
+      {!users && !error && <div className="users-loading">Loading…</div>}
+      {users && (
+        <DataTable
+          className="users-table"
+          columns={[
+            { key: 'user', label: 'User' },
+            { key: 'role', label: 'Role' },
+            { key: 'dirs', label: 'Dirs' },
+            { key: 'flags', label: '' },
+            { key: 'actions', label: '' },
+          ]}
+        >
+          {users.map((u) => (
+            <tr className="users-row" key={u.username}>
+              <td data-label="User">
+                <span className="users-name" title={u.username}>
+                  {u.username}
+                  {u.mustChangePassword && <span className="users-flag" title="Must change password at next login">PW</span>}
+                </span>
+              </td>
+              <td data-label="Role">
+                <span className={`users-role users-role-${u.role}`}>{u.role}</span>
+              </td>
+              <td data-label="Dirs">
+                <span className="users-dirs-count" title={u.allowedDirs.map((d) => `${d.path} (${d.access})`).join('\n')}>
+                  {u.allowedDirs.length} dir{u.allowedDirs.length === 1 ? '' : 's'}
+                </span>
+              </td>
+              <td data-label="Flags">
+                {u.mountDockerSocket && <span className="users-flag" title="May mount the host docker.sock in sandboxes">DOCKER</span>}
+              </td>
+              <td data-label="Actions" className="data-table-actions">
+                <button className="btn btn-row" onClick={() => setEditing(u)}>Edit</button>
+                <button
+                  className="btn btn-danger btn-row"
+                  disabled={u.username === username}
+                  title={u.username === username ? 'You cannot delete your own account' : 'Delete user'}
+                  onClick={() => remove(u.username)}
+                >
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
+        </DataTable>
+      )}
       {(creating || editing) && (
         <UserForm
           initial={editing}

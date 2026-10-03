@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { Fragment, useState, useEffect, useCallback, useRef } from 'react';
+import { DataTable } from './DataTable';
 import { Modal } from './Modal';
 import { url } from '../base-path';
 import { API } from '../api-paths';
@@ -343,24 +344,41 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
           No scheduled tasks yet. Create one to run prompts on a schedule.
         </div>
       ) : (
-        <div className="scheduled-list">
+        <DataTable
+          className="scheduled-table"
+          columns={[
+            { key: 'state', label: 'State' },
+            { key: 'task', label: 'Task' },
+            { key: 'schedule', label: 'Schedule' },
+            { key: 'actions', label: '' },
+          ]}
+        >
           {tasks.map((task) => {
             const isRunning = runningTaskIds.has(task.id);
             const expanded = expandedTaskId === task.id;
+            const details = [
+              task.model && `Model: ${task.model}`,
+              task.seedScript && `Seed script: ${task.seedScript.slice(0, 80)}`,
+              task.resultScript && `Result script: ${task.resultScript.slice(0, 80)}`,
+            ].filter(Boolean) as string[];
             return (
-              <div key={task.id} className={`scheduled-task${expanded ? ' expanded' : ''}`}>
-                <div className="scheduled-task-row">
-                  <span className={`scheduled-enabled-dot ${task.enabled ? 'on' : 'off'}`}
-                        title={task.enabled ? 'Enabled' : 'Disabled'} />
-                  <div className="scheduled-task-main">
-                    <div className="scheduled-task-name">{task.name}</div>
-                    <div className="scheduled-task-schedule" title={task.schedule}>
+              <Fragment key={task.id}>
+                <tr className={`scheduled-task${expanded ? ' expanded' : ''}`}>
+                  <td data-label="State">
+                    <span className={`scheduled-enabled-dot ${task.enabled ? 'on' : 'off'}`}
+                          title={task.enabled ? 'Enabled' : 'Disabled'} />
+                  </td>
+                  <td data-label="Task">
+                    <span className="scheduled-task-name">{task.name}</span>
+                  </td>
+                  <td data-label="Schedule">
+                    <span className="scheduled-task-schedule" title={task.schedule}>
                       {describeCron(task.schedule)} <span className="scheduled-cron-expr">({task.schedule})</span>
-                    </div>
-                  </div>
-                  <div className="scheduled-task-actions">
+                    </span>
+                  </td>
+                  <td data-label="Actions" className="data-table-actions">
                     <button
-                      className="btn scheduled-run-btn"
+                      className="btn btn-row scheduled-run-btn"
                       disabled={isRunning}
                       title={isRunning ? 'Run in progress' : 'Run now'}
                       onClick={() => handleRunNow(task)}
@@ -368,39 +386,62 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
                       {isRunning ? 'Running…' : 'Run now'}
                     </button>
                     <button
-                      className="btn scheduled-toggle-runs-btn"
+                      className="btn btn-row scheduled-toggle-runs-btn"
                       onClick={() => setExpandedTaskId(expanded ? null : task.id)}
                     >
                       Runs {expanded ? '▾' : '▸'}
                     </button>
-                    <button className="btn scheduled-edit-btn" onClick={() => handleEdit(task)}>Edit</button>
-                    <button className="btn btn-danger scheduled-delete-btn" onClick={() => handleDelete(task)}>Delete</button>
-                  </div>
-                </div>
-                {task.model && <div className="scheduled-task-detail">Model: {task.model}</div>}
-                {task.seedScript && <div className="scheduled-task-detail">Seed script: {task.seedScript.slice(0, 80)}</div>}
-                {task.resultScript && <div className="scheduled-task-detail">Result script: {task.resultScript.slice(0, 80)}</div>}
-                {expanded && (
-                  <div className="scheduled-runs">
-                    {runsFor(task.id).length === 0 ? (
-                      <div className="scheduled-runs-empty">No runs yet.</div>
-                    ) : runsFor(task.id).map((rec) => (
-                      <div key={rec.runId} className="scheduled-run-row">
-                        <span className={`sched-run-status sched-run-${rec.status}`}>
-                          {rec.status === 'running' ? '● running' : rec.status}
-                        </span>
-                        <span className="sched-run-time">{formatTime(rec.startedAt)}</span>
-                        <span className="sched-run-trigger">{rec.trigger}</span>
-                        <span className="sched-run-duration">{formatDuration(rec)}</span>
-                        <button className="btn sched-run-log-btn" onClick={() => handleViewLog(rec)}>Log</button>
-                      </div>
-                    ))}
-                  </div>
+                    <button className="btn btn-row scheduled-edit-btn" onClick={() => handleEdit(task)}>Edit</button>
+                    <button className="btn btn-danger btn-row scheduled-delete-btn" onClick={() => handleDelete(task)}>Delete</button>
+                  </td>
+                </tr>
+                {details.length > 0 && (
+                  <tr className="scheduled-task-detail-row">
+                    <td colSpan={4} className="scheduled-task-detail">
+                      {details.map((d, i) => <div key={i}>{d}</div>)}
+                    </td>
+                  </tr>
                 )}
-              </div>
+                {expanded && (
+                  <tr className="scheduled-runs-tr">
+                    <td colSpan={4}>
+                      <div className="scheduled-runs">
+                        {runsFor(task.id).length === 0 ? (
+                          <div className="scheduled-runs-empty">No runs yet.</div>
+                        ) : (
+                          <DataTable
+                            className="scheduled-runs-table"
+                            columns={[
+                              { key: 'status', label: 'Status' },
+                              { key: 'started', label: 'Started' },
+                              { key: 'trigger', label: 'Trigger' },
+                              { key: 'duration', label: 'Duration' },
+                              { key: 'log', label: '' },
+                            ]}
+                          >
+                            {runsFor(task.id).map((rec) => (
+                              <tr key={rec.runId} className="scheduled-run-row">
+                                <td data-label="Status">
+                                  <span className={`sched-run-status sched-run-${rec.status}`}>
+                                    {rec.status === 'running' ? '● running' : rec.status}
+                                  </span>
+                                </td>
+                                <td data-label="Started"><span className="sched-run-time">{formatTime(rec.startedAt)}</span></td>
+                                <td data-label="Trigger"><span className="sched-run-trigger">{rec.trigger}</span></td>
+                                <td data-label="Duration"><span className="sched-run-duration">{formatDuration(rec)}</span></td>
+                                <td data-label="Log"><button className="btn btn-row sched-run-log-btn" onClick={() => handleViewLog(rec)}>Log</button></td>
+                              </tr>
+                            ))}
+                          </DataTable>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             );
           })}
-        </div>
+        </DataTable>
       )}
 
       <Modal open={!!viewLog} onClose={() => setViewLog(null)} className="modal-status modal-sched-log">
