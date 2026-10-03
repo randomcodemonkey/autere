@@ -42,25 +42,11 @@ describe('ChatInput slash commands', () => {
     cy.get('@onError').should('have.been.calledOnce');
   });
 
-  it('/help shows the available commands without contacting the backend', () => {
-    cy.intercept('POST', '**/api/v1/session/messages', { statusCode: 500, body: { success: false } }).as('send');
-    cy.mount(<ChatInput onNewSession={() => {}} />);
-    cy.get('.chat-input').type('/help{enter}');
-    cy.get('.chat-help-box').should('be.visible');
-    cy.get('.chat-help-cmd').should('contain', '/new');
-    cy.get('.chat-help-cmd').should('contain', '/compact');
-    cy.get('.chat-help-cmd').should('contain', '/help');
-    // Close it
-    cy.get('.chat-help-close').click();
-    cy.get('.chat-help-box').should('not.exist');
-    cy.get('@send.all').should('have.length', 0);
-  });
-
   it('unknown slash command shows an error', () => {
     const onError = cy.stub().as('onError');
     cy.mount(<ChatInput onNewSession={() => {}} onError={onError} />);
     cy.get('.chat-input').type('/frobnicate{enter}');
-    cy.get('@onError').should('have.been.calledWith', 'Unknown command: /frobnicate — type /help to see available commands.');
+    cy.get('@onError').should('have.been.calledWith', 'Unknown command: /frobnicate');
   });
 
   it('regular messages do not trigger commands and go to the backend', () => {

@@ -2776,64 +2776,6 @@ body {
   white-space: pre-wrap;
 }
 
-// -- Chat slash-command help --------------------------------------------------
-.chat-help-overlay {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  right: 0;
-  z-index: 20;
-  padding: 0.5rem;
-}
-
-.chat-help-box {
-  background: var(--c-surface);
-  border: 1px solid var(--c-border-2);
-  border-radius: 0.5rem;
-  padding: 0.75rem 1rem;
-  margin-bottom: 0.5rem;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-}
-
-.chat-help-title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--c-text-muted);
-  margin-bottom: 0.5rem;
-}
-
-.chat-help-item {
-  display: flex;
-  gap: 0.75rem;
-  font-size: 0.72rem;
-  padding: 0.2rem 0;
-}
-
-.chat-help-cmd {
-  color: var(--c-success);
-  font-family: monospace;
-  min-width: 5.5rem;
-}
-
-.chat-help-desc {
-  color: var(--c-text-faint);
-}
-
-.chat-help-close {
-  margin-top: 0.5rem;
-  padding: 0.2rem 0.8rem;
-  font-size: 0.7rem;
-  background: var(--c-muted-bg);
-  color: var(--c-text-muted);
-  border: 1px solid var(--c-border-2);
-  border-radius: 0.3rem;
-  cursor: pointer;
-
-  &:hover {
-    background: var(--c-border);
-  }
-}
-
 // -- Extensions -----------------------------------------------------------------
 .ext-item {
   margin-bottom: 0.6rem;

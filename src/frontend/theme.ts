@@ -15,8 +15,11 @@ export function isThemeId(v: string | null | undefined): v is ThemeId {
 /** Apply a theme by stamping the documented attribute on <html>. */
 export function applyTheme(id: string | null | undefined) {
   // midnight is the :root default (no attribute); other themes override it.
-  if (id === 'midnight') document.documentElement.removeAttribute('data-theme');
-  else document.documentElement.setAttribute('data-theme', id);
+  if (!isThemeId(id) || id === 'midnight') {
+    document.documentElement.removeAttribute('data-theme');
+    return;
+  }
+  document.documentElement.setAttribute('data-theme', id);
 }
 
 /** Theme currently in effect on <html>. */

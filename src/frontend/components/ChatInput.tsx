@@ -33,13 +33,6 @@ const IS_TOUCH_DEVICE = typeof navigator !== 'undefined' && navigator.maxTouchPo
 const MAX_ATTACHED = 4;
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB per file — matches backend limit
 
-/** Available slash commands, shown by /help */
-const SLASH_COMMANDS: { cmd: string; description: string }[] = [
-  { cmd: '/new', description: 'Start a new session (alias: /clear). Idle only.' },
-  { cmd: '/compact', description: 'Compact the conversation context. Idle only.' },
-  { cmd: '/help', description: 'Show available commands.' },
-];
-
 export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, onError, onSent, disabled, isStreaming, isActive, steerPending, followUpPending, sessionId }) => {
   // Draft persistence: the chat view unmounts on tab navigation (edits,
   // settings, ...) and the input text would be lost. Keep it in localStorage
@@ -80,7 +73,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
   const [inputRows, setInputRows] = useState<number | null>(null);
   const [draggingInput, setDraggingInput] = useState(false);
   const dragStart = useRef<{ y: number; rows: number } | null>(null);
-  const [showHelp, setShowHelp] = useState(false);
 
   // Drag-to-resize: track vertical movement while the handle is held
   useEffect(() => {
@@ -178,11 +170,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
           }
           onCompact();
           return;
-        case '/help':
-          setShowHelp(true);
-          return;
         default:
-          onError?.(`Unknown command: ${cmd} — type /help to see available commands.`);
+          onError?.(`Unknown command: ${cmd}`);
           return;
       }
     }
@@ -306,7 +295,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
         <textarea
           ref={textareaRef}
           className="chat-input"
-          placeholder={isStreaming ? 'Steer the agent...' : 'Type a message... (/help for commands)'}
+          placeholder={isStreaming ? 'Steer the agent...' : 'Type a message...'}
           rows={inputRows ?? (expanded ? 4 : 1)}
           value={value}
           onChange={(e) => updateValue(e.target.value)}
@@ -358,20 +347,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
         style={{ display: 'none' }}
         onChange={(e) => handleFiles(e.target.files)}
       />
-      {showHelp && (
-        <div className="chat-help-overlay" onClick={() => setShowHelp(false)}>
-          <div className="chat-help-box" onClick={(e) => e.stopPropagation()}>
-            <div className="chat-help-title">Available commands</div>
-            {SLASH_COMMANDS.map(({ cmd, description }) => (
-              <div key={cmd} className="chat-help-item">
-                <span className="chat-help-cmd">{cmd}</span>
-                <span className="chat-help-desc">{description}</span>
-              </div>
-            ))}
-            <button className="chat-help-close" onClick={() => setShowHelp(false)}>Close</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
