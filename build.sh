@@ -88,10 +88,16 @@ for tag in "${tag_list[@]}"; do
   args+=("-t" "$image:${tag//$ /}")
 done
 args+=("--platform" "$arch")
+args+=("-f" "$here/docker/Dockerfile")
 
 if [[ $release -eq 1 ]]; then
   git add "$here/version.txt" "$here/package.json"
   git commit -m "version: $version"
 fi
 
-docker buildx build "${args[@]}" "$here"
+if docker buildx version >/dev/null 2>&1; then
+  docker buildx build "${args[@]}" "$here"
+else
+  # old docker CLI without buildx — plain build supports the same args here
+  docker build "${args[@]}" "$here"
+fi
