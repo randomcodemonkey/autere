@@ -14,8 +14,14 @@ interface ChatInputProps {
   /** Opens the new-session form (does not create anything itself) */
   onNewSession: () => void;
   onCompact?: () => void;
-  /** Slash commands that navigate: /settings, /tasks */
-  onGoToView?: (view: 'settings' | 'tasks') => void;
+  /** Slash commands that navigate: /settings, /tasks, /files */
+  onGoToView?: (view: 'settings' | 'tasks' | 'files') => void;
+  /** /model <name> — change the active model (AppPage resolves + PUTs) */
+  onSetModel?: (name: string) => void;
+  /** /persona <name> — bind a persona to the viewed session */
+  onSetPersona?: (name: string) => void;
+  /** Model ids for slash-command tab completion */
+  modelNames?: string[];
   onError?: (message: string) => void;
   /** Called after a successful send with the sent text and type — used for
    * optimistic display of the user message in the chat. */
@@ -36,7 +42,20 @@ const IS_TOUCH_DEVICE = typeof navigator !== 'undefined' && navigator.maxTouchPo
 const MAX_ATTACHED = 4;
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB per file — matches backend limit
 
-export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, onCompact, onError, onSent, disabled, isStreaming, isActive, steerPending, followUpPending, sessionId }) => {
+/** All supported slash commands — /help lists these; Tab completes them */
+const SLASH_COMMANDS: { cmd: string; use: string; description: string }[] = [
+  { cmd: '/new', use: '/new', description: 'Open the new-session form.' },
+  { cmd: '/clear', use: '/clear', description: 'Start a fresh session directly. Idle only.' },
+  { cmd: '/compact', use: '/compact', description: 'Compact the conversation context. Idle only.' },
+  { cmd: '/help', use: '/help', description: 'Show available commands.' },
+  { cmd: '/settings', use: '/settings', description: 'Open settings.' },
+  { cmd: '/tasks', use: '/tasks', description: 'Open scheduled tasks.' },
+  { cmd: '/files', use: '/files', description: 'Open the files view.' },
+  { cmd: '/model', use: '/model <name>', description: 'Change the active model.' },
+  { cmd: '/persona', use: '/persona <name>', description: 'Set the persona for this session.' },
+];
+
+export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, onSetModel, onSetPersona, modelNames, onCompact, onError, onSent, disabled, isStreaming, isActive, steerPending, followUpPending, sessionId }) => {
   // Draft persistence: the chat view unmounts on tab navigation (edits,
   // settings, ...) and the input text would be lost. Keep it in localStorage
   // keyed by session so each session remembers its own draft. ponytail:
@@ -96,6 +115,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
     };
   }, [draggingInput]);
   const [focused, setFocused] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  // Persona names for /persona tab-completion (fetched once on demand)
+  const personaNamesRef = useRef<string[] | null>(null);
   const [images, setImages] = useState<AttachedFile[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -149,7 +171,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
 
     // Slash commands are frontend-only — they never reach the backend/LLM.
     if (text.startsWith('/')) {
-      const [cmd] = text.split(/\s+/);
+      const tokens = text.split(/\s+/);
+      const cmd = tokens[0];
+      const arg = tokens.slice(1).join(' ').trim();
       updateValue('');
       if (textareaRef.current) textareaRef.current.style.height = '';
 
@@ -165,13 +189,27 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
           onNewSession();
           // /clear created a fresh session directly (legacy alias of the old /new)
           return;
+        case '/help':
+          setShowHelp(true);
+          return;
         case '/settings':
         case '/tasks':
+        case '/files':
           if (!onGoToView) {
             onError?.('Navigation is not available here.');
             return;
           }
-          onGoToView(cmd === '/settings' ? 'settings' : 'tasks');
+          onGoToView(cmd === '/files' ? 'files' : cmd === '/tasks' ? 'tasks' : 'settings');
+          return;
+        case '/model':
+          if (!onSetModel) { onError?.('Model selection is not available here.'); return; }
+          if (!arg) { onError?.('Usage: /model <name>'); return; }
+          onSetModel(arg);
+          return;
+        case '/persona':
+          if (!onSetPersona) { onError?.('Persona selection is not available here.'); return; }
+          if (!arg) { onError?.('Usage: /persona <name>'); return; }
+          onSetPersona(arg);
           return;
         case '/compact':
           if (isActive) {
@@ -231,7 +269,61 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
     }
   }, [value, images, onNewSession, onGoToView, onCompact, onError, onSent, isActive, updateValue, sessionId]);
 
+  // Tab completion for slash commands (and /model, /persona arguments).
+  // Completes to the longest common prefix of the candidates; a command with
+  // an argument gets a trailing space so typing Tab twice walks the arg.
+  const completeSlash = useCallback((val: string, update: (v: string) => void) => {
+    const setC = (v: string) => { setValue(v); updateValue(v); update(v); };
+    const space = val.indexOf(' ');
+    if (space === -1) {
+      // completing the command token
+      const candidates = SLASH_COMMANDS.map((c) => c.cmd).filter((c) => c.startsWith(val));
+      if (candidates.length === 0) return false;
+      let lcp = candidates[0];
+      for (const c of candidates.slice(1)) {
+        let i = 0;
+        while (i < lcp.length && i < c.length && lcp[i] === c[i]) i++;
+        lcp = lcp.slice(0, i);
+      }
+      if (lcp.length <= val.length) return false; // no progress (ambiguous)
+      setC(lcp);
+      return true;
+    }
+    // completing an argument: only /model and /persona take free-text args
+    const cmd = val.slice(0, space);
+    const arg = val.slice(space + 1);
+    if (cmd !== '/model' && cmd !== '/persona') return false;
+    const list = cmd === '/model' ? (modelNames ?? []) : (personaNamesRef.current ?? []);
+    const candidates = list.filter((n) => n.toLowerCase().startsWith(arg.toLowerCase()));
+    if (candidates.length === 0) return false;
+    const lower = arg.toLowerCase();
+    const exact = candidates.find((n) => n.toLowerCase() === lower);
+    const pick = exact ?? candidates[0];
+    setC(`${cmd} ${pick}`);
+    return true;
+  }, [modelNames, updateValue]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Tab' && value.startsWith('/')) {
+      const ta = textareaRef.current;
+      const el = e.target as HTMLTextAreaElement;
+      completeSlash(value, (v) => {
+        if (ta) {
+          const end = v.length;
+          ta.setSelectionRange(end, end);
+        }
+        void el;
+      });
+      e.preventDefault();
+      return;
+    }
+    // Kick off the persona-name fetch for /persona tab completion
+    if (e.key === 'Tab' && value.startsWith('/persona') && personaNamesRef.current === null) {
+      personaNamesRef.current = []; // sentinel while loading
+      fetch(url(API.personas.root)).then((r) => r.json()).then((d) => {
+        personaNamesRef.current = (d?.data ?? []).map((x: { id: string; name: string }) => x.name);
+      }).catch(() => { personaNamesRef.current = []; });
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       if (IS_TOUCH_DEVICE) return; // let the textarea insert a newline on mobile
       e.preventDefault();
@@ -309,7 +401,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
         <textarea
           ref={textareaRef}
           className="chat-input"
-          placeholder={isStreaming ? 'Steer the agent...' : 'Type a message...'}
+          placeholder={isStreaming ? 'Steer the agent...' : 'Type a message... (/help for commands)'}
           rows={inputRows ?? (expanded ? 4 : 1)}
           value={value}
           onChange={(e) => updateValue(e.target.value)}
@@ -361,6 +453,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
         style={{ display: 'none' }}
         onChange={(e) => handleFiles(e.target.files)}
       />
+      {showHelp && (
+        <div className="chat-help-overlay" onClick={() => setShowHelp(false)}>
+          <div className="chat-help-box" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-help-title">Available commands</div>
+            {SLASH_COMMANDS.map(({ cmd, use, description }) => (
+              <div key={cmd} className="chat-help-item">
+                <span className="chat-help-cmd">{use}</span>
+                <span className="chat-help-desc">{description}</span>
+              </div>
+            ))}
+            <button className="chat-help-close" onClick={() => setShowHelp(false)}>Close</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

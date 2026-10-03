@@ -201,6 +201,53 @@ export function AppPage({
     }
   }, [setSessionError, targetSessionRef]);
 
+  // '/model <name>': resolve the name against the known model list (id or
+  // name, case-insensitive; unique-prefix match) and switch via PUT.
+  const handleCommandSetModel = useCallback(async (name: string) => {
+    const q = name.toLowerCase();
+    let hits = models.filter((m) => (m.id ?? '').toLowerCase() === q || (m.name ?? '').toLowerCase() === q || `${m.provider}/${m.id}`.toLowerCase() === q);
+    if (hits.length !== 1) {
+      const starts = models.filter((m) => (m.id ?? '').toLowerCase().startsWith(q) || (m.name ?? '').toLowerCase().startsWith(q));
+      if (starts.length >= 1) hits = starts;
+    }
+    if (hits.length !== 1) {
+      setSessionError(hits.length === 0 ? `Unknown model: ${name}` : `Ambiguous model: ${name} — ${hits.length} matches`);
+      return;
+    }
+    try {
+      const res = await fetch(url(API.session.model), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: hits[0].provider, modelId: hits[0].id, sessionId: sessionState.sessionId }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!data?.success) setSessionError(data?.error || `Failed to switch model to ${name}`);
+    } catch { setSessionError(`Failed to switch model to ${name}`); }
+  }, [models, sessionState.sessionId]);
+
+  // '/persona <name>': resolve persona by id or name on the server list and bind
+  const handleCommandSetPersona = useCallback(async (name: string) => {
+    try {
+      const res = await fetch(url(API.personas.root));
+      const data = await res.json().catch(() => null);
+      const list: { id: string; name: string }[] = data?.data ?? [];
+      const q = name.toLowerCase();
+      const hits = list.filter((x) => x.id.toLowerCase() === q || x.name.toLowerCase() === q);
+      if (hits.length !== 1) {
+        setSessionError(hits.length === 0 ? `Unknown persona: ${name}` : `Ambiguous persona: ${name} — ${hits.length} matches`);
+        return;
+      }
+      const put = await fetch(url(API.session.persona), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personaId: hits[0].id, sessionId: sessionState.sessionId }),
+      });
+      const d = await put.json().catch(() => null);
+      if (d?.success) setSessionState((s) => ({ ...s, persona: d.data?.persona ?? s.persona }));
+      else setSessionError(d?.error || `Failed to set persona to ${name}`);
+    } catch { setSessionError(`Failed to set persona to ${name}`); }
+  }, [sessionState.sessionId]);
+
   const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[], mountDockerSocket?: boolean) => {
     // Relative (or ~) workdir paths are allowed: the backend resolves them
     // against the autere backend container's $HOME before spawning.
@@ -351,7 +398,7 @@ export function AppPage({
             />
           )}
           {activeView === 'chat' && (
-            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={() => { setNewFormRequested(true); handleSetView('sessions'); }} onGoToView={handleSetView} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={urlSessionId || sessionState.sessionId} />
+            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={() => { setNewFormRequested(true); handleSetView('sessions'); }} onGoToView={(v) => handleSetView(v === 'files' ? 'edits' : v)} onSetModel={handleCommandSetModel} onSetPersona={handleCommandSetPersona} modelNames={models.map((m) => m.id)} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={urlSessionId || sessionState.sessionId} />
           )}
           {activeView === 'settings' && (
             <SettingsCard sseConnected={sseConnected} />
