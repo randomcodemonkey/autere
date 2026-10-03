@@ -16,14 +16,13 @@ describe('ChatInput slash commands', () => {
     cy.get('@onNewSession').should('have.been.calledOnce');
   });
 
-  it('/new shows an error when active (Working state)', () => {
+  it('/new opens the new-session form even while active (only creation is gated)', () => {
     const onNewSession = cy.stub().as('onNewSession');
     const onError = cy.stub().as('onError');
     cy.mount(<ChatInput onNewSession={onNewSession} onError={onError} isActive={true} />);
     cy.get('.chat-input').type('/new{enter}');
-    cy.get('@onNewSession').should('not.have.been.called');
-    cy.get('@onError').should('have.been.calledOnce');
-    cy.get('@onError').its('firstCall.args.0').should('contain', 'only be used when idle');
+    cy.get('@onNewSession').should('have.been.calledOnce');
+    cy.get('@onError').should('not.have.been.called');
   });
 
   it('/compact triggers onCompact when idle', () => {

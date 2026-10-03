@@ -19,6 +19,10 @@ interface SessionViewProps {
   onSwitchSession: (sessionId: string) => void;
   /** True while a switch request is in flight — blocks further actions */
   switching?: boolean;
+  /** Open directly on the new-session form tab (e.g. chat '/new' command) */
+  initialView?: 'new';
+  /** Fired once the initialView has been consumed */
+  onConsumedInitial?: () => void;
 }
 
 type SearchedSession = SessionSearchResult;
@@ -51,6 +55,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
   compacting, isStreaming, canSetWorkdir = false,
   onNewSession, onSwitchSession,
   switching = false,
+  initialView, onConsumedInitial,
 }) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchedSession[]>([]);
@@ -62,7 +67,16 @@ export const SessionView: React.FC<SessionViewProps> = ({
   const [personasStatus, setPersonasStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [personaId, setPersonaId] = useState('');
   // 'list' = sessions listing; 'new' = the new-session form
-  const [view, setView] = useState<'list' | 'new'>('list');
+  const [view, setView] = useState<'list' | 'new'>(initialView === 'new' ? 'new' : 'list');
+
+  // '/new' request arriving while already mounted (no remount happens)
+  useEffect(() => {
+    if (initialView === 'new') {
+      setView('new');
+      onConsumedInitial?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialView]);
   const [newNameInput, setNewNameInput] = useState('');
   const [newWorkdirs, setNewWorkdirs] = useState<string[]>([]);
   const [newMountDockerSocket, setNewMountDockerSocket] = useState(false);

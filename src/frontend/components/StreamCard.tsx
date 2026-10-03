@@ -10,6 +10,7 @@ interface StreamCardProps {
   isStreaming: boolean;
   compacting?: boolean;
   onNewSession: () => void;
+  onGoToView?: (view: 'settings' | 'tasks') => void;
   onCompact?: () => void;
   onCommandError?: (message: string) => void;
   steerPending?: number;
@@ -37,7 +38,7 @@ const TRUNC_LEN: Record<string, number> = {
 /** Collapse edit diffs longer than this many diff rows */
 const EDIT_COLLAPSE_ROWS = 12;
 
-export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onCompact, onCommandError, steerPending, followUpPending, model, models, activeModelId, onModelsFetched, onSent, onCancelPending, sessionId }) => {
+export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onGoToView, onCompact, onCommandError, steerPending, followUpPending, model, models, activeModelId, onModelsFetched, onSent, onCancelPending, sessionId }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const [filters, setFilters] = useState({
     thinking: localStorage.getItem('autere-filter-thinking') !== 'off',
@@ -342,7 +343,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
           </button>
         )}
       </div>
-      <ChatInput onNewSession={onNewSession} onCompact={onCompact} onError={onCommandError} disabled={compacting} isStreaming={isStreaming} isActive={isStreaming || compacting} steerPending={steerPending} followUpPending={followUpPending} onSent={onSent} sessionId={sessionId} />
+      <ChatInput onNewSession={onNewSession} onGoToView={onGoToView} onCompact={onCompact} onError={onCommandError} disabled={compacting} isStreaming={isStreaming} isActive={isStreaming || compacting} steerPending={steerPending} followUpPending={followUpPending} onSent={onSent} sessionId={sessionId} />
     </div>
   );
 };

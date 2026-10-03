@@ -11,8 +11,11 @@ interface AttachedFile {
 }
 
 interface ChatInputProps {
+  /** Opens the new-session form (does not create anything itself) */
   onNewSession: () => void;
   onCompact?: () => void;
+  /** Slash commands that navigate: /settings, /tasks */
+  onGoToView?: (view: 'settings' | 'tasks') => void;
   onError?: (message: string) => void;
   /** Called after a successful send with the sent text and type — used for
    * optimistic display of the user message in the chat. */
@@ -33,7 +36,7 @@ const IS_TOUCH_DEVICE = typeof navigator !== 'undefined' && navigator.maxTouchPo
 const MAX_ATTACHED = 4;
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB per file — matches backend limit
 
-export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, onError, onSent, disabled, isStreaming, isActive, steerPending, followUpPending, sessionId }) => {
+export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, onCompact, onError, onSent, disabled, isStreaming, isActive, steerPending, followUpPending, sessionId }) => {
   // Draft persistence: the chat view unmounts on tab navigation (edits,
   // settings, ...) and the input text would be lost. Keep it in localStorage
   // keyed by session so each session remembers its own draft. ponytail:
@@ -152,12 +155,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
 
       switch (cmd) {
         case '/new':
+          onNewSession(); // opens the new-session form modal
+          return;
         case '/clear':
           if (isActive) {
-            onError?.('/new can only be used when idle — wait for the agent to finish working.');
+            onError?.('/clear can only be used when idle — wait for the agent to finish working.');
             return;
           }
           onNewSession();
+          // /clear created a fresh session directly (legacy alias of the old /new)
+          return;
+        case '/settings':
+        case '/tasks':
+          if (!onGoToView) {
+            onError?.('Navigation is not available here.');
+            return;
+          }
+          onGoToView(cmd === '/settings' ? 'settings' : 'tasks');
           return;
         case '/compact':
           if (isActive) {
@@ -215,7 +229,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onCompact, o
     } finally {
       setSending(false);
     }
-  }, [value, images, onNewSession, onCompact, onError, onSent, isActive, updateValue, sessionId]);
+  }, [value, images, onNewSession, onGoToView, onCompact, onError, onSent, isActive, updateValue, sessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

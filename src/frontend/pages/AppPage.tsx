@@ -73,6 +73,8 @@ export function AppPage({
 }: AppPageProps) {
   const { sessionId: urlSessionId, view } = useParams<{ sessionId?: string; view?: string }>();
   const navigate = useNavigate();
+  // When set, opening the Sessions view shows the new-session form tab ('/new')
+  const [newFormRequested, setNewFormRequested] = useState(false);
 
   // View switching (chat / status / settings). On desktop the status card is
   // always visible on the left and the selection swaps the right pane; on
@@ -335,6 +337,8 @@ export function AppPage({
         <div className="chat-wrapper">
           {activeView === 'sessions' && (
             <SessionView
+              initialView={newFormRequested ? 'new' : undefined}
+              onConsumedInitial={() => setNewFormRequested(false)}
               statusType={statusType}
               sessionId={sessionState.sessionId}
               sessionName={sessionState.sessionName}
@@ -347,7 +351,7 @@ export function AppPage({
             />
           )}
           {activeView === 'chat' && (
-            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={handleNewSession} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={urlSessionId || sessionState.sessionId} />
+            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={() => { setNewFormRequested(true); handleSetView('sessions'); }} onGoToView={handleSetView} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={urlSessionId || sessionState.sessionId} />
           )}
           {activeView === 'settings' && (
             <SettingsCard sseConnected={sseConnected} />
