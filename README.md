@@ -40,7 +40,7 @@ When mounting docker.sock inside the autere container, you **must** use `--group
 
 Once started, the Autere Web UI is available at **http://localhost:3456** and 9router, if enabled, at **http://localhost:20128**.
 
-The default `9router` instance requires an API key which you can obtain from the 9router dashboard. Configure the API key and 9router Web Dashboard password via *Settings -> 9Router* in the Autere Web UI.
+The default `9router` instance requires an API key which you can obtain from the 9router dashboard. You will need to change the 9router password on first login, and add some provider(s) and model(s) to 9router before it can be used in Autere. Once 9router is configured, you need to configure the API key and 9router Web Dashboard password via *Settings -> 9Router* in the Autere Web UI.
 
 ### Using other providers
 
