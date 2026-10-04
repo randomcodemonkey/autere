@@ -24,24 +24,30 @@ docker run -d --name autere \
   --group-add $(getent group docker | cut -d: -f3) \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v autere-home:/home/autere \
-  org.randomcodemonkey/autere:latest
+  randomcodemonkey.org/autere:latest
 ```
+
+There is also an example [docker-compose.yaml](docker/docker-compose.yaml) available.
 
 `/var/run/docker.sock` is required for sandboxed pi sessions - without it the backend cannot start session containers. Admin user may set 'sandbox' image to 'off' in their per-user settings, or disable sandboxing globally by setting env `AUTERE_SANDBOX_IMAGE=off`. When mounting docker.sock inside the autere container, you **must** use `--group-add <gid>` in the docker run command, where gid matches the group of the socket inside the autere container (on linux this matches the group of the socket on the host, `getent group docker` - on MacOs it is easiest to mount the socket and check what group it ends up having)
 
 `/home/autere` should be mounted into the autere container as a named volume (not a bind mount), sandboxed pi sessions require named volumes to function. 
 
-Once started, the autere web UI is available at **http://localhost:3456** and 9router, if enabled, at **http://localhost:20128**.
+### Initial configuration
 
-### Using Pi providers
+Once started, the Autere Web UI is available at **http://localhost:3456** and 9router, if enabled, at **http://localhost:20128**.
 
-Autere is designed for 9router but can also run without it, by setting the `AUTERE_PROVIDER` env value to a valid `pi` provider. With this mode, you must manually configure the provider with `pi` through the running autere docker instance:
+The default `9router` instance requires an API key which you can obtain from the 9router dashboard. Configure the API key and 9router Web Dashboard password via *Settings -> 9Router* in the Autere Web UI.
+
+### Using other providers
+
+Autere is designed for 9router but can also run without it, by setting the `AUTERE_PROVIDER` env value to a valid `pi` provider. With this mode, you must manually configure the provider with `pi` through the running Autere docker instance:
 
 ```bash
 docker exec -it autere pi
 ```
 
-Enter `/login` to pi and follow the instructions for configuring your selected provider. 
+Enter `/login` to pi and follow the instructions for configuring your selected provider. See [Pi Providers documentation](https://pi.dev/docs/latest/providers) for details.
 
 ### Authentication
 
