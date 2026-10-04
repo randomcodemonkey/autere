@@ -1489,7 +1489,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           const uploadsDir = join(t.getEnvDir(), 'uploads');
           mkdirSync(uploadsDir, { recursive: true });
           const savedPaths: string[] = [];
-          for (const [i, f] of files.entries()) {
+          for (const f of files) {
             const savedName = `file-${createHash('sha1').update(f.data).digest('hex').slice(0, 16)}-${f.name.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 80)}`;
             const file = join(uploadsDir, savedName);
             writeFileSync(file, Buffer.from(f.data, 'base64'));
