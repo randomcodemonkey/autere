@@ -2,27 +2,21 @@
 
 Autere is a web frontend and orchestrator for the [Pi Coding Agent](https://pi.dev/) with multi-user and multi-session support.
 
-Designed to communicate to a locally running 9router instance, but the underlying pi agents can be configured to use
-some other supported AI provider directly.
-
 The backend multiplexes pi sessions per user, allowing the same user to interact with any pi session from any
 number of devices. The pi sessions are optionally isolated into their own docker containers, providing each
 user their own (configurable) workdirs inside the container.
 
-The web frontend shows a users pi sessions, allows interacting with them ('chat'), has a file browser with git repository
-support and provides access to per-user settings.
-
 ## Installation and Running
 
-Build a docker image with the autere frontend + backend (9router started/managed by the backend when the provider is 9router) under supervisord:
+Build the docker image with the included `build.sh` script:
 
 ```bash
-docker buildx build --platform linux/arm64 -t autere -f docker/Dockerfile .
+./build.sh                       # build with defaults
+./build.sh -i minor              # increment version and build
+./build.sh -a linux/amd64,linux/arm64 -t latest,0.1.0
 ```
 
-Local buildx builds only target a single architecture; use `--platform linux/amd64,linux/arm64 --push` for a multi-arch push.
-
-All configuration is via env variables (docker run / compose):
+All configuration is via env variables (docker run / compose), see below for supported variablea. 
 
 ```bash
 docker run -d --name autere \
@@ -37,23 +31,23 @@ docker run -d --name autere \
 
 `/var/run/docker.sock` is required for sandboxed pi sessions - without it the backend cannot start session containers. Admin user may set 'sandbox' image to 'off' in their per-user settings, or disable sandboxing globally by setting env `AUTERE_SANDBOX_IMAGE=off`. When mounting docker.sock inside the autere container, you **must** use `--group-add <gid>` in the docker run command, where gid matches the group of the socket inside the autere container.
 
-The `/home/autere/.autere` and `/home/autere/.pi` must be mounted as named docker volumes if using sandboxed pi containers. It is strongly suggested to always mount them as named volumes (not bind mounts) so it is possible to switch to sandboxed mode later.
+`/home/autere` should be mounted into the autere container as a named volume (not a bind mount), sandboxed pi sessions require named volumes to function. 
 
-Once started, the web app is available at **http://localhost:3456**; 9router, if enabled, at **http://localhost:20128**.
+Once started, the autere web UI is available at **http://localhost:3456** and 9router, if enabled, at **http://localhost:20128**.
 
-### Authentication
-
-Auth is on by default (`AUTERE_AUTH=false` disables it — only for private/dev instances). The fixed `admin` account is seeded on first start from `--autere-password` (config file) or `INITIAL_PASSWORD` (defaults to `admin`) and is not forced to rotate it — **set a real `INITIAL_PASSWORD` with `-e INITIAL_PASSWORD=<secret>`** before first start. Users created later (via the admin Users page, or `autere user-create`) must change their generated/seed password at first login before the API accepts anything else.
-
-The CLI authenticates with the same accounts (`autere login admin <password>`), storing its token in `~/.autere/cli-config.json`.
-
-Autere can also be ran without 9router, by defining the `AUTERE_PROVIDER` env value to a valid `pi` provider. With this mode, you must manually configure the provider with `pi` through the running autere docker container
+Autere is designed for 9router but can also run without it, by setting the `AUTERE_PROVIDER` env value to a valid `pi` provider. With this mode, you must manually configure the provider with `pi` through the running autere docker instance:
 
 ```bash
 docker exec -it autere pi
 ```
 
 Enter `/login` to pi and follow the instructions for configuring your selected profile.
+
+### Authentication
+
+The fixed `admin` account is created on first start from `INITIAL_PASSWORD` (defaults to `admin`).
+
+The CLI authenticates with the same accounts (`autere login admin <password>`), storing its token in `~/.autere/cli-config.json`.
 
 
 ### Configuration (system env)
@@ -62,12 +56,12 @@ Enter `/login` to pi and follow the instructions for configuring your selected p
 |----------|---------|-------------|
 | `AUTERE_PORT` | 3456 | HTTP server port |
 | `AUTERE_AUTH` | true | Enable/disable authentication |
-| `INITIAL_PASSWORD` | `admin` | First-boot password for the `admin` user and 9router — should always be set in docker deployments |
-| `AUTERE_PROVIDER` | - | Pi provider |
+| `INITIAL_PASSWORD` | `admin` | Initial password for the `admin` user and 9router |
+| `AUTERE_PROVIDER` | 9router | Pi provider |
 | `AUTERE_MODEL` | - | Pi model ID |
-| `AUTERE_IDLE_TIMEOUT` | 30 | Minutes before idle pi process is killed |
-| `AUTERE_NINE_ROUTER_URL` | `http://localhost:20128` | Backend-managed 9router |
-| `AUTERE_SANDBOX_IMAGE` | randomcodemonkey.org/autere:latest | Docker image for sandboxed pi sessions (`off` to run pi on the host) |
+| `AUTERE_IDLE_TIMEOUT` | 30 | Minutes before idle pi sessions are terminated |
+| `AUTERE_NINE_ROUTER_URL` | `http://localhost:20128` | Backend-managed 9router URL |
+| `AUTERE_SANDBOX_IMAGE` | randomcodemonkey.org/autere:latest | Docker image for sandboxed pi sessions (`off` disables sandbox mode) |
 
 ## Architecture
 
@@ -128,20 +122,16 @@ Stream: `GET /api/v1/events` (per-user, scoped to the viewed session where appli
 
 History entry `role` values: `user`, `assistant`, `thinking`, `toolCall`, `toolResult`, `edit`, `file`, `image`. Non-renderable pi roles (e.g. `model_change`) are dropped.
 
-> **Moving volumes / mountpoints (e.g. between docker volumes)**: every pi
-> session transcript records its absolute `cwd` in the first JSONL line, and
-> sessions whose recorded cwd no longer exists on the host are silently
-> hidden from the Sessions list. If home directories move (new host, changed
-> volume layout, different username), rewrite the paths once:
->
-> ```bash
-> grep -rlF '/home/OLD' ~/.autere/pi-envs/*/sessions/ \
->   | xargs sed -i 's|/home/OLD|/home/NEW|g'
-> ```
->
-> The dir names under `sessions/` (e.g. `--home-autere--`) are derived from
-> the cwd and can stay as-is, but the cwd *inside* each file must match a
-> directory that exists on the current host.
+## Troubleshooting
+
+**Moving volumes / mountpoints (e.g. between docker volumes)**: every pi session transcript records its absolute `cwd` in the first JSONL line, and sessions whose recorded cwd no longer exists on the host are hidden from the Sessions list. If home directories move (new host, changed volume layout, different username), rewrite the paths once:
+
+```bash
+grep -rlF '/home/OLD' ~/.autere/pi-envs/*/sessions/ \
+  | xargs sed -i 's|/home/OLD|/home/NEW|g'
+```
+
+The dir names under `sessions/` (e.g. `--home-autere--`) are derived from the cwd and can stay as-is, but the cwd *inside* each file must match a directory that exists on the current host.
 
 ## License
 
