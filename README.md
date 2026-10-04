@@ -1,10 +1,11 @@
 # autere
 
-Autere is a web frontend and orchestrator for the [Pi Coding Agent](https://pi.dev/) with multi-user and multi-session support.
+Autere is a web frontend and orchestrator for the [Pi Coding Agent](https://pi.dev/), with multi-user and multi-session support. Sessions are mutliplexed to all clients of a user - you can start on your laptop, move to your phone and continue the same session seamlessly.
 
-The backend multiplexes pi sessions per user, allowing the same user to interact with any pi session from any
-number of devices. The pi sessions are optionally isolated into their own docker containers, providing each
-user their own (configurable) workdirs inside the container.
+Supports multiple users, allows sandboxing your Pi agents into docker containers with only specific directories mounted. Provides a CLI to interact with Pi sessions through Autere - from anywhere, if you expose Autere over a network.
+
+![Autere Chat](screenshots/autere-main-chat.png)
+
 
 ## Installation and Running
 
@@ -29,7 +30,9 @@ docker run -d --name autere \
 
 There is also an example [docker-compose.yaml](docker/docker-compose.yaml) available.
 
-`/var/run/docker.sock` is required for sandboxed pi sessions - without it the backend cannot start session containers. Admin user may set 'sandbox' image to 'off' in their per-user settings, or disable sandboxing globally by setting env `AUTERE_SANDBOX_IMAGE=off`. When mounting docker.sock inside the autere container, you **must** use `--group-add <gid>` in the docker run command, where gid matches the group of the socket inside the autere container (on linux this matches the group of the socket on the host, `getent group docker` - on MacOs it is easiest to mount the socket and check what group it ends up having)
+`/var/run/docker.sock` is required for sandboxed pi sessions - without it the backend cannot start session containers. Admin user may set 'sandbox' image to 'off' in their per-user settings, or disable sandboxing globally by setting env `AUTERE_SANDBOX_IMAGE=off`.
+
+When mounting docker.sock inside the autere container, you **must** use `--group-add <gid>` in the docker run command, where gid matches the group of the socket inside the autere container (on linux this matches the group of the socket on the host, `getent group docker` - on MacOs it is easiest to mount the socket and check what group it ends up having)
 
 `/home/autere` should be mounted into the autere container as a named volume (not a bind mount), sandboxed pi sessions require named volumes to function. 
 
@@ -55,6 +58,9 @@ The fixed `admin` account is created on first start from `INITIAL_PASSWORD` (def
 
 The CLI authenticates with the same accounts (`autere login admin <password>`), storing its token in `~/.autere/cli-config.json`.
 
+### Running behind a proxy
+
+Autere can be ran behind a proxy and supports the standard `x-forwarded-prefix` header to allow Autere to be proxied behind a non-root path.
 
 ### Configuration (system env)
 
