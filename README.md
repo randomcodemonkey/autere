@@ -12,21 +12,19 @@ Build the docker image with the included `build.sh` script:
 
 ```bash
 ./build.sh                       # build with defaults
-./build.sh -i minor              # increment version and build
-./build.sh -a linux/amd64,linux/arm64 -t latest,0.1.0
+./build.sh -h                    # show build options
 ```
 
-All configuration is via env variables (docker run / compose), see below for supported variablea. 
+All configuration is via env variables (docker run / compose), see below for supported variables. 
 
 ```bash
 docker run -d --name autere \
   -p 127.0.0.1:3456:3456 -p 127.0.0.1:20128:20128 \
   -e INITIAL_PASSWORD=secret \
+  --group-add 126 \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v autere-data:/home/autere/.autere \
-  -v autere-master-pi-data:/home/autere/.pi \
-  -v autere-master-9router-data:/home/autere/.9router \
-  autere
+  -v autere-home:/home/autere \
+  org.randomcodemonkey/autere:latest
 ```
 
 `/var/run/docker.sock` is required for sandboxed pi sessions - without it the backend cannot start session containers. Admin user may set 'sandbox' image to 'off' in their per-user settings, or disable sandboxing globally by setting env `AUTERE_SANDBOX_IMAGE=off`. When mounting docker.sock inside the autere container, you **must** use `--group-add <gid>` in the docker run command, where gid matches the group of the socket inside the autere container.
@@ -35,13 +33,16 @@ docker run -d --name autere \
 
 Once started, the autere web UI is available at **http://localhost:3456** and 9router, if enabled, at **http://localhost:20128**.
 
+
+### Using Pi providers
+
 Autere is designed for 9router but can also run without it, by setting the `AUTERE_PROVIDER` env value to a valid `pi` provider. With this mode, you must manually configure the provider with `pi` through the running autere docker instance:
 
 ```bash
 docker exec -it autere pi
 ```
 
-Enter `/login` to pi and follow the instructions for configuring your selected profile.
+Enter `/login` to pi and follow the instructions for configuring your selected provider. 
 
 ### Authentication
 
