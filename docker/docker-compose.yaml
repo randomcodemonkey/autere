@@ -1,0 +1,26 @@
+services:
+  autere:
+    container_name: autere
+    image: "randomcodemonkey.org/autere:latest"
+    group_add:
+      - "126" # docker gid inside autere
+    volumes:
+      - autere-home:/home/autere:rw
+      - /etc/localtime:/etc/localtime:ro
+      - /run/dbus:/run/dbus:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config/gitconfig:/home/autere/.gitconfig:ro
+    environment:
+      INITIAL_PASSWORD: admin
+      NINE_ROUTER_API_KEY: configure-9router-first
+    ports:
+      - '20128:20128'
+      - '3456:3456'
+    networks:
+      - autere
+    restart: unless-stopped
+volumes:   
+  autere-home: {}
+networks:
+  autere:
+    name: autere
