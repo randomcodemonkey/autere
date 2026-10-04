@@ -2,7 +2,7 @@
 
 Autere is a web frontend and orchestrator for the [Pi Coding Agent](https://pi.dev/), with multi-user and multi-session support. Sessions are mutliplexed to all clients of a user - you can start on your laptop, move to your phone and continue the same session seamlessly.
 
-Supports multiple users, allows sandboxing your Pi agents into docker containers with only specific directories mounted. Provides a CLI to interact with Pi sessions through Autere - from anywhere, if you expose Autere over a network.
+Supports multiple users, allows sandboxing your Pi agents into docker containers with only specific directories mounted. Provides a full CLI for integrations. Use from anywhere, if you expose Autere over a network.
 
 ![Autere Chat](screenshots/autere-main-chat.png)
 
