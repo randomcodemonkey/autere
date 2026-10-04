@@ -78,7 +78,7 @@ fi
 
 version_file="$(cat "$here/version.txt")"
 version="${version:-$version_file}"
-arch="${arch:-$( [ "$(uname -m)" = aarch64 ] && echo linux/arm64 || echo linux/amd64 )}"
+arch="${arch:-$( case "$(uname -m)" in aarch64|arm64) echo linux/arm64 ;; *) echo linux/amd64 ;; esac )}"
 image="${image:-randomcodemonkey.org/autere}"
 tags="${tags:-latest,$version}"
 
