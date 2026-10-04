@@ -267,7 +267,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
     } finally {
       setSending(false);
     }
-  }, [value, images, onNewSession, onGoToView, onCompact, onError, onSent, isActive, updateValue, sessionId]);
+  }, [value, images, onNewSession, onGoToView, onSetModel, onSetPersona, onCompact, onError, onSent, isActive, updateValue, sessionId]);
 
   // Tab completion for slash commands (and /model, /persona arguments).
   // Completes to the longest common prefix of the candidates; a command with
@@ -463,7 +463,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
                 <span className="chat-help-desc">{description}</span>
               </div>
             ))}
-            <button className="chat-help-close" onClick={() => setShowHelp(false)}>Close</button>
+            <button className="btn btn-default btn-row chat-help-close" onClick={() => setShowHelp(false)}>Close</button>
           </div>
         </div>
       )}

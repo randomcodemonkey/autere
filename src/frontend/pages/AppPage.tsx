@@ -223,7 +223,7 @@ export function AppPage({
       const data = await res.json().catch(() => null);
       if (!data?.success) setSessionError(data?.error || `Failed to switch model to ${name}`);
     } catch { setSessionError(`Failed to switch model to ${name}`); }
-  }, [models, sessionState.sessionId]);
+  }, [models, sessionState.sessionId, setSessionError]);
 
   // '/persona <name>': resolve persona by id or name on the server list and bind
   const handleCommandSetPersona = useCallback(async (name: string) => {
@@ -246,7 +246,7 @@ export function AppPage({
       if (d?.success) setSessionState((s) => ({ ...s, persona: d.data?.persona ?? s.persona }));
       else setSessionError(d?.error || `Failed to set persona to ${name}`);
     } catch { setSessionError(`Failed to set persona to ${name}`); }
-  }, [sessionState.sessionId]);
+  }, [sessionState.sessionId, setSessionError, setSessionState]);
 
   const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[], mountDockerSocket?: boolean) => {
     // Relative (or ~) workdir paths are allowed: the backend resolves them
