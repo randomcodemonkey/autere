@@ -3,11 +3,12 @@ import { useAuth } from '../../src/frontend/hooks/useAuth';
 
 // Test wrapper component for the hook
 function TestComponent() {
-  const { authenticated, authEnabled, loginError, checkAuthStatus, login, logout } = useAuth();
+  const { authenticated, authEnabled, loginError, mustChangePassword, checkAuthStatus, login, logout } = useAuth();
   return (
     <div>
       <span data-testid="authenticated">{String(authenticated)}</span>
       <span data-testid="authEnabled">{String(authEnabled)}</span>
+      <span data-testid="mustChangePassword">{String(mustChangePassword)}</span>
       <span data-testid="loginError">{loginError}</span>
       <button data-testid="checkAuth" onClick={() => checkAuthStatus()}>Check Auth</button>
       <button data-testid="login" onClick={() => login('admin', 'testpassword')}>Login</button>
@@ -58,5 +59,25 @@ describe('useAuth', () => {
     // After clicking login with empty password, error appears
     cy.get('[data-testid="loginEmpty"]').click();
     cy.get('[data-testid="loginError"]').should('contain', 'Enter password');
+  });
+
+  it('sets mustChangePassword from the login response itself', () => {
+    // /auth/status never resolves — the flag can only come from the login
+    // response. If it lagged, App would render <Routes> for a tick with
+    // mustChangePassword=false and RootRedirect would land on /session/-.
+    const hanging = new Promise(() => {});
+    cy.stub(window, 'fetch').callsFake(((input: any, init: any) => {
+      if (String(input).endsWith('/auth/login') && init?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, token: 't', mustChangePassword: true }),
+        });
+      }
+      return hanging;
+    }) as any);
+    cy.mount(<TestComponent />);
+    cy.get('[data-testid="login"]').click();
+    cy.get('[data-testid="authenticated"]').should('contain', 'true');
+    cy.get('[data-testid="mustChangePassword"]').should('contain', 'true');
   });
 });

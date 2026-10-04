@@ -54,6 +54,12 @@ export function useAuth() {
       const data = await res.json();
       if (data.success) {
         setAuthenticated(true);
+        // Set the forced-change flag from the login response itself, in the
+        // same batch as `authenticated`. Otherwise App renders <Routes> for
+        // one tick with mustChangePassword still false, RootRedirect fires
+        // GET /sessions (403 under the change gate) and lands on the
+        // fallback /session/- — which then persists past the password change.
+        setMustChangePassword(!!data.mustChangePassword);
         setLoginError('');
         // The login response doesn't carry user info (username/role) —
         // fetch it now, otherwise the status modal shows '—' after a
