@@ -204,7 +204,7 @@ function toPublic(name: string): PublicUser {
 
 // ── UI theme (per user, self-service) ──
 
-export const THEMES = ['midnight', 'gray', 'light'] as const;
+export const THEMES = ['midnight', 'gray', 'light', 'evergreen'] as const;
 
 export function getUserTheme(user: string): string {
   return registry[user]?.theme ?? 'midnight';

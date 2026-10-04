@@ -1,4 +1,4 @@
-export type ThemeId = 'midnight' | 'gray' | 'light';
+export type ThemeId = 'midnight' | 'gray' | 'light' | 'evergreen';
 
 export interface ThemeOption { id: ThemeId; name: string; }
 
@@ -6,10 +6,11 @@ export const THEMES: ThemeOption[] = [
   { id: 'midnight', name: 'Midnight' },
   { id: 'gray', name: 'AI Gray' },
   { id: 'light', name: 'Light' },
+  { id: 'evergreen', name: 'Nevergreen' },
 ];
 
 export function isThemeId(v: string | null | undefined): v is ThemeId {
-  return v === 'midnight' || v === 'gray' || v === 'light';
+  return v === 'midnight' || v === 'gray' || v === 'light' || v === 'evergreen';
 }
 
 /** Apply a theme by stamping the documented attribute on <html>. */
