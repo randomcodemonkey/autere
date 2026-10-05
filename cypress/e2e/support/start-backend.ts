@@ -195,7 +195,7 @@ export async function startBackend(): Promise<void> {
     // 9router: piggyback on the live one (dev env) or own it (CI).
     // 9router kills every other 9router process on startup, so exactly
     // one 9router per machine — test backends never spawn their own.
-    AUTERE_NINE_ROUTER_URL: 'http://localhost:20128',
+    AUTERE_NINE_ROUTER_URL: process.env.AUTERE_NINE_ROUTER_URL || 'http://localhost:20128',
     AUTERE_DIR: join(testEnvsDir, 'autere-state'),
     // sandbox points at docker + the real home volume — off for tests
     AUTERE_SANDBOX_IMAGE: 'off',

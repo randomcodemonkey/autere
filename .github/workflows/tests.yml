@@ -1,0 +1,87 @@
+name: Tests
+
+# Every push that is NOT a release version bump runs the full test suite:
+# typecheck + lint, component tests, CLI integration tests, extension
+# smoke tests, and e2e (real pi turns via 9router).
+on:
+  push:
+    branches: ['**']
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.commit.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: commit
+        name: Skip when the commit is a version-bump release commit
+        run: |
+          subj="$(git log -1 --pretty=%s)"
+          if echo "$subj" | grep -qE '^version: [0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    needs: guard
+    if: needs.guard.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # Component tests run against a dev-server bundle — no 9router needed.
+      - name: Component tests
+        run: npx cypress install && npm run test:component
+
+      # CLI tests: isolated backend + isolated HOME, no 9router needed.
+      - name: CLI integration tests
+        run: npm run test:cli
+
+      - name: pi extension smoke tests
+        run: node --experimental-strip-types extras/pi-filetools/smoke-test.mjs
+
+      # E2E needs a real 9router for model turns. The dev instance of this
+      # repo's host machine is NOT reachable from the runner, so a 9router
+      # secret is required — no secret, no model turns, run aborts loudly.
+      - name: e2e tests (9router required)
+        env:
+          AUTERE_E2E_ROUTER_URL: ${{ secrets.AUTERE_E2E_ROUTER_URL || '' }}
+          AUTERE_E2E_ROUTER_KEY: ${{ secrets.AUTERE_E2E_ROUTER_KEY || '' }}
+          AUTERE_NINE_ROUTER_URL: ${{ secrets.AUTERE_E2E_ROUTER_URL || '' }}
+        run: |
+          if [[ -z "$AUTERE_E2E_ROUTER_URL" ]]; then
+            echo "::error::AUTERE_E2E_ROUTER_URL secret is not set — e2e needs a reachable 9router (set URL + API key secrets, or drop this error if e2e should be skipped)"
+            exit 1
+          fi
+          # Give the backend harness a router key that is reachable, and a
+          # writable config path (HOME is not the build user's on the runner
+          # — start-backend reads $HOME/.pi/agent/9router-config.json).
+          mkdir -p ~/.pi/agent
+          printf '{"apiKey":"%s"}\n' "$AUTERE_E2E_ROUTER_KEY" > ~/.pi/agent/9router-config.json
+          npm run test:e2e
+
+      - name: Upload cypress artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-artifacts
+          path: |
+            cypress/screenshots
+            cypress/videos
+          if-no-files-found: ignore
+          retention-days: 7
