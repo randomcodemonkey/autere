@@ -148,3 +148,5 @@ The dir names under `sessions/` (e.g. `--home-autere--`) are derived from the cw
 ## License
 
 MIT
+
+This service uses icons from the Font Awesome Free icon set ([fontawesome.com](https://fontawesome.com)), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
