@@ -68,7 +68,7 @@ RUN npm install -g cypress --ignore-scripts \
 
 # autere backend runs from source via tsx (runtime dependency, installed with the app)
 RUN useradd -m -d /home/autere -s /bin/bash -G tty autere \
-    && mkdir -p /home/autere/log /home/autere/code /home/autere/.autere /home/autere/.pi \
+    && mkdir -p /home/autere/log /home/autere/code /home/autere/.autere /home/autere/.pi /home/autere/.cache /home/autere/.config /home/autere/.ivy /home/autere/.m2 /home/autere/.npm \
     && chown -R autere:autere /home/autere
 
 COPY --chown=autere:autere docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
