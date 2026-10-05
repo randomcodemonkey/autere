@@ -62,7 +62,7 @@ ENV NPM_CACHE_COUNTER=0002
 
 RUN npm install -g cypress --ignore-scripts \
     && npm install -g 9router --ignore-scripts \
-    && npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.0.0 \
+    && npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.0.2 \
     && npm install -g @tobilu/qmd \
     && npm cache clean --force
 
