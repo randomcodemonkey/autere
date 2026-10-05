@@ -2,7 +2,7 @@
 //   node --experimental-strip-types smoke-test.mjs
 // Verifies: chat cards cap at 10 + summary line, JSONL records all,
 // .git paths ignored everywhere.
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -29,7 +29,7 @@ try {
 } catch (err) {
   if (err.code !== "ERR_NO_TYPESCRIPT" && err.code !== "ERR_UNKNOWN_FILE_EXTENSION") throw err;
   const out = join(__dirname, ".index.compiled.mjs");
-  const typebox = join(__dirname, "..", "..", "node_modules", "@earendil-works", "pi-coding-agent", "node_modules", "typebox");
+  const typebox = join(__dirname, "..", "..", "node_modules", "typebox");
   const r = spawnSync("npx", ["esbuild", join(__dirname, "index.ts"), "--format=esm", "--bundle", "--packages=external", `--alias:typebox=${typebox}`, `--outfile=${out}`], { cwd: join(__dirname, "..", "..") });
   if (r.status !== 0) { console.error(r.stderr.toString()); process.exit(1); }
   ({ default: ext } = await import(out));
@@ -139,3 +139,26 @@ const case4Cards = entries2.filter((e) => e.type === "file_change" && e.data.cha
 assert(case4Cards.some((c) => c.data.path.endsWith("f-own2.txt")), "own change missing in session 2");
 assert(!case4Cards.some((c) => c.data.path.endsWith("f-own.txt")), "OTHER session's change leaked into session 2 chat");
 console.log("smoke-test OK: cross-session change suppression (no leaked cards)");
+
+// ── Case 5: cross-session DELETION suppression ──
+// Same as case 4 but the other session DELETED the file: no stat is left,
+// so the guard must compare the snapshot's baseline mtime against the ledger.
+// (Regression: statSync(path) threw on deleted files → guard never fired.)
+// Setup: f-del.txt exists and is wiped so instance 2's baseline snapshot
+// stats it; the OTHER instance already recorded the deletion in the ledger
+// at a ts within the ±2s window.
+writeFileSync(join(work, "f-del.txt"), "del\n");
+// give it an mtime clearly after the current ledger entries
+utimesSync(join(work, "f-del.txt"), new Date(), new Date(Date.now() + 10000));
+fire2("tool_execution_start", { toolName: "bash", toolCallId: "x3", args: { command: "sleep" } }, {});
+// other instance's claim: deleted at (baseline mtime + 100ms) — inside window
+const stDel = statSync(join(work, "f-del.txt"));
+appendFileSync(join(agentDir, "file-changes", ".changes-ledger.jsonl"),
+  JSON.stringify({ ts: stDel.mtimeMs + 100, path: join(work, "f-del.txt") }) + "\n");
+// force ledger reload next loadLedger()
+utimesSync(join(agentDir, "file-changes", ".changes-ledger.jsonl"), new Date(), new Date());
+rmSync(join(work, "f-del.txt"));
+fire2("tool_execution_end", { toolName: "bash", toolCallId: "x3" }, {});
+assert(!entries2.some((e) => e.type === "file_change" && e.data.path.endsWith("f-del.txt")),
+  "OTHER session's deletion leaked into session 2 chat");
+console.log("smoke-test OK: cross-session deletion suppression (deleted-file ledger guard)");

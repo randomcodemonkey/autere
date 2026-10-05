@@ -318,17 +318,16 @@ export default function (pi: any) {
 		// JSONL record). Only fresh changes with no ledger entry within the
 		// window can still be attributed to a session's command.
 		loadLedger();
-		const skipClaimed = (path: string): boolean => {
-			try { return ledgerHasRecentEntry(path, statSync(path).mtimeMs); } catch { return false; }
-		};
+		const skipClaimed = (path: string, at: number): boolean => ledgerHasRecentEntry(path, at);
 		for (const path of paths) {
 			const b = before.get(path);
 			const a = after.get(path);
 			if (b && a && b.mtimeMs === a.mtimeMs && b.size === a.size) continue;
-			// Deletion by another session: no stat left to compare — the other
-			// instance's ledger ts postdates this command's baseline mtime
-			if (b && !a && (ledgerSeen.get(path) ?? 0) > b.mtimeMs) continue;
-			if (b && a && skipClaimed(path)) { updateCache(path, readText(path, a.size)); continue; }
+			// Deletion by another session: no stat left to compare — compare the
+			// snapshot's baseline mtime against the ledger (the old statSync call
+			// threw on deleted files, so guard silently never fired).
+			if (b && !a && skipClaimed(path, b.mtimeMs)) { contentCache.delete(path); continue; }
+			if (b && a && skipClaimed(path, a.mtimeMs)) { updateCache(path, readText(path, a.size)); continue; }
 			let newContent: string | null = null;
 			if (a) { newContent = readText(path, a.size); if (newContent === null) { contentCache.delete(path); continue; } }
 			emit(path, contentCache.get(path)?.content, newContent, !!b, "bash");
