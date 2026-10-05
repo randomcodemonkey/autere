@@ -5,14 +5,20 @@ services:
     group_add:
       - "126" # docker gid inside autere
     volumes:
-      - autere-home:/home/autere:rw
-      - /etc/localtime:/etc/localtime:ro
-      - /run/dbus:/run/dbus:ro
+      - autere-data:/home/autere/.autere:rw
+      - autere-pi:/home/autere/.pi:rw
+      - config:/home/autere/.config:rw
+      - cache:/home/autere/.cache:rw
+      - npm-cache:/home/autere/.npm:rw
+      - m2-cache:/home/autere/.m2:rw
+      - ivy-cache:/home/autere/.ivy:rw
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./config/gitconfig:/home/autere/.gitconfig:ro
     environment:
       INITIAL_PASSWORD: admin
       NINE_ROUTER_API_KEY: configure-9router-first
+      GIT_CONFIG_GLOBAL: /home/autere/.config/gitconfig
+      XDG_CACHE_HOME: /home/autere/.cache
+      XDG_CONFIG_HOME: /home/autere/.config
     ports:
       - '20128:20128'
       - '3456:3456'
@@ -20,7 +26,13 @@ services:
       - autere
     restart: unless-stopped
 volumes:   
-  autere-home: {}
+  autere-data: {}
+  autere-pi: {}
+  m2-cache: {}
+  ivy-cache: {}
+  npm-cache: {}
+  cache: {}
+  config: {}
 networks:
   autere:
     name: autere
