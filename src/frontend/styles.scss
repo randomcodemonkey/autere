@@ -384,7 +384,7 @@ body {
   font-weight: 500;
   display: inline-flex;
   align-items: center;
-  justify-content: center; // text centers when the tab grows wider than content
+  justify-content: center; // text centers when the tab grows wider than content (via badge-text's auto margin)
   border: none;
   border-left: 1px solid rgba(255, 255, 255, 0.06);
   cursor: pointer;
@@ -474,6 +474,7 @@ body {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+    margin-right: auto; // pin a following close affordance to the tab's end
   }
 }
 
@@ -495,14 +496,24 @@ body {
 // small muted × at the tab's right edge, red on hover
 .session-tab-close {
   margin-left: 0.5rem;
-  font-size: 0.9rem;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
   color: var(--c-text-ghost-2);
   cursor: pointer;
   flex-shrink: 0;
 
+  .session-tab-close-icon {
+    height: 0.55rem; // punches above its weight like the old 0.9rem text ×
+    width: auto;
+    display: block;
+  }
+
   &:hover { color: var(--c-danger, var(--c-danger-strong)); }
 }
+
+// Tabs stretch (flex:1 1 0) and center their content; the auto margins on the
+// text absorb all free space so the text centers in the leftover width while
+// the close affordance pins to the tab's end edge.
 
 // Underline for non-selected tabs (incl. compacting sessions)
 .session-tab {
@@ -718,6 +729,12 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+// Inside a session tab, the auto margin absorbs the tab's free width so the
+// text stays centered while any close affordance pins to the tab's end.
+.session-tab .session-badge-text {
+  margin-right: auto;
 }
 
 .session-badge .connection-dot {

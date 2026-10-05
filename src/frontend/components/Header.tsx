@@ -202,7 +202,9 @@ export const Header: React.FC<HeaderProps> = ({
                       if (d.success) onSessionsRefreshed?.(d.data);
                     } catch {}
                   }}
-                >×</span>
+                >
+                  <svg className="session-tab-close-icon" viewBox="0 0 320 512" aria-hidden="true"><path fill="currentColor" d="M310.6 150.6c-12.5-12.5-32.8-12.5-45.3 0L160 255.9 54.6 150.6c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L114.7 301.3 9.4 406.6c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L160 346.7l105.4 105.3c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L205.3 301.3l105.3-105.4c12.5-12.5 12.5-32.8 0-45.3z"/></svg>
+                </span>
               )}
             </button>
           );
