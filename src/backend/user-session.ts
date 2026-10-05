@@ -640,12 +640,16 @@ export class UserSession {
       };
       fetchModels();
 
-      // Load session history into the buffer for this specific session
+      // Load session history into the buffer for this specific session.
+      // Entries MUST get stable ids (withStableIds): live history_upserts
+      // after the respawn match by id — untagged (undefined-id) copies make a
+      // later snapshot mix tagged/untagged twins and the client renders user
+      // messages twice.
       try {
         const messages = await this.rpc.getMessages();
         if (messages && messages.length > 0) {
           const buf = this.history();
-          buf.push(...buildStreamHistoryFromMessages(messages, getShowReadImages(this.user)));
+          buf.push(...this.withStableIds(buildStreamHistoryFromMessages(messages, getShowReadImages(this.user))));
           if (buf.length > this.historyLimit) buf.splice(0, buf.length - this.historyLimit);
         }
       } catch (err) {
@@ -665,6 +669,12 @@ export class UserSession {
           log.userSession.error('fetchInitialState: session-file history fallback failed:', err);
         }
       }
+      // Resync connected clients after a respawn: the buffer was rebuilt here
+      // (new id namespace, possibly lost pending copies) — without this a live
+      // client keeps the DEAD process's history until the next turn's
+      // agent_end snapshot (queued steer/follow-up user messages then only
+      // appear once that turn finishes).
+      this.broadcast({ type: 'stream_history', sessionId: this.state.sessionState.sessionId, data: this.history().slice(-this.historyLimit) });
 
       // pi resolves model + session asynchronously after spawn (seen as zeroed
       // stats after an idle respawn) — the stats fetch above can still miss
@@ -1095,8 +1105,20 @@ export class UserSession {
       // was already added by addUserEntry at send time (no duplicate here).
       if (rawRole === 'user' && text) {
         const buf = this.history();
-        const entry = [...buf].reverse().find((e: any) => e.role === 'user' && e.text === text && e.pending);
-        if (entry) {
+        // Prefer the pending copy added at send time; the pending flag alone
+        // is not reliable — a pi respawn rebuilds the buffer from disk, where
+        // the queued message exists but pending was never persisted.
+        let entry = [...buf].reverse().find((e: any) => e.role === 'user' && e.text === text && e.pending)
+          ?? [...buf].reverse().find((e: any) => e.role === 'user' && e.text === text);
+        if (!entry) {
+          // Not in the buffer at all (pending copy lost in a rebuild): append
+          // it — dropping the message would lose it from chat entirely until
+          // some full re-read.
+          entry = this.tagEntry({ role: 'user', text, streaming: false, timestamp: Date.now() });
+          buf.push(entry);
+          this.broadcastHistoryUpsert([entry]);
+          log.userSession.forSession(s.sessionState.sessionId).info('user message_end: pending copy missing from buffer — re-appended');
+        } else {
           entry.pending = false;
           // A queued follow-up was appended at SEND time, mid-turn — buried
           // under the rest of the old turn's output. Now that pi consumes
@@ -1105,8 +1127,12 @@ export class UserSession {
           // then upsert (appends at end).
           const idx = buf.indexOf(entry);
           const moved = idx >= 0 && idx !== buf.length - 1;
+          // Only re-push when the entry was actually spliced out from an
+          // earlier position. Re-pushing an entry that is ALREADY the last
+          // item (moved===false, idx===last) duplicates it in the buffer and
+          // the next agent_end snapshot renders the user message twice.
           if (moved) buf.splice(idx, 1);
-          buf.push(entry);
+          if (idx < 0 || moved) buf.push(entry);
           if (moved) {
             // Remove carries the text too: a client that rendered this entry
             // from a snapshot under a DIFFERENT id namespace (disk 'd…' ids,
