@@ -2,7 +2,7 @@
  * docker.sock permission guards (users.ts) + sandbox argv (rpc-client).
  * Run: npx tsx cypress/component/support/docker-socket.check.ts
  */
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -65,6 +65,30 @@ const withSock = argvFor(true).join(' ');
 const withoutSock = argvFor(false).join(' ');
 check('argv mounts sock', withSock.includes('/var/run/docker.sock') && withSock.includes('--group-add'));
 check('argv clean without', !withoutSock.includes('docker.sock'));
+
+// sandboxSharedEnv: XDG vars always; GIT_CONFIG_GLOBAL only when the
+// gitconfig file exists. Run in a subprocess so HOME can be simulated.
+const { execFileSync } = await import('node:child_process');
+const envScript = (tmpHome: string) => `
+  process.env.HOME = ${JSON.stringify(tmpHome)};
+  const m = await import(${JSON.stringify(join(REPO, 'src/backend/pi-env.ts'))});
+  console.log(JSON.stringify(m.sandboxSharedEnv()));
+`;
+const runEnvCheck = async (withGit: boolean) => {
+  const tmpHome = mkdtempSync(join(tmpdir(), 'fakeshared-'));
+  mkdirSync(join(tmpHome, '.config'), { recursive: true });
+  mkdirSync(join(tmpHome, '.cache'), { recursive: true });
+  if (withGit) writeFileSync(join(tmpHome, '.config/gitconfig'), '[user]\n');
+  const probe = join(tmpdir(), `envprobe-${Date.now()}.mts`);
+  writeFileSync(probe, envScript(tmpHome));
+  try {
+    const out = execFileSync('npx', ['tsx', probe], { encoding: 'utf-8', env: { ...process.env, AUTERE_USERS_FILE: '/tmp/sock-guard-users.json', AUTERE_PI_ENVS_DIR: process.env.AUTERE_PI_ENVS_DIR }, timeout: 60000 });
+    return JSON.parse(out);
+  } catch (e) { return { __error: String(e) }; }
+};
+check('sharedEnv xdg', JSON.stringify((await runEnvCheck(true)).XDG_CONFIG_HOME).includes('.config'));
+check('sharedEnv git with file', !!(await runEnvCheck(true)).GIT_CONFIG_GLOBAL);
+check('sharedEnv git without file', !(await runEnvCheck(false)).GIT_CONFIG_GLOBAL);
 
 if (fail) { console.log(`\n${fail} failure(s)`); process.exit(1); }
 console.log('\nAll docker-socket checks passed');

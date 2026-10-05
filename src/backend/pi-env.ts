@@ -254,6 +254,26 @@ export function resolveSandboxImage(user: string, setting?: string, env?: string
 }
 
 // ── Sandbox workspace planning ───────────────────
+
+// Shared config/cache dirs: the example docker-compose mounts these into
+// the autere container (volume behind ~/.config etc.) and sets matching
+// env variables; the sandbox mirrors the same set so sandboxed and
+// non-sandboxed sessions see identical $HOME config/cache (git identity,
+// xdg state, npm/maven/ivy caches).
+export const SANDBOX_SHARED_DIRS = ['.config', '.cache', '.npm', '.m2', '.ivy'];
+
+/** Env vars forwarded to sandboxed pi reflecting the compose contract.
+ *  GIT_CONFIG_GLOBAL only when the gitconfig actually exists at that path. */
+export function sandboxSharedEnv(): Record<string, string> {
+  const home = process.env.HOME || '/home/autere';
+  const env: Record<string, string> = {
+    XDG_CACHE_HOME: `${home}/.cache`,
+    XDG_CONFIG_HOME: `${home}/.config`,
+  };
+  if (existsSync(`${home}/.config/gitconfig`)) env.GIT_CONFIG_GLOBAL = `${home}/.config/gitconfig`;
+  return env;
+}
+
 // Container layout: $HOME stays the image's home. The pi env dir mounts
 // path-identical. Work areas mount under $HOME/work/:
 //   - users with allowedDirs: each allowed dir at $HOME/work/<basename>
@@ -381,6 +401,16 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
   const workBase = `${home}/work`;
   const out: SandboxMount[] = [];
   if (homeVolume) out.push({ volume: homeVolume, dst: home }); // parent; children below shadow it
+
+  // Shared config/cache dirs at path-identical destinations (compose
+  // contract): only the ones that are actually volume-backed here. Each
+  // mounts by its own volume as a WHOLE (no subpath — these volumes are
+  // dedicated to exactly these dirs, same as the compose example).
+  for (const dir of SANDBOX_SHARED_DIRS) {
+    if (out.some((m) => m.dst === `${home}/${dir}`)) continue; // already covered by the home volume
+    const m = mounts.find((mm) => mm.target === `${home}/${dir}`);
+    if (m) out.push({ volume: m.volume, dst: m.target });
+  }
   const inside = (p: string, base: string) => p === base || p.startsWith(base.endsWith('/') ? base : base + '/');
   const rel = (p: string, base: string) => p.slice(base.replace(/\/$/, '').length + 1);
 

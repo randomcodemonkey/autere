@@ -72,6 +72,9 @@ export interface RpcClientOptions {
   sandboxDockerSocket?: boolean;
   /** Container cwd (-w); undefined = fallback /home/autere. */
   sandboxWorkingDir?: string;
+  /** Extra env vars -e'd into the sandbox (compose-contract XDG/GIT_* set,
+   *  see pi-env.sandboxSharedEnv). */
+  sandboxEnv?: Record<string, string>;
 }
 
 export type RpcEventListener = (event: JsonAgentSessionEvent) => void;
@@ -213,6 +216,7 @@ export class MonitorRpcClient {
       '--tmpfs', '/tmp:rw,size=512m',
       ...specs.map((s) => s.split(' ')).flat(),
       ...(this.options.agentDir ? [['-e', `PI_CODING_AGENT_DIR=${this.options.agentDir}`], ['-e', `PI_MEMORY_DIR=${join(this.options.agentDir, 'memory')}`]].flat() : []),
+      ...Object.entries(this.options.sandboxEnv ?? {}).map(([k, v]) => ['-e', `${k}=${v}`]).flat(),
       ...(this.options.editIgnorePaths?.length ? [['-e', `EDIT_IGNORE_PATHS=${this.options.editIgnorePaths.join(':')}`]].flat() : []),
       ...(this.options.sendImagesToChatModel !== undefined ? [['-e', `IMAGE_SEND_PREVIEWS=${this.options.sendImagesToChatModel ? '1' : '0'}`]].flat() : []),
       ...(this.options.imagePreviewQuality && this.options.imagePreviewQuality !== 'full' ? [['-e', `IMAGE_PREVIEW_QUALITY=${JSON.stringify(this.options.imagePreviewQuality)}`]].flat() : []),

@@ -36,6 +36,8 @@ When mounting docker.sock inside the autere container, you **must** use `--group
 
 `/home/autere` should be mounted into the autere container as a named volume (not a bind mount), sandboxed pi sessions require named volumes to function. 
 
+The example [docker-compose.yaml](docker/docker-compose.yaml) also mounts shared config/cache volumes into the container — `~/.config`, `~/.cache`, `~/.npm`, `~/.m2`, `~/.ivy` — and sets `GIT_CONFIG_GLOBAL`, `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` to match. These same volumes and env variables apply to sandboxed pi sessions too: the sandbox automatically mounts each shared dir at the identical path and forwards `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` (and `GIT_CONFIG_GLOBAL` when the gitconfig exists), so sandboxed and non-sandboxed sessions share the same caches and git identity. Keep these mounts as named volumes — the sandbox mounts them by name.
+
 ### Initial configuration
 
 Once started, the Autere Web UI is available at **http://localhost:3456** and 9router, if enabled, at **http://localhost:20128**.

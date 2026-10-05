@@ -11,7 +11,7 @@ import { createHash } from 'crypto';
 import { MonitorRpcClient } from './rpc-client.js';
 import { autoSessionName, readSessionUsage, scopeModelsForSession } from './utils.js';
 import { log, userLog } from './logger.js';
-import { ensurePiEnv, ensureSandboxHomeVolume, ensureSandboxGitconfig, ensureVolumeSubpaths, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage, DEFAULT_SANDBOX_IMAGE } from './pi-env.js';
+import { ensurePiEnv, ensureSandboxHomeVolume, ensureSandboxGitconfig, ensureVolumeSubpaths, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage, sandboxSharedEnv, DEFAULT_SANDBOX_IMAGE } from './pi-env.js';
 import { getUserMountDockerSocket } from './users.js';
 import { getEditIgnorePaths, getHistoryLimit, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getShowReadImages, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost, writeReserveTokensConfig, annotateContextUsage } from './user-settings.js';
 import { deliverToSession } from './client-hub.js';
@@ -219,7 +219,7 @@ export class UserSession {
         ensureSandboxGitconfig(homeVolume, image);
         const plan = planSandboxMounts(user, rpcOptions.cwd || process.cwd(), piEnvDir, homeVolume, rpcOptions.workdirs);
         ensureVolumeSubpaths(plan.mounts, image);
-        return { sandboxImage: image, sandboxMounts: plan.mounts, sandboxWorkingDir: plan.cwd, args, sandboxDockerSocket: getUserMountDockerSocket(user) };
+        return { sandboxImage: image, sandboxMounts: plan.mounts, sandboxWorkingDir: plan.cwd, sandboxEnv: sandboxSharedEnv(), args, sandboxDockerSocket: getUserMountDockerSocket(user) };
       })(),
     });
     this.state = createInitialState();

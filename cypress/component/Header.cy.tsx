@@ -159,7 +159,9 @@ describe('Header running-session tabs', () => {
   it('switches immediately on tab click', () => {
     const onRunningSessionClick = cy.stub().as('onTab');
     mountTabs({ runningSessions: tabs as any, onRunningSessionClick });
-    cy.get('.session-tab').eq(0).click();
+    // click the text, not the button: the unstyled close-SVG (component tests
+    // load no CSS) covers the button's center
+    cy.get('.session-tab').eq(0).find('.session-badge-text').click();
     cy.get('@onTab').should('have.been.calledWith', 's2');
   });
 });
@@ -194,7 +196,7 @@ describe('Header session tabs: membership stable, selected becomes badge', () =>
     cy.get('.session-tab').eq(0).should('contain', 'alpha');
     cy.get('.session-tab').eq(1).should('contain', 'charlie');
     cy.get('.session-tab').eq(2).should('contain', 'delta');
-    cy.get('.session-tab').eq(0).click();
+    cy.get('.session-tab').eq(0).find('.session-badge-text').click();
     cy.get('@onSwitch').should('have.been.calledWith', 'x00000000000000000000000000004');
   });
 
@@ -240,7 +242,8 @@ describe('Header session tabs: click-through switch flow', () => {
   it('click a tab → switch stub fires with the entry id', () => {
     const onSwitch = cy.stub().as('switch');
     mountWith('id-tabbed', 'autere tabbed sessions', sessions, onSwitch);
-    cy.get('.session-tab').eq(0).click();
+    // click the text, not the button: the unstyled close-SVG covers the center
+    cy.get('.session-tab').eq(0).find('.session-badge-text').click();
     cy.get('@switch').should('have.been.calledWith', 'id-tui');
   });
 
