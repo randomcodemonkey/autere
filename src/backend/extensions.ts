@@ -14,6 +14,7 @@ import { join } from 'path';
 import type { ExtensionInfo } from './types.js';
 import { PI_DIR, NPM_EXTENSIONS_DIR, EXTENSIONS_DIR } from './constants.js';
 import { extensionsState } from './state.js';
+import { PI_ENVS_DIR } from './pi-env.js';
 import { getExtensionHandler } from './extension-handlers.js';
 import { getUserSetting, getEnabledPackages } from './user-settings.js';
 import { log } from './logger.js';
@@ -90,27 +91,31 @@ function discoverNpmExtensions(): DiscoveredExtension[] {
   return discovered;
 }
 
+
 /**
- * Discover local extensions from the extensions directory.
+ * Discover local extensions from the extensions directories: the master
+ * extensions/ dir plus every per-user env dir (pi loads extensions from the
+ * ENV dir it's spawned with — envs carry symlinks into the repo's extras/).
+ * Union, deduped by name, so one wiped master dir can't blank the card.
  */
 function discoverLocalExtensions(): DiscoveredExtension[] {
-  const discovered: DiscoveredExtension[] = [];
+  const discovered = new Map<string, DiscoveredExtension>();
 
-  if (!existsSync(EXTENSIONS_DIR)) return discovered;
-
-  try {
-    const entries = readdirSync(EXTENSIONS_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      // Follow symlinks — extensions may be installed as links to a source dir
-      const isDir = entry.isDirectory() ||
-        (entry.isSymbolicLink() && (() => { try { return statSync(join(EXTENSIONS_DIR, entry.name)).isDirectory(); } catch { return false; } })());
-      if (isDir) {
-        const extDir = join(EXTENSIONS_DIR, entry.name);
+  const scan = (dir: string) => {
+    if (!existsSync(dir)) return;
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        // Follow symlinks — extensions may be installed as links to a source dir
+        const isDir = entry.isDirectory() ||
+          (entry.isSymbolicLink() && (() => { try { return statSync(join(dir, entry.name)).isDirectory(); } catch { return false; } })());
+        if (!isDir || discovered.has(entry.name)) continue;
+        const extDir = join(dir, entry.name);
         // Check for common extension entry points
         const entryPoints = ['index.ts', 'index.js', `${entry.name}.ts`, `${entry.name}.js`];
         for (const ep of entryPoints) {
           if (existsSync(join(extDir, ep))) {
-            discovered.push({
+            discovered.set(entry.name, {
               id: entry.name,
               displayName: formatDisplayName(entry.name),
               source: 'local',
@@ -120,12 +125,15 @@ function discoverLocalExtensions(): DiscoveredExtension[] {
           }
         }
       }
+    } catch (err) {
+      log.extensions.error(`Failed to read extensions directory ${dir}:`, err);
     }
-  } catch (err) {
-    log.extensions.error('Failed to read extensions directory:', err);
-  }
+  };
 
-  return discovered;
+  scan(EXTENSIONS_DIR);
+  // Per-user env dirs reflect what pi actually loads
+  try { for (const e of readdirSync(PI_ENVS_DIR, { withFileTypes: true })) if (e.isDirectory()) scan(join(PI_ENVS_DIR, e.name, 'extensions')); } catch {}
+  return [...discovered.values()];
 }
 
 /**
