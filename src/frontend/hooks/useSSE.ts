@@ -63,6 +63,15 @@ export function useSSE(options: UseSSEOptions = {}) {
   const connect = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
+      // Report the dip: replacing an open stream otherwise keeps `connected`
+      // true across the gap, useSessionStream never sees the false→true
+      // transition, and its reconnect bootstrap (the ONLY healing for the
+      // live-only SSE stream) never runs — events lost in the gap are lost
+      // forever (stuck 'Working', missing assistant turns).
+      if (connectedRef.current) {
+        connectedRef.current = false;
+        setConnected(false);
+      }
     }
 
     setConnecting(true);

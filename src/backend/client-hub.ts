@@ -50,10 +50,12 @@ export function registerClient(user: string, clientId: string, res: ServerRespon
     try { prev.end(); } catch {}
   }
   streams.set(clientId, res);
+  log.userSession.debug(`[hub] SSE register client=${clientId} streams=${streams.size}`);
   // ponytail: stale clientIds (closed tabs) linger in bindings forever; fine
   // for dashboard scale — clean up here if it ever matters.
   res.on('close', () => {
     if (streams.get(clientId) === res) streams.delete(clientId);
+    log.userSession.debug(`[hub] SSE close client=${clientId} streams=${streams.size}`);
   });
 }
 
@@ -66,6 +68,7 @@ export function getClientSession(user: string, clientId: string | null): string 
 /** Bind a client to a session file (null = detach) */
 export function setClientSession(user: string, clientId: string | null, sessionFile: string | null): void {
   if (!clientId) return;
+  log.userSession.debug(`[hub] bind client=${clientId} -> ${sessionFile ?? 'null'}`);
   userBindings(user).set(clientId, sessionFile);
 }
 
@@ -76,8 +79,10 @@ export function deliverToSession(user: string, sessionFile: string | null, data:
   const bindings = userBindings(user);
   if (!streams) return;
   const msg = `data: ${JSON.stringify(data)}\n\n`;
+  let matched = 0;
   for (const [clientId, res] of streams) {
     if (bindings.get(clientId) !== sessionFile) continue;
+    matched++;
     try {
       res.write(msg);
     } catch (err) {
@@ -85,6 +90,12 @@ export function deliverToSession(user: string, sessionFile: string | null, data:
       try { res.end(); } catch {}
       streams.delete(clientId);
     }
+  }
+  // Signature of a silently lost event: clients are connected but none of
+  // their bindings match the emitting session (bindings keep stale tab ids
+  // forever — dump only counts here).
+  if (matched === 0 && streams.size > 0) {
+    log.userSession.debug(`[hub] DROPPED type=${(data as any)?.type} session=${sessionFile} streams=${streams.size} bound=${bindings.size}`);
   }
 }
 
