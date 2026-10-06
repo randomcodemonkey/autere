@@ -273,10 +273,9 @@ export async function readExtensions(): Promise<void> {
  */
 export function enabledExtensionsFor(user: string): ExtensionInfo[] {
   const enabled = new Set(getEnabledPackages(user).map((p) => p.replace(/^npm:/, '')));
-  // Local extras (pi-ext-extra) load per env via extensions/<name> symlinks
-  // — a user who has not enabled one must not see it as active. Master-dir
-  // locals (no env copy) stay always-visible as before (pi auto-loads them).
-  const envExts = join(getPiEnvDir(user), 'extensions');
-  return extensionsState.filter((e) => enabled.has(e.name)
-    || (localExtensionNames.has(e.name) && existsSync(join(envExts, e.name))));
+  // Bundled extras (pi-ext-extra) show as active iff in the user's saved
+  // choice set — desiredExtras merges the autere-extensions.json file with
+  // the bundled availability. Note: pi also loads whatever is linked in the
+  // env extensions dir, so applySettingsToPiEnv keeps links = choices.
+  return extensionsState.filter((e) => enabled.has(e.name));
 }

@@ -25,9 +25,10 @@
  */
 
 import { getUserAllowedDirs, getUserRole, isRegisteredUser } from './users.js';
-import { cpSync, existsSync, mkdirSync, readdirSync, copyFileSync, readlinkSync, rmSync, symlinkSync, lstatSync, readFileSync, writeFileSync, renameSync } from 'fs';
+import { lstatSync, readlinkSync } from 'fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, copyFileSync, rmSync, symlinkSync, readFileSync, writeFileSync, renameSync } from 'fs';
 import { randomUUID } from 'crypto';
-import { readJsonCached, invalidateCache } from './user-settings.js';
+import { readJsonCached, invalidateCache, setExtraEnabled, getAvailableExtras, DEFAULT_ENABLED_EXTRAS, writeSavedExtras, desiredExtras } from './user-settings.js';
 import { execFileSync } from 'node:child_process';
 import { join } from 'path';
 import { PI_DIR, AUTERE_DIR } from './constants.js';
@@ -168,6 +169,35 @@ function applyTestModels(envDir: string): void {
  * Idempotent — safe to call on every pi spawn.
  * Returns the environment directory to pass as PI_CODING_AGENT_DIR.
  */
+/** Bring the env's extension links in line with the user's choice set:
+ *  nolink extras from the bundled dir that are enabled, unlink bundled
+ *  ones that aren't. Keeps master-seeded links (e.g. pi-dedup from a
+ *  pre-toggle image) from silently overriding the saved choices. */
+function reconcileExtraLinks(user: string): void {
+  const wanted = new Set(desiredExtras(user).map((s) => s.slice('local:'.length)));
+  for (const spec of getAvailableExtras()) {
+    const name = spec.slice('local:'.length);
+    let linked = false;
+    try { linked = !!lstatSync(join(getPiEnvDir(user), 'extensions', name)); } catch { /* not linked */ }
+    const wantedON = wanted.has(name);
+    if (linked !== wantedON) {
+      try { setExtraEnabled(user, name, wantedON); } catch { /* skip */ }
+    }
+  }
+}
+
+/** Apply DEFAULT_ENABLED_EXTRAS once: link defaults into a fresh env and
+ *  record them, so the saved set (not defaults) governs from then on.
+ *  With a choice file present, only reconcile links to the saved set. */
+function applyExtraDefaults(user: string): void {
+  const marker = join(getPiEnvDir(user), 'autere-extensions.json');
+  if (existsSync(marker)) { reconcileExtraLinks(user); return; }
+  const names = getAvailableExtras()
+    .filter((s) => DEFAULT_ENABLED_EXTRAS[s.slice('local:'.length)] !== false);
+  writeSavedExtras(user, names.map((s) => s.slice('local:'.length)));
+  reconcileExtraLinks(user);
+}
+
 export function ensurePiEnv(user: string): string {
   const envDir = getPiEnvDir(user);
   try {
@@ -231,6 +261,7 @@ export function ensurePiEnv(user: string): string {
     if (!existsSync(sessionsDir)) {
       try { mkdirSync(sessionsDir, { recursive: true }); } catch {}
     }
+    applyExtraDefaults(user);
   } catch (err) {
     log.piEnv.error(`Failed to ensure pi env for user "${user}":`, err);
   }

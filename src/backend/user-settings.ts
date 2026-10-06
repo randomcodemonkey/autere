@@ -216,6 +216,11 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
         try { lstatSync(join(envExts, name)); present = true; } catch { /* absent */ }
         if (!present) setExtraEnabled(user, name, true);
       }
+      // Persist the choice so it survives image upgrades / env reseed;
+      // also removes extras that disappeared from the bundled set.
+      writeSavedExtras(user, getAvailableExtras()
+        .map((s) => s.slice('local:'.length))
+        .filter((name) => wanted.has(name)));
     }
     if ('codemode' in settings) {
       // pi 1.0 codemode tool. Empirical note: the documented pure-plus form
@@ -611,6 +616,31 @@ export function getAvailablePackages(): string[] {
 const EXTRAS_DIR = process.env.AUTERE_PI_EXT_EXTRA
   || join(process.env.HOME || '/home/autere', 'pi-ext-extra');
 
+/** Extras enabled at first use, before the user has saved a choice.
+ *  pi-dedup is off by default (elides tool results — niche). */
+export const DEFAULT_ENABLED_EXTRAS: Record<string, boolean> = {
+  'pi-dedup': false,
+};
+
+/** Extras the user has NOT saved a choice for = defaults apply. The saved
+ *  file (env autere-extensions.json) persists choices across upgrades/reseeds. */
+export function savedExtras(user: string): { local: string[] } | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(getPiEnvDir(user), 'autere-extensions.json'), 'utf-8'));
+    return Array.isArray(raw?.enabled) ? { local: raw.enabled } : null;
+  } catch { return null; }
+}
+
+export function writeSavedExtras(user: string, names: string[]): void {
+  const path = join(getPiEnvDir(user), 'autere-extensions.json');
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ enabled: names }, null, 2), 'utf-8');
+  } catch (err) {
+    log.settings.error(`Failed to save bundled-extension choices for "${user}":`, err);
+  }
+}
+
 /** Bundled custom extensions (pi-ext-extra) as toggle ids: 'local:pi-X'.
  *  These install into a user's env as extensions/<name> symlinks on save. */
 export function getAvailableExtras(): string[] {
@@ -633,6 +663,19 @@ export function getEnabledExtras(user: string): string[] {
       .filter((e) => available.has(e.name))
       .map((e) => `local:${e.name}`);
   } catch { return []; }
+}
+
+/** extras toggle state = saved choices (env autere-extensions.json, names
+ *  intersected with the currently bundled set), falling back to
+ *  DEFAULT_ENABLED_EXTRAS before the user saved anything. */
+export function desiredExtras(user: string): string[] {
+  const available = getAvailableExtras();
+  const saved = savedExtras(user);
+  if (saved) {
+    const have = new Set(saved.local);
+    return available.filter((s) => have.has(s.slice('local:'.length)));
+  }
+  return available.filter((s) => DEFAULT_ENABLED_EXTRAS[s.slice('local:'.length)] !== false);
 }
 
 /** Link (enabled) or unlink (disabled) one bundled extra into the user's env. */
@@ -660,7 +703,7 @@ export function getEnabledPackages(user: string): string[] {
   const npm = envSettings && Array.isArray(envSettings.packages)
     ? envSettings.packages.map(pkgSource)
     : getAvailablePackages();
-  return [...npm.filter((p: string) => !p.startsWith('local:')), ...getEnabledExtras(user)];
+  return [...npm.filter((p: string) => !p.startsWith('local:')), ...desiredExtras(user)];
 }
 
 // ── Token pricing ──
