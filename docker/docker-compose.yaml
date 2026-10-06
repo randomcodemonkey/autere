@@ -19,6 +19,7 @@ services:
       GIT_CONFIG_GLOBAL: /home/autere/.config/gitconfig
       XDG_CACHE_HOME: /home/autere/.cache
       XDG_CONFIG_HOME: /home/autere/.config
+      AUTERE_SANDBOX_IMAGE: "ghcr.io/randomcodemonkey/autere:latest"
     ports:
       - '20128:20128'
       - '3456:3456'
