@@ -9,7 +9,8 @@ Supports multiple users, allows sandboxing your Pi agents into docker containers
 
 ## Installation and Running
 
-Build the docker image with the included `build.sh` script:
+
+Optionally build the docker image with the included `build.sh` script, you may also use any of the published [packages](https://github.com/randomcodemonkey/autere/pkgs/container/autere):
 
 ```bash
 ./build.sh                       # build with defaults
@@ -25,6 +26,7 @@ Start Autere backend using the default [docker-compose.yaml](docker/docker-compo
 mkdir autere && \
 curl -o autere/docker-compose-yml "https://raw.githubusercontent.com/randomcodemonkey/autere/refs/heads/main/docker/docker-compose.yaml" && \
 $(cd autere && docker compose up -d)
+```
 
 `/var/run/docker.sock` is required for sandboxed pi sessions - without it the backend cannot start session containers. Admin user may set 'sandbox' image to 'off' in their per-user settings, or disable sandboxing globally by setting env `AUTERE_SANDBOX_IMAGE=off`.
 
