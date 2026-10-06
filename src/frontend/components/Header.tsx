@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { url } from '../base-path';
 import { API } from '../../shared/api-paths';
 import type { SessionInfo } from '../types';
@@ -90,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({
   // the same short 29-char id prefix, so switching sessions does not shuffle
   // the row — only which item renders as the badge (modal button).
 
-  const availableTabs = runningSessions ?? [];
+  const availableTabs = useMemo(() => runningSessions ?? [], [runningSessions]);
 
 
   // Session tabs per spec: up to 5 slots — running sessions first (api
@@ -103,35 +103,42 @@ export const Header: React.FC<HeaderProps> = ({
   // Selected session: exact id, then legacy-alias prefix (id drift on
   // resume), then name equality (reheaded running sessions lose the id
   // link). Not matching at all → slot labeled from the header's own name.
-  const selectedEntry = (sessionId
+  // Selected session: exact id, then legacy-alias prefix (id drift on
+  // resume), then name equality (reheaded running sessions lose the id
+  // link). Not matching at all → slot labeled from the header's own name.
+  // Memoized: the effect below depends on it and tabs, so the deps must
+  // not change identity every render (react-hooks/exhaustive-deps).
+  const selectedEntry = useMemo(() => (sessionId
     ? availableTabs.find((s) => s.id === sessionId)
       ?? availableTabs.find((s) => sessionId.startsWith(s.id))
       ?? (sessionName ? availableTabs.find((s) => s.sessionName === sessionName) : undefined)
     : undefined)
-    ?? { sessionFile: '', cwd: null, createdAt: 0, lastActivity: 0, parentSession: null, id: sessionId ?? '', sessionName: sessionName ?? null, active: false };
-  const running = availableTabs.filter((s) => s.active);
-  const idle = availableTabs.filter((s) => !s.active);
-  const SESSION_TAB_CAP = 8; // running + most recent idle historic sessions
-  // running take precedence: keep every running slot, pad with the most
-  // recent idle sessions below the cap
-  let tabs = [...running.slice(0, SESSION_TAB_CAP), ...idle.slice(0, Math.max(0, SESSION_TAB_CAP - running.length))];
-  if (tabs.length === 0) {
-    // No sessions known yet (initial load) or none exist — no tabs at all,
-    // rather than a raw synthetic id placeholder
-    tabs = [];
-  } else if (!tabs.some((s) => s === selectedEntry || s.id === sessionId || sessionId?.startsWith(s.id))) {
-    // Replace the last slot — constant item count, never a 9th;
-    // append instead when there is room below the cap.
-    if (tabs.length < SESSION_TAB_CAP) {
-      // selection always wins a running slot for consistency: drop the
-      // tepmost idle pad if a slot was created by pad (from idle) else append
-      const lastIsPad = tabs.length > running.length && tabs[tabs.length - 1] === idle[Math.min(idle.length, SESSION_TAB_CAP - running.length) - 1];
-      tabs = lastIsPad ? [...tabs.slice(0, -1), selectedEntry] : [...tabs, selectedEntry];
-    } else {
-      tabs = [...tabs.slice(0, -1), selectedEntry];
+    ?? { sessionFile: '', cwd: null, createdAt: 0, lastActivity: 0, parentSession: null, id: sessionId ?? '', sessionName: sessionName ?? null, active: false }, [availableTabs, sessionId, sessionName]);
+  const tabs = useMemo(() => {
+    const running = availableTabs.filter((s) => s.active);
+    const idle = availableTabs.filter((s) => !s.active);
+    const SESSION_TAB_CAP = 8; // running + most recent idle historic sessions
+    // running take precedence: keep every running slot, pad with the most
+    // recent idle sessions below the cap
+    let tabs = [...running.slice(0, SESSION_TAB_CAP), ...idle.slice(0, Math.max(0, SESSION_TAB_CAP - running.length))];
+    if (tabs.length === 0) {
+      // No sessions known yet (initial load) or none exist — no tabs at all,
+      // rather than a raw synthetic id placeholder
+      tabs = [];
+    } else if (!tabs.some((s) => s === selectedEntry || s.id === sessionId || sessionId?.startsWith(s.id))) {
+      // Replace the last slot — constant item count, never a 9th;
+      // append instead when there is room below the cap.
+      if (tabs.length < SESSION_TAB_CAP) {
+        // selection always wins a running slot for consistency: drop the
+        // tepmost idle pad if a slot was created by pad (from idle) else append
+        const lastIsPad = tabs.length > running.length && tabs[tabs.length - 1] === idle[Math.min(idle.length, SESSION_TAB_CAP - running.length) - 1];
+        tabs = lastIsPad ? [...tabs.slice(0, -1), selectedEntry] : [...tabs, selectedEntry];
+      } else {
+        tabs = [...tabs.slice(0, -1), selectedEntry];
+      }
     }
-  }
-  tabs = [...tabs].sort((a, b) => (a.sessionName || a.id).localeCompare(b.sessionName || b.id));
+    return [...tabs].sort((a, b) => (a.sessionName || a.id).localeCompare(b.sessionName || b.id));
+  }, [availableTabs, selectedEntry, sessionId]);
   // Ctrl+Shift + digit (1..8) jumps to that session tab; the session must be
   // known (tabs rendered) — digits beyond the cap do nothing. (Alt/opt is
   // reserved for typing special characters on many layouts.)
