@@ -1,8 +1,9 @@
 /**
- * Run e2e tests: start backend, run cypress, stop backend.
+ * Run e2e tests: mock router (when no live 9router), start backend, run
+ * cypress, stop everything.
  */
 import { startBackend, stopBackend, TEST_PORT, getTestEnvsDir, getTestModels } from './start-backend';
-import { execSync } from 'child_process';
+import { spawn } from 'child_process';
 
 async function main() {
   // Ensure the backend (and its pi children) die even if the runner is
@@ -32,12 +33,20 @@ async function main() {
 
     console.log(`[run-e2e] Running cypress e2e tests against port ${TEST_PORT}...`);
     const envsDir = getTestEnvsDir();
-    execSync(`npx cypress run --e2e --config baseUrl=http://localhost:${TEST_PORT} ${process.env.SPEC ? `--spec ${process.env.SPEC}` : `""`}`, {
-      cwd: process.cwd(),
-      stdio: 'inherit',
-      // Tests read this to locate the isolated pi env (seed/reset data files)
-      env: { ...process.env, AUTERE_E2E_ENVS_DIR: envsDir },
+    // NOT execSync — it blocks this process's event loop, and the mock
+    // router lives in this process: a blocked loop leaves the mock's
+    // sockets accepted-but-unserviced (pi's model calls hang forever).
+    const code = await new Promise<number>((resolve, reject) => {
+      const cyp = spawn('npx', ['cypress', 'run', '--e2e', '--config', `baseUrl=http://localhost:${TEST_PORT}`, ...(process.env.SPEC ? ['--spec', process.env.SPEC] : [])], {
+        cwd: process.cwd(),
+        stdio: 'inherit',
+        // Tests read this to locate the isolated pi env (seed/reset data files)
+        env: { ...process.env, AUTERE_E2E_ENVS_DIR: envsDir },
+      });
+      cyp.on('exit', resolve);
+      cyp.on('error', reject);
     });
+    if (code !== 0) process.exitCode = 1;
     console.log('[run-e2e] Tests complete.');
   } catch (err: any) {
     console.error('[run-e2e] Error:', err.message);

@@ -55,25 +55,34 @@ jobs:
       - name: pi extension smoke tests
         run: node --experimental-strip-types extras/pi-filetools/smoke-test.mjs
 
-      # E2E needs a real 9router for model turns. The dev instance of this
-      # repo's host machine is NOT reachable from the runner, so a 9router
-      # secret is required — no secret, no model turns, run aborts loudly.
-      - name: e2e tests (9router required)
-        env:
-          AUTERE_E2E_ROUTER_URL: ${{ secrets.AUTERE_E2E_ROUTER_URL || '' }}
-          AUTERE_E2E_ROUTER_KEY: ${{ secrets.AUTERE_E2E_ROUTER_KEY || '' }}
-          AUTERE_NINE_ROUTER_URL: ${{ secrets.AUTERE_E2E_ROUTER_URL || '' }}
+      # E2e runs real agent turns against an IN-PROCESS MOCK router
+      # (cypress/e2e/support/mock-router.ts) — an OpenAI-compatible endpoint
+      # with deterministic responses (streamed essay, "4" for 2+2, one bash
+      # tool call). No external 9router needed on the runner.
+      - name: Install pi + pi-9router-ext (e2e prerequisites)
         run: |
-          if [[ -z "$AUTERE_E2E_ROUTER_URL" ]]; then
-            echo "::error::AUTERE_E2E_ROUTER_URL secret is not set — e2e needs a reachable 9router (set URL + API key secrets, or drop this error if e2e should be skipped)"
-            exit 1
-          fi
-          # Give the backend harness a router key that is reachable, and a
-          # writable config path (HOME is not the build user's on the runner
-          # — start-backend reads $HOME/.pi/agent/9router-config.json).
+          npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.0.0
           mkdir -p ~/.pi/agent
-          printf '{"apiKey":"%s"}\n' "$AUTERE_E2E_ROUTER_KEY" > ~/.pi/agent/9router-config.json
-          npm run test:e2e
+          cat > ~/.pi/agent/settings.json <<'JSON'
+          {
+            "defaultProvider": "9router",
+            "defaultModel": "mock/chat",
+            "enabledModels": ["9router/mock/chat", "9router/mock/chat-mini"],
+            "packages": ["npm:pi-9router-ext"],
+            "lastChangelogVersion": "1.0.0"
+          }
+          JSON
+          # pi resolves packages under PI_PACKAGE_DIR (~/.pi/agent/npm):
+          export PI_PACKAGE_DIR=~/.pi/agent/npm
+          pi install npm:pi-9router-ext
+          # Repo pi extensions (pi-filetools backs the Changes tab spec —
+          # same layout the docker entrypoint uses: symlink into master
+          # extensions dir; e2e envs inherit via the shared-dir symlink).
+          mkdir -p ~/.pi/agent/extensions
+          for d in "$PWD"/extras/*/; do ln -sfn "$PWD/${d#$PWD/}" ~/.pi/agent/extensions/$(basename "$d"); done
+
+      - name: e2e tests
+        run: npm run test:e2e
 
       - name: Upload cypress artifacts on failure
         if: failure()

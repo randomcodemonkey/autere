@@ -6,8 +6,9 @@
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs';
-import { tmpdir } from 'os';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'fs';
+import { tmpdir, homedir } from 'os';
+import { startMockRouter } from './mock-router';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -19,6 +20,7 @@ let testEnvsDir: string | null = null;
 /** Remove the isolated per-run env dir. Runs create sessions there; they
  *  must not leak into /tmp (or anywhere else) after the run. */
 function cleanupEnvsDir(): void {
+  if (process.env.AUTERE_KEEP_ENVS) { console.log(`[e2e] AUTERE_KEEP_ENVS set — envs kept at ${testEnvsDir}`); return; }
   if (!testEnvsDir) return;
   try {
     rmSync(testEnvsDir, { recursive: true, force: true });
@@ -39,41 +41,99 @@ export { TEST_PORT };
 
 let backendProcess: ChildProcess | null = null;
 let testModels: string[] = [];
+/** Mock router (CI/none-live path) — stopped with the backend. */
+let mockRouterStop: (() => Promise<void>) | null = null;
 
 /** Working model list probed before spawn (may be empty if no 9router). */
 export function getTestModels(): string[] { return testModels; }
 
-/** Probe the live 9router for models that can actually serve completions.
- *  E2e envs have no user model settings, so pi would otherwise fall back to
- *  its builtin default (provider openai), which unroutable without creds —
- *  every model-turn test would fail. Returns up to 2 working model ids
- *  (two so the model-selection spec has something to switch to). */
-async function probeTestModels(): Promise<string[]> {
-  const base = process.env.AUTERE_NINE_ROUTER_URL || 'http://localhost:20128';
-  let apiKey = '';
+/** Probe the router (live or mock) for models that can actually serve
+ *  completions. E2e envs have no user model settings, so pi would otherwise
+ *  fall back to its builtin default (provider openai), which unroutable
+ *  without creds — every model-turn test would fail. Returns up to 2
+ *  working model ids (two so the model-selection spec has something to
+ *  switch to). SYNC probe — the async completion check is unnecessary:
+ *  both paths already resolve model availability from /v1/models, and a
+ *  failed turn probe would make the whole suite skip model tests anyway. */
+
+
+/** Probe the router for model ids → AUTERE_TEST_MODELS (pi env settings).
+ *  Live routers: only ids that answer a tiny completion count as working
+ *  (first two) — advertised ≠ routable. The mock is always routable. */
+async function probeTestModels(base: string, verifyCompletion: boolean): Promise<string[]> {
+  // Live routers 401 completions without a key — same resolution priority as
+  // pi-9router-ext (env key, then $HOME/.pi/agent/9router-config.json).
+  let apiKey = process.env.NINE_ROUTER_API_KEY || '';
+  if (!apiKey) {
+    try {
+      apiKey = (JSON.parse(readFileSync(join(homedir(), '.pi', 'agent', '9router-config.json'), 'utf-8')) as { apiKey?: string }).apiKey || '';
+    } catch {}
+  }
+  const auth: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
   try {
-    apiKey = (JSON.parse(readFileSync(join(process.env.HOME || '/home/autere', '.pi', 'agent', '9router-config.json'), 'utf-8')) as { apiKey?: string }).apiKey || '';
-  } catch {}
-  const auth = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
-  try {
-    const res = await fetch(`${base}/v1/models`, { headers: auth, signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return [];
-    const ids: string[] = ((await res.json()) as { data: { id: string }[] }).data.map((m) => m.id);
-    const ok: string[] = [];
-    for (const id of ids) {
-      try {
-        const r = await fetch(`${base}/v1/chat/completions`, {
-          method: 'POST', headers: auth,
-          body: JSON.stringify({ model: id, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
-          signal: AbortSignal.timeout(15000),
-        });
-        if (r.ok) ok.push(id);
-      } catch {}
-      if (ok.length >= 2) break;
+    const res = await fetch(`${base}/v1/models`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) { console.log(`[e2e] probe: models endpoint HTTP ${res.status}`); return []; }
+    const ids = ((await res.json()) as { data: { id: string }[] }).data.map((m) => m.id);
+    let working = ids;
+    if (verifyCompletion) {
+      working = [];
+      for (const id of ids) {
+        try {
+          const r = await fetch(`${base}/v1/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...auth },
+            body: JSON.stringify({ model: id, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
+            signal: AbortSignal.timeout(15000),
+          });
+          if (r.ok) working.push(id);
+        } catch {}
+        if (working.length >= 2) break;
+      }
     }
-    if (ok.length === 0) console.log('[e2e] No working models found on 9router — model turns will fail');
-    return ok;
-  } catch { return []; }
+    const out = (verifyCompletion ? working : ids).slice(0, 2);
+    console.log(`[e2e] probe models: ${out.join(',')} (candidates: ${ids.length})`);
+    return out;
+  } catch (err: any) {
+    console.log(`[e2e] probe failed: ${err?.message || err}`);
+    return [];
+  }
+}
+
+/** Pre-seed pi-9router-ext's discovery cache so the 9router provider
+ *  registers instantly and deterministically from the mock (no live
+ *  router, no models.dev dependency at registration time). Cache
+ *  identity: baseUrl must equal NINE_ROUTER_BASE_URL; apiKeyHash must
+ *  equal sha256(NINE_ROUTER_API_KEY) — a fixed dummy key set below so
+ *  the dev box's $HOME config (real router key) can't make the cache
+ *  mismatch and force a live discovery (which aborts on models.dev). */
+const MOCK_ROUTER_API_KEY = '9router-no-api-key'; // hash: sha256:282d99...47c
+const MOCK_ROUTER_MODELS: { id: string; [k: string]: unknown }[] = [
+  {
+    id: 'mock-chat', object: 'model', owned_by: 'mock',
+    capabilities: { vision: false, pdf: false, audioInput: false, videoInput: false, imageOutput: false, audioOutput: false, search: false, tools: true, reasoning: false, thinkingFormat: 'openai', thinkingCanDisable: true, thinkingRange: null },
+    context_length: 128000, max_completion_tokens: 8192,
+  },
+  {
+    id: 'mock-chat-mini', object: 'model', owned_by: 'mock',
+    capabilities: { vision: false, pdf: false, audioInput: false, videoInput: false, imageOutput: false, audioOutput: false, search: false, tools: true, reasoning: false, thinkingFormat: 'openai', thinkingCanDisable: true, thinkingRange: null },
+    context_length: 128000, max_completion_tokens: 4096,
+  },
+];
+
+function seedRouterConfig(routerUrl: string): void {
+  try {
+    const cacheDir = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'pi');
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(join(cacheDir, '9router-discovery-cache.json'), JSON.stringify({
+      baseUrl: routerUrl,
+      apiKeyHash: 'sha256:282d99225081e9e01dac21235a3836d28a1567c0f66f3ed2f076bbdfd043c47c',
+      ts: Date.now(),
+      models: MOCK_ROUTER_MODELS,
+      webRoutes: [],
+    }), { mode: 0o600 });
+  } catch (err) {
+    console.log(`[e2e] seeding pi-9router-ext discovery cache failed: ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 // Record of the previous test run's backend group. If a runner is SIGKILLed
@@ -158,9 +218,40 @@ export async function startBackend(): Promise<void> {
   // Kill anything a hard-killed previous run left behind
   reapPreviousRun();
 
-  const probed = await probeTestModels();
+  // Router selection: a live 9router (dev machine) when reachable, else an
+  // in-process mock (OpenAI-compatible) — real agent turns work in CI
+  // without any network dependency. The backend's own preflight targets
+  // AUTERE_NINE_ROUTER_URL, so the mock must be reachable before that URL
+  // is handed to the backend (it would otherwise spawn+kill a real
+  // 9router on the runner).
+  let routerPort: number | null = null;
+  const liveRouter = process.env.AUTERE_NINE_ROUTER_URL;
+  try {
+    if (liveRouter) {
+      const res = await fetch(`${liveRouter.replace(/\/+$/, '')}/v1/models`, { signal: AbortSignal.timeout(3000) });
+      if (!res.ok) throw new Error(String(res.status));
+      routerPort = new URL(liveRouter).port ? Number(new URL(liveRouter).port) : 20128;
+      console.log(`[e2e] Using live 9router at ${liveRouter}`);
+    }
+  } catch {
+    // not reachable / not set — fall through to the mock
+  }
+  let stopMock: (() => Promise<void>) | null = null;
+  if (routerPort === null) {
+    const mock = await startMockRouter(0);
+    if (!mock) throw new Error('[e2e] mock router failed to start');
+    routerPort = mock.port;
+    stopMock = mock.stop;
+    console.log(`[e2e] Using mock router on port ${mock.port}`);
+  }
+  const routerUrl = `http://127.0.0.1:${routerPort}`;
+  mockRouterStop = stopMock;
+
+  const probed = await probeTestModels(routerUrl, !stopMock);
   testModels = probed;
-  if (probed.length > 0) console.log(`[e2e] Using working model(s): ${probed.join(', ')}`);
+  // Seed the discovery cache only for the mock (live routers own their
+  // own config+key in $HOME — the ext discovers them itself).
+  if (stopMock) seedRouterConfig(routerUrl);
 
   if (backendProcess) return;
 
@@ -192,10 +283,16 @@ export async function startBackend(): Promise<void> {
     AUTERE_USERS_FILE: join(testEnvsDir, 'autere-users.json'),
     // AUTERE_DIR covers per-user settings (gitRepositories etc.) —
     // without it e2e writes into the REAL ~/.autere/users/<user>!
-    // 9router: piggyback on the live one (dev env) or own it (CI).
-    // 9router kills every other 9router process on startup, so exactly
-    // one 9router per machine — test backends never spawn their own.
-    AUTERE_NINE_ROUTER_URL: process.env.AUTERE_NINE_ROUTER_URL || 'http://localhost:20128',
+    // 9router: piggyback on the live one (dev env) or the in-process mock
+    // (CI / no live router). The backend preflight fetches this URL and —
+    // when unreachable — spawns a real 9router binary, so the mock is
+    // started BEFORE the backend when live-router probing failed.
+    AUTERE_NINE_ROUTER_URL: routerUrl,
+    // pi-9router-ext reads NINE_ROUTER_BASE_URL (its config-file fallback
+    // would point pi at the default/dev router) — pointed at the same URL
+    // so the backend never spawns a real 9router and pi talks to the mock.
+    NINE_ROUTER_BASE_URL: routerUrl,
+    ...(stopMock ? { NINE_ROUTER_API_KEY: MOCK_ROUTER_API_KEY } : {}),
     AUTERE_DIR: join(testEnvsDir, 'autere-state'),
     // sandbox points at docker + the real home volume — off for tests
     AUTERE_SANDBOX_IMAGE: 'off',
@@ -267,10 +364,19 @@ export async function startBackend(): Promise<void> {
   });
 }
 
-export function stopBackend(): Promise<void> {
-  return new Promise((resolve) => {
+export async function stopBackend(): Promise<void> {
+  const stop = async (resolve: () => void) => {
+    const stopMock = async () => {
+      if (mockRouterStop) {
+        const s = mockRouterStop;
+        mockRouterStop = null;
+        await s();
+        console.log('[e2e] Mock router stopped');
+      }
+    };
     if (!backendProcess) {
       console.log('[e2e] No backend process to stop');
+      await stopMock();
       cleanupEnvsDir();
       resolve();
       return;
@@ -294,6 +400,7 @@ export function stopBackend(): Promise<void> {
       cleanupEnvsDir();
       console.log('[e2e] Backend stopped');
     });
+    void stopMock();
 
     // Kill only the process group we created (detached spawn gives us a unique pgid).
     // The backend handles SIGTERM and terminates its pi children itself.
@@ -346,5 +453,6 @@ export function stopBackend(): Promise<void> {
         resolve();
       }, 500);
     });
-  });
+  };
+  await new Promise<void>((resolve) => stop(resolve));
 }

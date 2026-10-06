@@ -57,7 +57,7 @@ describe('autere — chat', () => {
 
       // Clear any leftover value, type message, and force-click send
       // (button may be disabled from prior test's sending/compacting state)
-      cy.get('.chat-input').clear().type('Say hello');
+      cy.get('.chat-input').clear().type('Write an essay of at least 600 words about oak trees. Do not stop early.');
       cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
 
       // Check for working status
