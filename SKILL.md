@@ -130,7 +130,9 @@ extras/pi-dedup/       # pi extension: elides exact-duplicate tool results
                        # dedup-stats.json in the user's OWN pi env; the
                        # dashboard injects the requesting user's stats per
                        # request (withDedupSections) — global state stays
-                       # user-agnostic, no cross-user exposure.
+                       # user-agnostic, no cross-user exposure. SHIPPED but
+                       # NOT auto-installed (entrypoint skips it); opt in
+                       # per user via Settings → Extensions.
 extras/pi-janitor/     # pi extension: idle-window context cleanup. Observes
                        # cache hits/misses per request (usage from the last
                        # assistant message) to learn the provider's effective

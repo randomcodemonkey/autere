@@ -2,11 +2,14 @@
 
 # Bundled custom extensions (repo extras/) ship in the image at
 # /home/autere/pi-ext-extra — link them into the master pi extensions dir.
+# pi-dedup is shipped but NOT auto-installed: opt in per user via
+# Settings → Extensions (admin can toggle bundled extras).
 piExtensions="$HOME/.pi/agent/extensions"
 mkdir -p "$piExtensions"
 for dir in /home/autere/pi-ext-extra/*; do
   [ -d "$dir" ] || continue
   name=$(basename "$dir")
+  [ "$name" = "pi-dedup" ] && continue
   ln -sfn "$dir" "$piExtensions/$name"
 done
 

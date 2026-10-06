@@ -14,7 +14,7 @@ import { join } from 'path';
 import type { ExtensionInfo } from './types.js';
 import { PI_DIR, NPM_EXTENSIONS_DIR, EXTENSIONS_DIR } from './constants.js';
 import { extensionsState } from './state.js';
-import { PI_ENVS_DIR } from './pi-env.js';
+import { PI_ENVS_DIR, getPiEnvDir } from './pi-env.js';
 import { getExtensionHandler } from './extension-handlers.js';
 import { getUserSetting, getEnabledPackages } from './user-settings.js';
 import { log } from './logger.js';
@@ -273,8 +273,10 @@ export async function readExtensions(): Promise<void> {
  */
 export function enabledExtensionsFor(user: string): ExtensionInfo[] {
   const enabled = new Set(getEnabledPackages(user).map((p) => p.replace(/^npm:/, '')));
-  // Local extensions (bundled in the master extensions/ dir) are loaded by
-  // pi automatically and never appear in the packages enable list — they
-  // are always visible; the toggleable filter covers npm packages only.
-  return extensionsState.filter((e) => enabled.has(e.name) || localExtensionNames.has(e.name));
+  // Local extras (pi-ext-extra) load per env via extensions/<name> symlinks
+  // — a user who has not enabled one must not see it as active. Master-dir
+  // locals (no env copy) stay always-visible as before (pi auto-loads them).
+  const envExts = join(getPiEnvDir(user), 'extensions');
+  return extensionsState.filter((e) => enabled.has(e.name)
+    || (localExtensionNames.has(e.name) && existsSync(join(envExts, e.name))));
 }

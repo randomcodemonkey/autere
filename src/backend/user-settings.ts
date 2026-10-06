@@ -14,11 +14,11 @@
  */
 
 import { getUserRole } from './users.js';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, readdirSync, symlinkSync, rmSync, lstatSync } from 'fs';
 import { join, dirname } from 'path';
 import { randomUUID } from 'crypto';
 import { USER_SETTINGS_DIR, PI_DIR } from './constants.js';
-import { getPiEnvDir, ensurePiEnv } from './pi-env.js';
+import { getPiEnvDir, ensurePiEnv, PI_ENVS_DIR, materializeEnvExtensions } from './pi-env.js';
 import { replaceMcpServers } from './mcp-config.js';
 import { isPiImagesInstalled } from './image-models.js';
 import { matchModelMap } from '../shared/format.js';
@@ -197,8 +197,25 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
       // Per-user UI saves the user's enabled set — respect it (it may
       // legitimately differ from the master list mid-merge); master's
       // fresh `pi install` state lands on the NEXT save/spawn.
-      piSettings.packages = settings.packages;
+      // 'local:<name>' entries are bundled extras (pi-ext-extra): they
+      // install as env extensions/<name> symlinks, not packages entries,
+      // so strip them from what pi sees and apply the link set.
+      const incoming = Array.isArray(settings.packages) ? settings.packages : [];
+      const extras = incoming.filter((p: unknown) => pkgSource(p).startsWith('local:')).map((p: unknown) => pkgSource(p).slice('local:'.length));
+      piSettings.packages = incoming.map(pkgSource).filter((p: string) => !p.startsWith('local:'));
       piSettingsChanged = true;
+      const envExts = join(envDir, 'extensions');
+      const wanted = new Set(extras);
+      for (const spec of getAvailableExtras()) {
+        const name = spec.slice('local:'.length);
+        try { lstatSync(join(envExts, name)); } catch { continue; } // not linked — nothing to do
+        if (!wanted.has(name)) setExtraEnabled(user, name, false);
+      }
+      for (const name of extras) {
+        let present = false;
+        try { lstatSync(join(envExts, name)); present = true; } catch { /* absent */ }
+        if (!present) setExtraEnabled(user, name, true);
+      }
     }
     if ('codemode' in settings) {
       // pi 1.0 codemode tool. Empirical note: the documented pure-plus form
@@ -582,7 +599,55 @@ function pkgSource(p: unknown): string {
 }
 
 export function getAvailablePackages(): string[] {
-  return (readJsonCached(join(PI_DIR, 'settings.json'))?.packages || []).map(pkgSource);
+  return [
+    ...(readJsonCached(join(PI_DIR, 'settings.json'))?.packages || []).map(pkgSource),
+    ...getAvailableExtras(),
+  ];
+}
+
+/** Bundled custom pi extensions (repo extras/, shipped in the image at
+ *  ~/pi-ext-extra). AUTERE_PI_EXT_EXTRA points dev runs at the repo.
+ *  ponytail: name reads/writes are path-validated; no users/auth touched. */
+const EXTRAS_DIR = process.env.AUTERE_PI_EXT_EXTRA
+  || join(process.env.HOME || '/home/autere', 'pi-ext-extra');
+
+/** Bundled custom extensions (pi-ext-extra) as toggle ids: 'local:pi-X'.
+ *  These install into a user's env as extensions/<name> symlinks on save. */
+export function getAvailableExtras(): string[] {
+  try {
+    return readdirSync(EXTRAS_DIR, { withFileTypes: true })
+      .filter((e) => e.isDirectory() || e.isSymbolicLink())
+      .map((e) => e.name)
+      .filter((name) => existsSync(join(EXTRAS_DIR, name, 'index.ts')) || existsSync(join(EXTRAS_DIR, name, 'index.js')))
+      .sort()
+      .map((name) => `local:${name}`);
+  } catch { return []; }
+}
+
+/** Extras currently linked into the user's env extensions dir. */
+export function getEnabledExtras(user: string): string[] {
+  const dir = join(getPiEnvDir(user), 'extensions');
+  const available = new Set(getAvailableExtras().map((s) => s.slice('local:'.length)));
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((e) => available.has(e.name))
+      .map((e) => `local:${e.name}`);
+  } catch { return []; }
+}
+
+/** Link (enabled) or unlink (disabled) one bundled extra into the user's env. */
+export function setExtraEnabled(user: string, name: string, enabled: boolean): void {
+  if (!/^[-\w.]+$/.test(name)) throw new Error(`bad extension name "${name}"`);
+  // The env extensions dir may still be a shared master symlink —
+  // materialize it first so toggles stay per-user.
+  materializeEnvExtensions(user);
+  const link = join(getPiEnvDir(user), 'extensions', name);
+  try { lstatSync(link); rmSync(link, { recursive: true }); } catch { /* not there */ }
+  if (!enabled) return;
+  const src = join(EXTRAS_DIR, name);
+  if (!existsSync(src)) throw new Error(`Extension "${name}" is not installed on this server`);
+  mkdirSync(dirname(link), { recursive: true });
+  symlinkSync(src, link, 'dir');
 }
 
 /**
@@ -592,8 +657,10 @@ export function getAvailablePackages(): string[] {
  */
 export function getEnabledPackages(user: string): string[] {
   const envSettings = readJsonCached(join(getPiEnvDir(user), 'settings.json'));
-  if (envSettings && Array.isArray(envSettings.packages)) return envSettings.packages.map(pkgSource);
-  return getAvailablePackages();
+  const npm = envSettings && Array.isArray(envSettings.packages)
+    ? envSettings.packages.map(pkgSource)
+    : getAvailablePackages();
+  return [...npm.filter((p: string) => !p.startsWith('local:')), ...getEnabledExtras(user)];
 }
 
 // ── Token pricing ──
@@ -856,7 +923,7 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
         key: 'packages',
         label: 'Enabled Extensions',
         type: 'packages',
-        description: 'Tick to enable an installed extension for your pi environment. Saving restarts the agent.',
+        description: 'Tick to enable an installed extension for your pi environment. Saving restarts the agent. “pi-” entries marked local come from the server’s bundled set (admin can toggle them).',
       },
     ],
   });

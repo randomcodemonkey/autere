@@ -78,6 +78,27 @@ function pathExists(path: string): boolean {
   try { lstatSync(path); return true; } catch { return false; }
 }
 
+/** Make envDir/extensions a real directory holding per-entry symlinks
+ *  instead of one symlink to the shared master dir. Bundled extras are
+ *  toggled per user by linking/unlinking entries in it — a shared symlink
+ *  would leak those toggles into the master dir for every user.
+ *  ponytail: master-loop/link copies are cheap; revisit only if master
+ *  extensions ever hold per-entry state beyond symlinks. */
+export function materializeEnvExtensions(user: string): void {
+  const envDir = getPiEnvDir(user);
+  const link = join(envDir, 'extensions');
+  let src: string | null = null;
+  try { src = readlinkSync(link); } catch { return; } // missing or already a real dir
+  const target = src.startsWith('/') ? src : join(envDir, src);
+  rmSync(link);
+  mkdirSync(link, { recursive: true });
+  let entries: string[] = [];
+  try { entries = readdirSync(target); } catch { /* empty master dir */ }
+  for (const name of entries) {
+    try { symlinkSync(join(target, name), join(link, name), 'dir'); } catch { /* eexist */ }
+  }
+}
+
 /**
  * Sync master ~/.pi/agent/settings.json install state into a seeded env's
  * settings.json. Runs on every ensurePiEnv so master-side `pi install`

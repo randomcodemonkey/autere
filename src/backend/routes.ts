@@ -57,6 +57,8 @@ import type { SessionInfo } from './types.js';
 
 import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths, getFolderIgnores } from './user-settings.js';
 
+const startsWithLocal = (p: unknown): boolean => String(typeof p === 'string' ? p : (p as { source?: string })?.source || '').startsWith('local:');
+
 // ── Attachment limits (session messages) ──
 const MAX_ATTACHED_IMAGES = 4;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB per image (decoded, inline to the LLM)
@@ -1604,11 +1606,13 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     method: 'GET', path: API.extensions.packages, template: `${API_PREFIX}/extensions/packages`,
     role: 'chat', tag: 'Extensions', summary: 'Installable extension packages and the caller enabled set',
     handler: async (c) => {
+      const admin = getUserRole(c.user) === 'admin';
+      const available = admin ? getAvailablePackages() : getAvailablePackages().filter((p) => !p.startsWith('local:'));
       sendJSON(c.res, {
         success: true,
         data: {
-          available: getAvailablePackages(),
-          enabled: getEnabledPackages(c.user),
+          available,
+          enabled: admin ? getEnabledPackages(c.user) : getEnabledPackages(c.user).filter((p) => !p.startsWith('local:')),
         },
       });
     },
@@ -1910,6 +1914,14 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           return;
         }
         const prev = getAllUserSettings(c.user);
+        // Bundled extras (local: entries) are linked/unlinked per env — an
+        // admin-only capability (pi-ext-extra is server-owned content).
+        const hasLocal = Array.isArray(settings.packages) && (settings.packages as unknown[]).some(startsWithLocal);
+        const hadLocal = Array.isArray(prev.packages) && prev.packages.some(startsWithLocal);
+        if ((hasLocal || hadLocal) && getUserRole(c.user) !== 'admin') {
+          sendJSON(c.res, { success: false, error: 'Bundled extensions can only be changed by an admin' }, 403);
+          return;
+        }
         // Changing the sandbox image is only useful if it can actually
         // run pi — validate before saving (docker may pull, so this can
         // take a while the first time).

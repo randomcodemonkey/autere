@@ -479,20 +479,21 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       const togglePkg = (pkg: string, on: boolean) => {
         handleChange(field.key, on ? [...enabled, pkg] : enabled.filter((p) => p !== pkg));
       };
+      const pkgLabel = (pkg: string) => pkg.startsWith('local:') ? pkg.slice('local:'.length) : pkg;
       return (
         <FieldShell key={field.key} field={field}>
           <div className="settings-packages">
             {availablePackages.length === 0 && custom.length === 0 && (
               <div className="settings-description">No extensions installed in the master pi environment</div>
             )}
-            {availablePackages.map((pkg) => (
+            {[...availablePackages].sort((a, b) => pkgLabel(a).localeCompare(pkgLabel(b))).map((pkg) => (
               <label key={pkg} className="settings-package-item">
                 <input
                   type="checkbox"
                   checked={enabled.includes(pkg)}
                   onChange={(e) => togglePkg(pkg, e.target.checked)}
                 />
-                <span className="settings-package-name">{pkg}</span>
+                <span className="settings-package-name">{pkgLabel(pkg)}</span>
               </label>
             ))}
             {custom.map((pkg) => (
