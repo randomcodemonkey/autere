@@ -42,6 +42,9 @@ Run it from the repo, then tell the user what needs a reload/restart.
    automatically when only a commit was requested).
 3. **Batch into logical commits** (feat:/fix:/test: headers with a payload
    body). Avoid tiny sequential "fix the fix" commits.
+3b. **Lint + typecheck BEFORE every commit** (CI lints itself): `npx eslint .`
+   and `npm run typecheck` must pass before you run `git commit` — a lint
+   failure in CI is a broken commit shipped to the user.
 4. **Never kill supervisord-parented processes.** No `pkill`/`killall` on
    node/tsx; e2e tests manage their own backend lifecycle.
 5. **Test runs are slow/expensive.** Pipe output to a temp file and grep from
