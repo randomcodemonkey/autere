@@ -289,7 +289,7 @@ export async function validateSandboxImage(image: string): Promise<string | null
   }
 }
 
-export const DEFAULT_SANDBOX_IMAGE = 'randomcodemonkey.org/autere:latest';
+export const DEFAULT_SANDBOX_IMAGE = 'ghcr.io/randomcodemonkey/autere:latest';
 const OFF = /^(off|none|disabled)$/i;
 
 /** Resolve pi sandbox image */

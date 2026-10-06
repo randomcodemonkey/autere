@@ -868,7 +868,7 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
         key: 'piSandboxImage',
         label: 'Docker Image',
         type: 'text',
-        placeholder: 'randomcodemonkey.org/autere:latest',
+        placeholder: 'ghcr.io/randomcodemonkey/autere:latest',
                         description: `Run every pi agent session inside this docker container instead of on the host. The image must provide pi, bash and a user with uid 1001, and is validated on save. Empty = the default autere sandbox image.${getUserRole(user) === 'admin' ? ' off/none/disabled = run pi on the host (no isolation) — admin exit hatch for when something breaks.' : ''}`,      },
     ],
   });

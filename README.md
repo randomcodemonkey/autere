@@ -25,7 +25,7 @@ docker run -d --name autere \
   --group-add $(getent group docker | cut -d: -f3) \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v autere-home:/home/autere \
-  randomcodemonkey.org/autere:latest
+  ghcr.io/randomcodemonkey/autere:latest
 ```
 
 There is also an example [docker-compose.yaml](docker/docker-compose.yaml) available.
@@ -75,7 +75,7 @@ Autere can be ran behind a proxy and supports the standard `x-forwarded-prefix` 
 | `AUTERE_MODEL` | - | Pi model ID |
 | `AUTERE_IDLE_TIMEOUT` | 30 | Minutes before idle pi sessions are terminated |
 | `AUTERE_NINE_ROUTER_URL` | `http://localhost:20128` | Backend-managed 9router URL |
-| `AUTERE_SANDBOX_IMAGE` | randomcodemonkey.org/autere:latest | Docker image for sandboxed pi sessions (`off` disables sandbox mode) |
+| `AUTERE_SANDBOX_IMAGE` | ghcr.io/randomcodemonkey/autere:latest | Docker image for sandboxed pi sessions (`off` disables sandbox mode) |
 
 ## Architecture
 

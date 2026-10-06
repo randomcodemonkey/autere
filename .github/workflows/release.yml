@@ -2,7 +2,7 @@ name: Release build
 
 # Any commit whose subject is `version: <semver>` produces a multi-arch
 # docker image (linux/amd64 + linux/arm64) tagged with the version and
-# `latest`, and pushes it to the configured registry.
+# `latest`, and pushes it to GitHub Container Registry (ghcr.io).
 on:
   push:
     tags: ['v*']
@@ -12,7 +12,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE: randomcodemonkey.org/autere
+  IMAGE: ghcr.io/randomcodemonkey/autere
 
 jobs:
   release:
@@ -49,13 +49,13 @@ jobs:
         if: steps.commit.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v4
 
-      - name: Log in to registry
+      - name: Log in to GHCR
         if: steps.commit.outputs.skip != 'true'
         uses: docker/login-action@v4
         with:
-          registry: ${{ vars.REGISTRY_HOST || 'randomcodemonkey.org' }}
-          username: ${{ secrets.REGISTRY_USER }}
-          password: ${{ secrets.REGISTRY_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push ${{ env.IMAGE }}:${{ steps.commit.outputs.version }}
         if: steps.commit.outputs.skip != 'true'

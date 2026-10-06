@@ -1,7 +1,7 @@
 services:
   autere:
     container_name: autere
-    image: "randomcodemonkey.org/autere:latest"
+    image: "ghcr.io/randomcodemonkey/autere:latest"
     group_add:
       - "126" # docker gid inside autere
     volumes:

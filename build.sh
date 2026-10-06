@@ -11,7 +11,7 @@
 #     -v  <version>           override the version for this build
 #     -a  <architectures>     buildx platform list (default: linux/arm64 on
 #                            aarch64 machines, else linux/amd64)
-#     -n  <image>             image name (default: randomcodemonkey.org/autere)
+#     -n  <image>             image name (default: ghcr.io/randomcodemonkey/autere)
 #     -t  <t1,t2,...>         tags (default: latest and the version)
 #
 # Legacy positional form still works (version arch image [tags...]).
@@ -79,7 +79,7 @@ fi
 version_file="$(cat "$here/version.txt")"
 version="${version:-$version_file}"
 arch="${arch:-$( case "$(uname -m)" in aarch64|arm64) echo linux/arm64 ;; *) echo linux/amd64 ;; esac )}"
-image="${image:-randomcodemonkey.org/autere}"
+image="${image:-ghcr.io/randomcodemonkey/autere}"
 tags="${tags:-latest,$version}"
 
 args=()
