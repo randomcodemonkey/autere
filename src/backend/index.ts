@@ -36,6 +36,13 @@ function start9router(): void {
         stdio: ['ignore', out, err],
       });
       log.server.info(`9router started (pid ${routerProcess.pid})`);
+      // No 'error' listener = crash (node:events unhandled 'error') when the
+      // binary is missing (ENOENT on CI) — never take the backend down for it.
+      routerProcess.on('error', (err: any) => {
+        routerProcess = null;
+        // ENOENT/EACCES are permanent — retrying would loop forever.
+        log.server.error(`9router spawn failed (${err.code || err.message}) — not retrying`);
+      });
       routerProcess.on('exit', (code, signal) => {
         routerProcess = null;
         if (code === 0 && signal === null) {

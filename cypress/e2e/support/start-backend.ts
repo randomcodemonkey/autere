@@ -120,7 +120,7 @@ const MOCK_ROUTER_MODELS: { id: string; [k: string]: unknown }[] = [
   },
 ];
 
-function seedRouterConfig(routerUrl: string): void {
+export function seedRouterConfig(routerUrl: string): void {
   try {
     const cacheDir = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'pi');
     mkdirSync(cacheDir, { recursive: true });

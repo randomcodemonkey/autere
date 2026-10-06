@@ -48,18 +48,10 @@ jobs:
       - name: Component tests
         run: npx cypress install && npm run test:component
 
-      # CLI tests: isolated backend + isolated HOME, no 9router needed.
-      - name: CLI integration tests
-        run: npm run test:cli
-
-      - name: pi extension smoke tests
-        run: node --experimental-strip-types extras/pi-filetools/smoke-test.mjs
-
-      # E2e runs real agent turns against an IN-PROCESS MOCK router
-      # (cypress/e2e/support/mock-router.ts) — an OpenAI-compatible endpoint
-      # with deterministic responses (streamed essay, "4" for 2+2, one bash
-      # tool call). No external 9router needed on the runner.
-      - name: Install pi + pi-9router-ext (e2e prerequisites)
+      # pi + pi-9router-ext must be installed BEFORE the CLI tests: run.sh
+      # drives a real model turn (followUp) through the in-process mock
+      # router, which needs the 9router provider from this install.
+      - name: Install pi + pi-9router-ext (CLI + e2e prerequisite)
         run: |
           npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.0.0
           mkdir -p ~/.pi/agent
@@ -81,6 +73,17 @@ jobs:
           mkdir -p ~/.pi/agent/extensions
           for d in "$PWD"/extras/*/; do ln -sfn "$PWD/${d#$PWD/}" ~/.pi/agent/extensions/$(basename "$d"); done
 
+      # CLI tests: isolated backend + isolated HOME, in-process mock router.
+      - name: CLI integration tests
+        run: npm run test:cli
+
+      - name: pi extension smoke tests
+        run: node --experimental-strip-types extras/pi-filetools/smoke-test.mjs
+
+      # E2e runs real agent turns against an IN-PROCESS MOCK router
+      # (cypress/e2e/support/mock-router.ts) — an OpenAI-compatible endpoint
+      # with deterministic responses (streamed essay, "4" for 2+2, one bash
+      # tool call). No external 9router needed on the runner.
       - name: e2e tests
         run: npm run test:e2e
 

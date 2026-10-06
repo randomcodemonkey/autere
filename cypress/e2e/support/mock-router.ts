@@ -72,6 +72,12 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
             res.setHeader('Cache-Control', 'no-cache');
 
             const lastUserText = JSON.stringify(lastUser?.content ?? '');
+            // Exact-reply protocol (cli/test/run.sh followUp): "Reply with exactly: X"
+            const exact = lastUserText.match(/Reply with exactly:\s*([A-Za-z0-9.!?-]+)/);
+            if (exact && lastRole !== 'tool') {
+                streamText(res, parsed.model, exact[1]);
+                return;
+            }
             if (/essay|600 words/i.test(lastUserText) && lastRole !== 'tool') {
                 // ~1.7k words over ~210 chunks with delays — a turn that stays
                 // mid-stream for ~20s (reload/switch tests depend on it).

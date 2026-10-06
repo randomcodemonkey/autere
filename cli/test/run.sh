@@ -8,6 +8,10 @@
 # output/exit codes.
 #
 # Usage: bash cli/test/run.sh          (or: npm run test:cli)
+#
+# Prerequisite (same as e2e): a master pi install with pi-9router-ext and
+# the 9router provider in $HOME/.pi/agent/settings.json — pi turns are real
+# assertions here, not mocked at the pi layer.
 set -u
 cd "$(dirname "$0")/../.."
 
@@ -37,6 +41,7 @@ cli() {
 }
 
 cleanup() {
+  [ -n "${ROUTER_PID:-}" ] && kill "$ROUTER_PID" 2>/dev/null
   # Kill the backend and its children (pi processes are direct children)
   [ -n "${BACKEND_PID:-}" ] || return
   for p in $(ps -o pid= --ppid "$BACKEND_PID" 2>/dev/null); do kill -9 "$p" 2>/dev/null; done
@@ -47,6 +52,25 @@ cleanup() {
 trap cleanup EXIT
 
 section "start isolated backend"
+# Mock router first: the backend's 9router preflight and pi's model calls
+# target it (no live router on a CI runner). Its isolated cache keeps the
+# discovery cache out of the dev box's real ~/.cache/pi.
+grep -q '9router' "$HOME/.pi/agent/settings.json" 2>/dev/null || {
+  echo "prerequisite missing: $HOME/.pi/agent/settings.json must enable the 9router provider (pi + pi-9router-ext — see the 'Install pi' step in .github/workflows/tests.yml)"
+  exit 1
+}
+export XDG_CACHE_HOME="$TD/cache"
+node node_modules/tsx/dist/cli.mjs cli/test/router.ts > "$TD/router.log" 2>&1 &
+ROUTER_PID=$!
+ROUTER_URL=""
+for i in $(seq 1 40); do
+  ROUTER_URL=$(sed -n 's/^ROUTER_URL=//p' "$TD/router.log")
+  [ -n "$ROUTER_URL" ] && break
+  sleep 0.5
+done
+[ -n "$ROUTER_URL" ] || { echo "mock router did not start"; cat "$TD/router.log"; exit 1; }
+export AUTERE_NINE_ROUTER_URL="$ROUTER_URL" NINE_ROUTER_BASE_URL="$ROUTER_URL" \
+  NINE_ROUTER_API_KEY=9router-no-api-key AUTERE_TEST_MODELS=mock-chat
 export AUTERE_DIR=$TD/state AUTERE_PI_ENVS_DIR=$TD/pi-envs AUTERE_USERS_FILE=$TD/state/users.json \
   AUTERE_ADMIN_USER=admin INITIAL_PASSWORD=clitest AUTERE_SANDBOX_IMAGE=off AUTERE_LOG_LEVEL=warn
 node node_modules/tsx/dist/cli.mjs src/backend/index.ts --port $PORT --autere-auth true \
