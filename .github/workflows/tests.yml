@@ -13,7 +13,7 @@ jobs:
     outputs:
       skip: ${{ steps.commit.outputs.skip }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: commit
         name: Skip when the commit is a version-bump release commit
         run: |
@@ -28,9 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -89,7 +89,7 @@ jobs:
 
       - name: Upload cypress artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cypress-artifacts
           path: |

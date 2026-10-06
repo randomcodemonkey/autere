@@ -19,7 +19,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - id: commit
         name: Resolve version from commit subject (or v-tag)
@@ -44,15 +44,15 @@ jobs:
 
       - name: Set up QEMU (arm64 emulation)
         if: steps.commit.outputs.skip != 'true'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         if: steps.commit.outputs.skip != 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to registry
         if: steps.commit.outputs.skip != 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ vars.REGISTRY_HOST || 'randomcodemonkey.org' }}
           username: ${{ secrets.REGISTRY_USER }}
@@ -60,7 +60,7 @@ jobs:
 
       - name: Build and push ${{ env.IMAGE }}:${{ steps.commit.outputs.version }}
         if: steps.commit.outputs.skip != 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile
