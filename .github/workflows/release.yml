@@ -5,7 +5,6 @@ name: Release build
 # `latest`, and pushes it to the configured registry.
 on:
   push:
-    branches: ['**']
     tags: ['v*']
 
 permissions:
