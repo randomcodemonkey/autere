@@ -88,8 +88,9 @@ function pathExists(path: string): boolean {
 export function materializeEnvExtensions(user: string): void {
   const envDir = getPiEnvDir(user);
   const link = join(envDir, 'extensions');
-  let src: string | null = null;
-  try { src = readlinkSync(link); } catch { return; } // missing or already a real dir
+  // Throws inside try →  it's not a symlink (already a real dir) or missing → done
+  let src: string;
+  try { src = readlinkSync(link); } catch { return; }
   const target = src.startsWith('/') ? src : join(envDir, src);
   rmSync(link);
   mkdirSync(link, { recursive: true });

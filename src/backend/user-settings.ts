@@ -18,7 +18,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSyn
 import { join, dirname } from 'path';
 import { randomUUID } from 'crypto';
 import { USER_SETTINGS_DIR, PI_DIR } from './constants.js';
-import { getPiEnvDir, ensurePiEnv, PI_ENVS_DIR, materializeEnvExtensions } from './pi-env.js';
+import { getPiEnvDir, ensurePiEnv, materializeEnvExtensions } from './pi-env.js';
 import { replaceMcpServers } from './mcp-config.js';
 import { isPiImagesInstalled } from './image-models.js';
 import { matchModelMap } from '../shared/format.js';

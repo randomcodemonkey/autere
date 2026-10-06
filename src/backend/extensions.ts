@@ -14,7 +14,7 @@ import { join } from 'path';
 import type { ExtensionInfo } from './types.js';
 import { PI_DIR, NPM_EXTENSIONS_DIR, EXTENSIONS_DIR } from './constants.js';
 import { extensionsState } from './state.js';
-import { PI_ENVS_DIR, getPiEnvDir } from './pi-env.js';
+import { PI_ENVS_DIR } from './pi-env.js';
 import { getExtensionHandler } from './extension-handlers.js';
 import { getUserSetting, getEnabledPackages } from './user-settings.js';
 import { log } from './logger.js';
