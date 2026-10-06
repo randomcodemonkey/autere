@@ -16,27 +16,23 @@ Build the docker image with the included `build.sh` script:
 ./build.sh -h                    # show build options
 ```
 
-All configuration is via env variables (docker run / compose), see below for supported variables. 
+The service is intended to be ran with docker-compose. All configuration is via env variables (see below for supported variables). 
+
+
+Start Autere backend using the default [docker-compose.yaml](docker/docker-compose.yaml) file.
 
 ```bash
-docker run -d --name autere \
-  -p 127.0.0.1:3456:3456 -p 127.0.0.1:20128:20128 \
-  -e INITIAL_PASSWORD=secret \
-  --group-add $(getent group docker | cut -d: -f3) \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v autere-home:/home/autere \
-  ghcr.io/randomcodemonkey/autere:latest
-```
-
-There is also an example [docker-compose.yaml](docker/docker-compose.yaml) available.
+mkdir autere && \
+curl -o autere/docker-compose-yml "https://raw.githubusercontent.com/randomcodemonkey/autere/refs/heads/main/docker/docker-compose.yaml" && \
+$(cd autere && docker compose up -d)
 
 `/var/run/docker.sock` is required for sandboxed pi sessions - without it the backend cannot start session containers. Admin user may set 'sandbox' image to 'off' in their per-user settings, or disable sandboxing globally by setting env `AUTERE_SANDBOX_IMAGE=off`.
 
 When mounting docker.sock inside the autere container, you **must** use `--group-add <gid>` in the docker run command, where gid matches the group of the socket inside the autere container (on linux this matches the group of the socket on the host, `getent group docker` - on MacOs it is easiest to mount the socket and check what group it ends up having)
 
-`/home/autere` should be mounted into the autere container as a named volume (not a bind mount), sandboxed pi sessions require named volumes to function. 
+`/home/autere` must not be mounted into the Autere container, instead mount the more specific folders `/home/autere/.autere` and `/home/autere/.pi`
 
-The example [docker-compose.yaml](docker/docker-compose.yaml) also mounts shared config/cache volumes into the container — `~/.config`, `~/.cache`, `~/.npm`, `~/.m2`, `~/.ivy` — and sets `GIT_CONFIG_GLOBAL`, `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` to match. These same volumes and env variables apply to sandboxed pi sessions too: the sandbox automatically mounts each shared dir at the identical path and forwards `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` (and `GIT_CONFIG_GLOBAL` when the gitconfig exists), so sandboxed and non-sandboxed sessions share the same caches and git identity. Keep these mounts as named volumes — the sandbox mounts them by name.
+The default [docker-compose.yaml](docker/docker-compose.yaml) also mounts shared config/cache volumes into the container — `~/.config`, `~/.cache`, `~/.npm`, `~/.m2`, `~/.ivy` — and sets `GIT_CONFIG_GLOBAL`, `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` to match. These same volumes and env variables apply to sandboxed pi sessions too: the sandbox automatically mounts each shared dir at the identical path and forwards `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` (and `GIT_CONFIG_GLOBAL` when the gitconfig exists), so sandboxed and non-sandboxed sessions share the same caches and git identity. Keep these mounts as named volumes — the sandbox mounts them by name.
 
 ### Initial configuration
 
