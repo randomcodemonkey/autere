@@ -147,6 +147,10 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [hasNewContent, setHasNewContent] = useState(false);
 
+  // Scroll anchor for reading-history mode: what the user was reading and
+  // its offset from the box top (set in handleScroll, applied below).
+  const scrollAnchorRef = useRef<{ key: string; offset: number } | null>(null);
+
   // Scroll to bottom on initial load
   useEffect(() => {
     const box = boxRef.current;
@@ -208,8 +212,22 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     if (box && isAtBottomRef.current) {
       programmaticScrollRef.current = true;
       box.scrollTop = box.scrollHeight;
-    } else if (!isAtBottomRef.current && contentChanged) {
-      setHasNewContent(true);
+    } else if (box && !isAtBottomRef.current) {
+      // Reading-history mode: re-pin the anchored message to the offset the
+      // user left it at, so arriving messages/thinking blocks/tool calls
+      // growing above or below never shift the text they're reading.
+      const a = scrollAnchorRef.current;
+      if (a) {
+        const el = box.querySelector(`[data-msg-key='${CSS.escape(a.key)}']`) as HTMLElement | null;
+        if (el) {
+          const delta = el.getBoundingClientRect().top - box.getBoundingClientRect().top - a.offset;
+          if (Math.abs(delta) > 1) {
+            programmaticScrollRef.current = true;
+            box.scrollTop += delta;
+          }
+        }
+      }
+      if (contentChanged) setHasNewContent(true);
     }
   }, [messages, isStreaming]);
 
@@ -228,7 +246,33 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     // Show as soon as the user is scrolled up; label upgrades to
     // "New messages" when content arrives while they're away.
     setShowScrollButton(!atBottom);
-    if (atBottom) setHasNewContent(false);
+    if (atBottom) {
+      setHasNewContent(false);
+      scrollAnchorRef.current = null;
+    } else {
+      // Remember which message the user is reading: the last (bottom-most)
+      // child pinned at or above the viewport's top edge, and its offset
+      // from the box top. After content updates we re-pin this element to
+      // the same offset (see useLayoutEffect) so the message under the
+      // user's eyes never moves, no matter what arrives.
+      const boxRect = box.getBoundingClientRect();
+      const kids = Array.from(box.children) as HTMLElement[];
+      // Bottom-most child pinned at/above the box's (padded) top edge; at
+      // scrollTop≈0 no child crosses the edge (box padding), fall back to
+      // the first child so full-top reading anchors too.
+      let anchor: HTMLElement | null = null;
+      for (const el of kids) {
+        if (el.getBoundingClientRect().top <= boxRect.top + 1) anchor = el;
+        else break;
+      }
+      anchor = anchor ?? kids[0] ?? null;
+      // Anchor by the element's stable data-msg-key: React may remount the
+      // node on updates (message-list rebuilds), so a live element ref
+      // would go stale; key-based lookup survives remounts.
+      if (anchor?.dataset?.msgKey) {
+        scrollAnchorRef.current = { key: anchor.dataset.msgKey, offset: anchor.getBoundingClientRect().top - boxRect.top };
+      }
+    }
   }, []);
 
   // Scroll to bottom and resume autoscroll
@@ -330,6 +374,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
             return (
               <ChatMessage
                 key={getKey(msg, fi)}
+                dataKey={getKey(msg, fi)}
                 msg={msg}
                 role={role}
                 displayText={displayText}

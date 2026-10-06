@@ -107,11 +107,13 @@ interface ChatMessageProps {
   isLong: boolean;
   truncLen: number;
   lineCount?: number;
+  /** Stable per-message DOM identity — scroll anchoring looks it up after content updates */
+  dataKey?: string;
   /** Present on pending (queued steer/follow-up) user messages — cancels it */
   onCancelPending?: (text: string) => void;
 }
 
-export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isAssistant, isToolResult, isLong, truncLen, lineCount, onCancelPending }) => {
+export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isAssistant, isToolResult, isLong, truncLen, lineCount, onCancelPending, dataKey }) => {
   const [expanded, setExpanded] = useState(false);
   const [lightbox, setLightbox] = useState(false);
   // Tool command line: click toggles between one ellipsized line and full wrap
@@ -183,7 +185,7 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   };
 
   return (
-    <div className={`stream-msg${msg.pending ? ' stream-msg-pending' : ''}`}>
+    <div className={`stream-msg${msg.pending ? ' stream-msg-pending' : ''}`} data-msg-key={dataKey}>
       <div className={`stream-role ${roleClass}${msg.isError ? ' stream-role-error' : ''}`}>
         <span>{role}</span>
         {ts && <span className="stream-timestamp">{ts}</span>}

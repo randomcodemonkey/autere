@@ -312,6 +312,69 @@ describe('StreamCard', () => {
   });
 });
 
+describe('scroll anchoring (reading position)', () => {
+  // Harness keeps ONE StreamCard instance alive across prop changes —
+  // same as the app, where remounting would re-run the initial autoscroll.
+  function Harness({ initial }: { initial: StreamMessage[] }) {
+    const [messages, setMessages] = React.useState<StreamMessage[]>(initial);
+    (window as any).__setMsgs = setMessages;
+    return (
+      <div style={{ height: 300, display: 'flex', flexDirection: 'column' }}>
+        <StreamCard messages={messages} isStreaming={false} onNewSession={() => {}} />
+      </div>
+    );
+  }
+  const mk = (i: number): StreamMessage => ({ role: 'user', text: 'Message ' + i, streaming: false });
+
+  it('stays pinned to the same message while the user is scrolled up', () => {
+    cy.mount(<Harness initial={Array.from({ length: 60 }, (_, i) => mk(i))} />);
+    // Mount autoscroll → bottom; wait for it to land before scrolling up
+    cy.get('.scroll-to-bottom').should('not.exist');
+    cy.wait(100);
+    // Scroll up, as a user would
+    cy.get('.stream-box').then(($box) => {
+      $box[0].scrollTop = 0;
+      $box[0].dispatchEvent(new Event('scroll'));
+    });
+    cy.get('.scroll-to-bottom').should('contain', 'Scroll to bottom');
+
+    // Which message is pinned at the viewport top, at which offset?
+    cy.window().then(() => null); // flush prior awaits
+    cy.get('.stream-box').then(($box) => {
+      const box = $box[0];
+      const boxTop = box.getBoundingClientRect().top;
+      const kids = Array.from(box.children) as HTMLElement[];
+      let anchor: HTMLElement | null = null;
+      for (const el of kids) {
+        if (el.getBoundingClientRect().top <= boxTop + 1) anchor = el;
+        else break;
+      }
+      anchor = anchor ?? kids[0] ?? null;
+      expect(anchor, 'anchor exists').to.not.be.null;
+      return {
+        key: anchor!.dataset.msgKey,
+        offset: anchor!.getBoundingClientRect().top - boxTop,
+      };
+    }).then(({ key, offset }) => {
+      expect(key, 'data-msg-key present').to.be.ok;
+      // Real-world arrival: 10 new messages appended AND an earlier
+      // (above-anchor) message grows taller — neither may move the reader.
+      cy.window().then((w) => {
+        (w as any).__setMsgs([
+          mk(0), mk(1), mk(2),
+          { role: 'user', text: 'Grown earlier message. ' + 'x'.repeat(4000), streaming: false },
+          ...Array.from({ length: 5 }, (_, i) => mk(i + 4)),
+          ...Array.from({ length: 10 }, (_, i) => mk(100 + i)),
+        ]);
+      });
+      cy.get(`[data-msg-key='${CSS.escape(key!)}']`).then(($el) => {
+        const box = document.querySelector('.stream-box') as HTMLElement;
+        expect($el[0].getBoundingClientRect().top - box.getBoundingClientRect().top, 'reading offset preserved').to.be.closeTo(offset, 2);
+      });
+    });
+  });
+});
+
 describe('image overflow (large image)', () => {
   it('image does not overflow stream-box', () => {
     const data = makeBigPng();
