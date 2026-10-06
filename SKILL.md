@@ -19,12 +19,17 @@ code — keep it up to date when architecture or workflows change.**
 - Repository location: check your memory for repository location, if not set ASK the user where the autere source code resides and then store that into memory. 
 - The running instance is supervisord-managed, serving the built frontend from `dist/`.
 
-**Deploying changes — know the difference:**
+**Deploying changes — use `./build-dev.sh` (repo root), which does all of it
+correctly: `npm run build`, mirrors `extras/` → `~/pi-ext-extra/` (forwarding
+deletions), rsyncs `dist-backend/` → `~/dist-backend/`, and lets Vite write
+the frontend straight to `~/dist` (outDir). `--no-ext` skips the extras copy.
+Run it from the repo, then tell the user what needs a reload/restart.
 
 | Change type | How it goes live |
 |---|---|
-| Frontend only (`src/frontend/`, `styles.scss`) | `npm run build`, then the user **reloads the UI** (no backend restart) |
-| Backend (`src/backend/`) | Code + `npm run build` if assets changed, then the **user restarts the backend themselves** — never restart it yourself (see below) |
+| Frontend only (`src/frontend/`, `styles.scss`) | `./build-dev.sh`, then the user **reloads the UI** (no backend restart; note the PWA service worker — hard reload once if stale) |
+| Backend (`src/backend/`) | `./build-dev.sh`, then the **user restarts the backend themselves** — never restart it yourself (see below) |
+| pi extensions (`extras/`) | `./build-dev.sh` (mirror sync), live on next pi spawn |
 
 ## Non-Negotiable Policies
 
@@ -171,9 +176,10 @@ SKILL.md               # This file — canonical, in-repo
   prefix over the wire (`MAX_ATTACHED_IMAGES`, `MAX_IMAGE_BYTES` in routes.ts).
 - **Optimistic UI**: DashboardPage injects pending user messages (⏳) on
   successful send; retired when a broadcast contains the same text.
-- **Scroll**: `.stream-box` has a ResizeObserver that re-pins to bottom when
-  the box resizes (input expand/collapse) if the user is at bottom;
-  `overflow-anchor: auto` + no mid-stream truncation keep reading stable.
+- **Scroll**: `.stream-box` anchors in JS (StreamCard `scrollAnchorRef`):
+  scrolled-up users get the reading message pinned at its offset after every
+  update (`overflow-anchor: none` — CSS anchoring fought React remounts);
+  at bottom, autoscroll + a ResizeObserver re-pin on box resize.
 
 ## Development
 
