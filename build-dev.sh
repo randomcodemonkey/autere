@@ -18,5 +18,8 @@ npm run build
 if [[ "${1:-}" != "--no-ext" ]]; then
   rsync -a --delete extras/ ~/pi-ext-extra/
 fi
+# vite already writes the frontend to ~/dist (outDir ../../dist); backend
+# needs an explicit copy (tsc outDir is the repo's dist-backend).
+rsync -a --delete dist-backend/ ~/dist-backend/
 
 echo "build-dev done: dist, dist-backend, pi-ext-extra updated"
