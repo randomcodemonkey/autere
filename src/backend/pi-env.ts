@@ -434,6 +434,12 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
   }
   const inside = (p: string, base: string) => p === base || p.startsWith(base.endsWith('/') ? base : base + '/');
   const rel = (p: string, base: string) => p.slice(base.replace(/\/$/, '').length + 1);
+  // Deepest mount whose target contains p — find() alone returns the
+  // shallowest (mounts are length-sorted ascending) and nested mounts
+  // SHADOW the outer ones: ~/.pi/agent must resolve to the ~/.pi volume,
+  // never the /home/autere home volume (its copy is invisible).
+  const deepest = (p: string) => [...mounts].sort((a, b) => b.target.length - a.target.length)
+    .find((m) => inside(p, m.target));
 
   // pi env dir (non-negotiable) + master npm (the env symlink target).
   // subpath is relative to the VOLUME ROOT, and the volume root maps to the
@@ -441,7 +447,7 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
   // image mounts autere-data at ~/.autere, so envDir's subpath is
   // 'pi-envs/admin', not '.autere/pi-envs/admin').
   const subOf = (p: string, m: { target: string }) => rel(p, m.target);
-  const envM = mounts.find((m) => inside(agentDir, m.target));
+  const envM = deepest(agentDir);
   if (envM) {
     out.push({ volume: envM.volume, dst: agentDir, subpath: subOf(agentDir, envM) });
   } else {
@@ -449,7 +455,7 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
   }
   const masterNpm = join(home, '.pi/agent/npm');
   if (existsSync(masterNpm)) {
-    const npmM = mounts.find((m) => inside(masterNpm, m.target));
+    const npmM = deepest(masterNpm);
     if (npmM) out.push({ volume: npmM.volume, dst: masterNpm, subpath: subOf(masterNpm, npmM) });
   }
   // The 9router extension resolves its config via homedir() (no
@@ -457,7 +463,7 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
   // in at ~/.pi/agent/9router-config.json — a file, volume-subpath'd.
   const routerCfg = join(home, '.pi/agent/9router-config.json');
   if (existsSync(routerCfg)) {
-    const cfgMount = mounts.find((m) => inside(routerCfg, m.target));
+    const cfgMount = deepest(routerCfg);
     if (cfgMount) out.push({ volume: cfgMount.volume, dst: routerCfg, subpath: subOf(routerCfg, cfgMount) });
   }
 
@@ -481,7 +487,7 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
   // Per-session workdirs (New Session modal): mounted next to the std roots.
   for (const extra of extraRoots) {
     if (workRoots.some((w) => extra === w.host || extra.startsWith(w.host.endsWith('/') ? w.host : w.host + '/'))) continue;
-    const b = mounts.find((m) => inside(extra, m.target));
+    const b = deepest(extra);
     if (!b) continue;
     const name = extra.slice(extra.replace(/\/$/, '').lastIndexOf('/') + 1);
     workRoots.push({ host: extra.replace(/\/+$/, ''), dst: `${workBase}/${name}`, mount: { volume: b.volume, subpath: extra === b.target ? undefined : extra.slice(b.target.replace(/\/$/, '').length + 1) } });
