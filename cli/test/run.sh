@@ -20,11 +20,25 @@ TD=$(mktemp -d /tmp/autere-cli-test.XXXX)
 PORT=$(( 31000 + RANDOM % 20000 ))
 CLI="$PWD/cli/autere.js"
 WORK="$TD/work"
+# JUnit report (what jest-junit / cypress junit reporter emit) — standard
+# input for any CI test-summary UI or reporter action.
+JUNIT="$PWD/cli/test/results/junit.xml"
+rm -f "$JUNIT"; mkdir -p "$(dirname "$JUNIT")"
+SUITE="setup"; CASES=""
 mkdir -p "$WORK"
 
-fail() { echo "  ✗ $1"; FAIL=$((FAIL+1)); }
-ok()   { echo "  ✓ $1"; PASS=$((PASS+1)); }
-section() { echo; echo "== $1 =="; }
+# XML attribute/text escaping (+ drop control chars a truncated OUT may carry)
+xesc() { printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037' | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
+
+fail() {
+  echo "  ✗ $1"; FAIL=$((FAIL+1))
+  CASES="$CASES    <testcase classname=\"cli.$(xesc "$SUITE")\" name=\"$(xesc "$1")\"><failure message=\"$(xesc "$1")\"/></testcase>\n"
+}
+ok() {
+  echo "  ✓ $1"; PASS=$((PASS+1))
+  CASES="$CASES    <testcase classname=\"cli.$(xesc "$SUITE")\" name=\"$(xesc "$1")\"/>\n"
+}
+section() { echo; echo "== $1 =="; SUITE="$1"; }
 
 # assert_in <needle> <desc> — needle must appear in $OUT (set by cli())
 assert_in() {
@@ -41,6 +55,14 @@ cli() {
 }
 
 cleanup() {
+  # An early abort (setup/prerequisite failure) never reaches the summary —
+  # still emit a report so CI always has one to ingest.
+  if [ -z "${JUNIT_DONE:-}" ]; then
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+      '<testsuites><testsuite name="cli" tests="1" failures="1">' \
+      '  <testcase classname="cli" name="harness aborted before summary (see job log)"><failure message="harness aborted before summary (see job log)"/></testcase>' \
+      '</testsuite></testsuites>' > "$JUNIT"
+  fi
   [ -n "${ROUTER_PID:-}" ] && kill "$ROUTER_PID" 2>/dev/null
   # Kill the backend and its children (pi processes are direct children)
   [ -n "${BACKEND_PID:-}" ] || return
@@ -59,6 +81,18 @@ grep -q '9router' "$HOME/.pi/agent/settings.json" 2>/dev/null || {
   echo "prerequisite missing: $HOME/.pi/agent/settings.json must enable the 9router provider (pi + pi-9router-ext — see the 'Install pi' step in .github/workflows/tests.yml)"
   exit 1
 }
+# Tests must spawn the SAME pi the release image ships (docker/Dockerfile).
+SPAWNED_PI=$(node -p "JSON.parse(require('fs').readFileSync('node_modules/@earendil-works/pi-coding-agent/package.json','utf8')).version")
+RELEASE_PI=$(grep -oE 'pi-coding-agent@[0-9][0-9.]*' docker/Dockerfile | head -1 | cut -d@ -f2)
+[ -n "$RELEASE_PI" ] && [ "$SPAWNED_PI" = "$RELEASE_PI" ] || {
+  echo "pi version mismatch: tests spawn $SPAWNED_PI, release ships $RELEASE_PI (docker/Dockerfile)"
+  exit 1
+}
+# pi resolves an extension's npm deps by walking up from the symlinked env
+# path (/tmp/…/pi-envs/admin/extensions/…) — that chain has no node_modules
+# on CI (upstream node lacks Debian's /usr/share/nodejs fallback, which is
+# why dev/prod passed while CI's pi exited on 'Cannot find module diff').
+ln -s "$PWD/node_modules" "$TD/node_modules"
 export XDG_CACHE_HOME="$TD/cache"
 node node_modules/tsx/dist/cli.mjs cli/test/router.ts > "$TD/router.log" 2>&1 &
 ROUTER_PID=$!
@@ -280,4 +314,20 @@ assert_exit 2 "set-model validates"
 
 section "summary"
 echo "PASS=$PASS FAIL=$FAIL"
+{
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<testsuites>\n'
+  printf '  <testsuite name="cli" tests="%d" failures="%d">\n' "$((PASS+FAIL))" "$FAIL"
+  printf '%s' "$CASES"
+  printf '  </testsuite>\n</testsuites>\n'
+} > "$JUNIT"
+JUNIT_DONE=1
+echo "junit report: $JUNIT"
+# CI: surface the backend/pi log on failure — a bare ✗ count hides the
+# actual spawn/RPC error (that's how 'pi did not report a sessionId' went
+# unexplained).
+if [ "$FAIL" != 0 ]; then
+  echo ""
+  echo "== backend.log tail =="
+  tail -n 80 "$TD/backend.log" 2>/dev/null
+fi
 [ "$FAIL" = 0 ]

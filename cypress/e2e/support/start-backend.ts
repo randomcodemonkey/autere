@@ -6,7 +6,7 @@
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, symlinkSync } from 'fs';
 import { tmpdir, homedir } from 'os';
 import { startMockRouter } from './mock-router';
 
@@ -260,6 +260,11 @@ export async function startBackend(): Promise<void> {
   // (the default ~/.autere/pi-envs/admin is shared with the real
   // dashboard instance for the admin user).
   testEnvsDir = mkdtempSync(join(tmpdir(), 'autere-e2e-envs-'));
+  // pi resolves an extension's npm deps by walking up the env dir — a bare
+  // mkdtemp under /tmp has no node_modules above it (upstream node on CI has
+  // no Debian /usr/share/nodejs fallback → 'Cannot find module diff' → pi
+  // exits at spawn). Same fix as cli/test/run.sh.
+  try { symlinkSync(join(PROJECT_ROOT, 'node_modules'), join(testEnvsDir, 'node_modules')); } catch { /* exists */ }
 
   const args = [
     'src/backend/index.ts',

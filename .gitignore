@@ -23,3 +23,6 @@ dist-backend/
 
 # TUI build output
 tui/dist/
+
+# CLI test JUnit report
+cli/test/results/
