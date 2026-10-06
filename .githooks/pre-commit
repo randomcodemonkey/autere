@@ -1,0 +1,4 @@
+#!/bin/sh
+# CI runs the same checks — no broken commits.
+npx eslint . || { echo "pre-commit: eslint failed (fix or run with --no-verify)" >&2; exit 1; }
+npm run typecheck || { echo "pre-commit: typecheck failed (--no-verify to bypass)" >&2; exit 1; }
