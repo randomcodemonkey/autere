@@ -272,7 +272,9 @@ export async function readExtensions(): Promise<void> {
  * it as active on their Agent card.
  */
 export function enabledExtensionsFor(user: string): ExtensionInfo[] {
-  const enabled = new Set(getEnabledPackages(user).map((p) => p.replace(/^npm:/, '')));
+  // Strip both package-source schemes ('npm:x' from settings packages,
+  // 'local:x' bundled extras) — the set must hold bare extension names.
+  const enabled = new Set(getEnabledPackages(user).map((p) => p.replace(/^npm:/, '').replace(/^local:/, '')));
   // Bundled extras (pi-ext-extra) show as active iff in the user's saved
   // choice set — desiredExtras merges the autere-extensions.json file with
   // the bundled availability. Note: pi also loads whatever is linked in the
