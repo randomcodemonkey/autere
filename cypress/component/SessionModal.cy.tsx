@@ -56,6 +56,23 @@ describe('SessionModal', () => {
     cy.get('.session-item.active .session-delete-btn').should('not.exist');
   });
 
+  it('workdir validation: bogus path shows error and blocks create', () => {
+    cy.intercept('GET', '**/api/v1/browse/roots', { success: true, data: [{ path: '/home/autere', access: 'rw' }] }).as('roots');
+    cy.intercept('GET', '**/api/v1/browse/list*', { success: true, data: [{ name: 'code', type: 'dir', size: 1, mtime: 1 }] }).as('list');
+    mountModal({ canSetWorkdir: true });
+    cy.contains('button', 'New Session').click();
+    // force: the no-CSS harness overlays the modal header over the body;
+    // real browsers scroll it clear (users type here fine). Scope to the
+    // modal — the current-session WorkdirEditor also has an add-input.
+    cy.get('.modal-session .sortable-list-add .sortable-list-input').first().type('/home/autere/nope{enter}', { force: true });
+    cy.wait('@roots');
+    cy.wait('@list');
+    cy.contains('does not exist on the server').should('be.visible');
+    cy.get('.session-create-btn').should(($b) => {
+      expect($b.prop('disabled'), 'create button disabled').to.equal(true);
+    });
+  });
+
   it('active-only toggle filters out inactive sessions', () => {
     mountModal();
     cy.wait('@sessions');

@@ -60,7 +60,7 @@ function useWorkdirCheck(items: string[]): { errors: string[]; checking: boolean
             const parent = abs.slice(0, abs.lastIndexOf('/')) || '/';
             const name = abs.slice(abs.lastIndexOf('/') + 1);
             try {
-              const entries = await fetchJson(`${API.browse.list}?path=${encodeURIComponent(parent)}`);
+              const entries = await fetchJson(API.browse.list(parent));
               const hit = (entries || []).find((e: { name: string; type: string }) => e.name === name);
               if (!hit) errors.push(`${abs} does not exist on the server`);
               else if (hit.type !== 'dir') errors.push(`${abs} is not a directory`);
