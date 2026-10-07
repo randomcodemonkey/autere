@@ -6,6 +6,79 @@ import { API } from '../api-paths';
 import { uiSessionName } from '../session-name';
 import type { SessionSearchResult, Persona } from '../types';
 
+/** Navigational guard: WorkdirEditor raises this while it has unsaved
+ *  edits; beforeunload and AppPage view switches consult it. */
+let workdirsDirty = false;
+export function workdirsUnsaved(): boolean { return workdirsDirty; }
+export function acknowledgeWorkdirsDirty(): void { workdirsDirty = false; }
+
+async function fetchJson(rel: string): Promise<any> {
+  const res = await fetch(url(rel));
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body.success === false) throw new Error(body.error || `HTTP ${res.status}`);
+  return body.data;
+}
+
+/** Resolve a workdir input like the backend does: '~/' → $HOME-relative,
+ *  absolute kept, bare relative → $HOME/$name (home = the caller's first
+ *  browsable root, the admin fallback $HOME). */
+function resolveWorkdirClient(raw: string, home: string): string {
+  const t = raw.trim();
+  if (t.startsWith('~/')) return home.replace(/\/+$/, '') + t.slice(1);
+  if (t.startsWith('/')) return t.replace(/\/+$/, '');
+  return home.replace(/\/+$/, '') + '/' + t.replace(/\/+$/, '');
+}
+
+/** Live availability check for workdir entries, mirrors the backend's
+ *  session/node validation (exists + inside allowed roots): entries are
+ *  checked against the caller's browsable roots via browse/list. Errors are
+ *  per-entry; empty → all valid; null errors → check still in flight.
+ *  ponytail: entries hidden by a user File-ignores rule read as missing —
+ *  add a stat-style endpoint when that bites. */
+function useWorkdirCheck(items: string[]): { errors: string[]; checking: boolean } | null {
+  const [state, setState] = useState<{ errors: string[]; checking: boolean } | null>(null);
+  const itemsKey = items.join('\u0000');
+  useEffect(() => {
+    if (!itemsKey) { setState(null); return; }
+    let cancelled = false;
+    setState({ errors: [], checking: true });
+    const timer = setTimeout(() => {
+      (async () => {
+        const errors: string[] = [];
+        try {
+          const roots: { path: string; access: string }[] = await fetchJson(API.browse.roots);
+          if (!roots?.length) {
+            if (itemsKey && !cancelled) setState({ errors: [], checking: false });
+            return;
+          }
+          await Promise.all(itemsKey.split('\u0000').map(async (raw) => {
+            if (!raw.trim()) { errors.push('Workdir must not be empty'); return; }
+            const home = roots[0].path;
+            const abs = resolveWorkdirClient(raw, home);
+            const root = roots.find((r) => abs === r.path || abs.startsWith(r.path + '/'));
+            if (!root) { errors.push(`${abs} is outside your allowed directories (${roots.map((r) => r.path).join(', ')})`); return; }
+            const parent = abs.slice(0, abs.lastIndexOf('/')) || '/';
+            const name = abs.slice(abs.lastIndexOf('/') + 1);
+            try {
+              const entries = await fetchJson(`${API.browse.list}?path=${encodeURIComponent(parent)}`);
+              const hit = (entries || []).find((e: { name: string; type: string }) => e.name === name);
+              if (!hit) errors.push(`${abs} does not exist on the server`);
+              else if (hit.type !== 'dir') errors.push(`${abs} is not a directory`);
+            } catch {
+              // e.g. entry inside an ignore-filtered subtree or a transient
+              // fetch failure — leave the final gate to the save/create
+              // validation on the backend.
+            }
+          }));
+        } catch { /* roots unavailable — backend validates on save */ }
+        if (!cancelled) setState({ errors, checking: false });
+      })();
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [itemsKey]);
+  return state;
+}
+
 interface SessionViewProps {
   statusType: string;
   sessionId: string | null;
@@ -153,7 +226,12 @@ export const SessionView: React.FC<SessionViewProps> = ({
   const visibleSessions = activeOnly ? results.filter((s) => s.active || s.streaming) : results;
 
 
-  const newSessionForm = (
+  const newWdCheck = useWorkdirCheck(canSetWorkdir ? newWorkdirs : []);
+
+  const newSessionForm = (() => { 
+  const wdCheck = newWdCheck;
+  const workdirsInvalid = canSetWorkdir && !!newWorkdirs.length && !!wdCheck?.errors.length;
+  return (
     <>
       <div className="session-new-form">
         <label className="settings-label" htmlFor="session-new-name">Session name</label>
@@ -214,16 +292,24 @@ export const SessionView: React.FC<SessionViewProps> = ({
               placeholder="/home/autere/code/… (or relative to $HOME)"
               addLabel="Add workdir"
             />
+            {wdCheck && (wdCheck.checking ? (
+              <div className="settings-description">Checking workdirs…</div>
+            ) : wdCheck.errors.length ? (
+              <div className="settings-description" style={{ color: 'var(--c-danger-strong)' }}>
+                {wdCheck.errors.join(' · ')}
+              </div>
+            ) : null)}
           </div>
         )}
       </div>
       <div className="btn-group">
-        <button className="btn btn-primary session-create-btn" onClick={createNewSession} disabled={switching}>
+        <button className="btn btn-primary session-create-btn" onClick={createNewSession} disabled={switching || workdirsInvalid || wdCheck?.checking}>
           {switching ? '⏳ Creating…' : '✨ Create Session'}
         </button>
       </div>
     </>
   );
+  })();
 
   const listBody = (
     <>
@@ -384,8 +470,24 @@ const WorkdirEditor: React.FC<{
     return () => { cancelled = true; };
   }, [sessionId]);
 
+  const wdCheck = useWorkdirCheck(workdirs || []);
+
+  // Unsaved-changes guard: browser reload/close warns, and in-app view
+  // switches confirm via workdirsUnsaved() in AppPage's handleSetView.
+  useEffect(() => {
+    if (!dirty) return;
+    workdirsDirty = true;
+    const onUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', onUnload);
+    return () => {
+      window.removeEventListener('beforeunload', onUnload);
+      workdirsDirty = false;
+    };
+  }, [dirty]);
+
   const apply = useCallback(() => {
     if (!workdirs || !sessionId) return;
+    if (wdCheck?.errors.length || wdCheck?.checking) return;
     setSaving(true);
     setError('');
     fetch(url(API.session.workdirs), {
@@ -405,7 +507,7 @@ const WorkdirEditor: React.FC<{
       })
       .catch(() => setError('Network error'))
       .finally(() => setSaving(false));
-  }, [workdirs, sessionId, onSwitching]);
+  }, [workdirs, sessionId, onSwitching, wdCheck]);
 
   if (workdirs === null) {
     return (
@@ -415,7 +517,7 @@ const WorkdirEditor: React.FC<{
       </div>
     );
   }
-  const disabled = busy || saving || !dirty;
+  const disabled = busy || saving || !dirty || !!wdCheck?.errors.length || !!wdCheck?.checking;
 
   return (
     <div className="session-workdirs-edit">
@@ -428,6 +530,13 @@ const WorkdirEditor: React.FC<{
         addLabel="Add workdir"
         disabled={busy || saving}
       />
+      {wdCheck && (wdCheck.checking ? (
+        <div className="settings-description">Checking workdirs…</div>
+      ) : wdCheck.errors.length ? (
+        <div className="settings-description" style={{ color: 'var(--c-danger-strong)' }}>
+          {wdCheck.errors.join(' · ')}
+        </div>
+      ) : null)}
       {error && <div className="settings-description" style={{ color: 'var(--c-danger-strong)' }}>{error}</div>}
       <div className="btn-group">
         <button className="btn btn-primary session-workdirs-save" onClick={apply} disabled={disabled}>

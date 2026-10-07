@@ -1,15 +1,17 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, Suspense, lazy } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Header, ViewId } from '../components/Header';
 import { StatusCard } from '../components/StatusCard';
 import { SettingsCard } from '../components/SettingsCard';
 import { ScheduledTasksCard } from '../components/ScheduledTasksCard';
-import { EditsPage } from '../components/EditsPage';
+// Files/Edits view lazy-loads: the Monaco editor adds ~3MB to the bundle
+// and is only needed when the user opens this section.
+const EditsPage = lazy(() => import('../components/EditsPage').then((m) => ({ default: m.EditsPage })));
 import { UsersCard } from '../components/UsersCard';
 import { UserCard } from '../components/UserCard';
 import { StreamCard } from '../components/StreamCard';
 import { Modal } from '../components/Modal';
-import { SessionView } from '../components/SessionModal';
+import { SessionView, workdirsUnsaved, acknowledgeWorkdirsDirty } from '../components/SessionModal';
 import { url, basePath } from '../base-path';
 import { API } from '../api-paths';
 import { uiSessionName } from '../session-name';
@@ -81,6 +83,11 @@ export function AppPage({
   // mobile each view is a full-screen card (CSS).
   const activeView = resolveView(view, userRole);
   const handleSetView = useCallback((v: ViewId) => {
+    // Unsaved workdir edits on the Sessions page get a confirm before leaving.
+    if (workdirsUnsaved()) {
+      if (!window.confirm('You have unsaved workdir changes — leave this page anyway?')) return;
+      acknowledgeWorkdirsDirty();
+    }
     if (!urlSessionId) return;
     navigate(v === 'chat' ? `/session/${urlSessionId}` : `/session/${urlSessionId}/${v}`);
   }, [navigate, urlSessionId]);
@@ -408,7 +415,9 @@ export function AppPage({
           )}
           {activeView === 'edits' && (
             <div className="card edits-card">
-              <EditsPage sessionId={targetSessionRef.current} userRole={userRole} />
+              <Suspense fallback={<div className="settings-description" style={{ padding: 12 }}>Loading files…</div>}>
+                <EditsPage sessionId={targetSessionRef.current} userRole={userRole} />
+              </Suspense>
             </div>
           )}
           {activeView === 'users' && (

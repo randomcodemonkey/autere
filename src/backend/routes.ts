@@ -716,7 +716,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // is spawned.
       const resolveWorkdir = (raw: string): string => {
         let wd = raw.trim();
-        if (wd.startsWith('~/')) wd = wd.slice(1);
+        if (wd.startsWith('~/')) wd = join(homedir(), wd.slice(2));
         if (!/^\//.test(wd)) wd = join(homedir(), wd);
         return wd.replace(/\/+$/, '');
       };
@@ -1287,7 +1287,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         // Same validation as session creation (shared .resolveWorkdir logic)
         const resolveWorkdir = (raw: string): string => {
           let wd = raw.trim();
-          if (wd.startsWith('~/')) wd = wd.slice(1);
+          if (wd.startsWith('~/')) wd = join(homedir(), wd.slice(2));
           return wd;
         };
         const roots = (() => {
