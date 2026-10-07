@@ -14,6 +14,20 @@ import type {
   SSEMessage,
 } from '../types';
 
+// Session-scoped SSE events carry the CANONICAL session id, but the URL may
+// hold an id ALIAS (seed ids / stale filename ids — RootRedirect lands on
+// one and canonicalization only runs when the URL changes). A strict
+// compare there silently drops every event for the view: stuck Idle badge,
+// chat never renders. Alias views accept the event (the server-side client
+// binding already scopes the stream to this view's session); canonical URLs
+// keep the strict check — it guards against stale broadcasts from the
+// previous session during a switch.
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function inViewedSession(viewed: string | null | undefined, msgSid?: string | null): boolean {
+  if (!msgSid || !viewed || msgSid === viewed) return true;
+  return !SESSION_ID_RE.test(viewed);
+}
+
 export const EMPTY_STATS: SessionStats = {
   tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   cost: 0,
@@ -106,6 +120,10 @@ export function useSessionStream(opts: {
   const viewedSessionRef = useRef<string | null>(null);
   viewedSessionRef.current = urlSessionId || null;
 
+  // Last time an ACCEPTED live status event arrived — bootstrap snapshots
+  // older than this must not apply their transient flags (see below).
+  const lastLiveStatusAtRef = useRef(0);
+
   // stream_delta throttling: latest delta text + scheduled flush timer.
   // flushPendingDelta applies the buffered text to streamHistory; if a new
   // streaming entry must be created (first delta of an entry), it does the
@@ -171,9 +189,10 @@ export function useSessionStream(opts: {
         // creating a new session) — applying them would revert
         // sessionState.sessionId and trigger a redundant switch-by-id that
         // aborts an in-flight prompt.
-        if (viewed && incoming?.sessionId && incoming.sessionId !== viewed) {
+        if (!inViewedSession(viewed, incoming?.sessionId)) {
           break;
         }
+        lastLiveStatusAtRef.current = Date.now();
         // Null sessionId (mid-switch snapshot) must not clear the viewed id
         setSessionState((prev: any) => ({ ...prev, ...incoming, sessionId: incoming?.sessionId ?? prev.sessionId }));
         break;
@@ -199,7 +218,7 @@ export function useSessionStream(opts: {
         // A full-history snapshot supersedes any pending delta — drop it so
         // a late flush can't re-append already-finalized text.
         pendingDeltaRef.current = null;
-        if (msg.sessionId && viewed && msg.sessionId !== viewed) break;
+        if (!inViewedSession(viewed, msg.sessionId)) break;
         // Ignore EMPTY snapshots that carry no session id — that shape only
         // comes from the SSE connect-time initializer. Applying it would
         // clear already-rendered chat content (the load-time blink).
@@ -226,7 +245,7 @@ export function useSessionStream(opts: {
         // stream_history snapshots now only arrive on reconnect/reload/
         // session switch — live turns use this lightweight event.
         const viewed = viewedSessionRef.current;
-        if (msg.sessionId && viewed && msg.sessionId !== viewed) break;
+        if (!inViewedSession(viewed, msg.sessionId)) break;
         const incoming = (msg.data || []) as StreamMessage[];
         if (incoming.length === 0) break;
         // Upserts are authoritative for the text they carry — drop any
@@ -274,7 +293,7 @@ export function useSessionStream(opts: {
       }
       case 'history_remove': {
         const viewed = viewedSessionRef.current;
-        if (msg.sessionId && viewed && msg.sessionId !== viewed) break;
+        if (!inViewedSession(viewed, msg.sessionId)) break;
         // Items may be plain ids (legacy) or {id, role, text} objects — the
         // text form lets the client also drop snapshot copies that were
         // rendered under a different id namespace (disk 'd…' ids from before
@@ -304,7 +323,7 @@ export function useSessionStream(opts: {
         // typing in ChatInput stutter. Buffer the latest text in a ref and
         // flush to state at most every STREAM_DELTA_FLUSH_MS.
         const viewed = viewedSessionRef.current;
-        if (msg.sessionId && viewed && msg.sessionId !== viewed) break;
+        if (!inViewedSession(viewed, msg.sessionId)) break;
         const role = msg.data?.role;
         const text = msg.data?.text ?? '';
         if (role !== 'assistant' && role !== 'thinking') break;
@@ -343,8 +362,17 @@ export function useSessionStream(opts: {
 
   // Apply a bootstrap payload (from GET /api/bootstrap or the switch-by-id
   // response — same shape) to the UI state.
-  const applyBootstrap = useCallback((d: any) => {
-    setSessionState((prev: any) => ({ ...prev, ...d.sessionState, sessionId: d.sessionState?.sessionId ?? prev.sessionId }));
+  const applyBootstrap = useCallback((d: any, keepTransient = false) => {
+    setSessionState((prev: any) => ({
+      ...prev,
+      ...d.sessionState,
+      sessionId: d.sessionState?.sessionId ?? prev.sessionId,
+      // A fresher live status event already told us the truth — the snapshot
+      // may predate a turn that started after it was taken, and applying its
+      // flags would flip the badge back to Idle mid-turn (the live SSE has
+      // no replay, so that status is gone forever).
+      ...(keepTransient ? { isStreaming: prev.isStreaming, compacting: prev.compacting } : {}),
+    }));
     // null stats (idle/disk payload) must clear stale numbers from the
     // previously viewed session, not keep them on screen.
     setStats(d.sessionStats ?? EMPTY_STATS);
@@ -378,6 +406,7 @@ export function useSessionStream(opts: {
   const bootstrapEpochRef = useRef(0);
   const refetchBootstrap = useCallback(() => {
     const epoch = ++bootstrapEpochRef.current;
+    const startedAt = Date.now();
     const sid = viewedSessionRef.current;
     fetch(url(`${API.bootstrap}${sid ? `?sessionId=${encodeURIComponent(sid)}` : ''}`))
       .then((res) => res.json())
@@ -404,7 +433,7 @@ export function useSessionStream(opts: {
             .catch(() => {});
           return;
         }
-        applyBootstrap(data.data);
+        applyBootstrap(data.data, lastLiveStatusAtRef.current >= startedAt);
         // A successful bootstrap means the backend is up — clear restart flags.
         // Unconditional: the callback is stable, so closures would go stale.
         setRestarting(false);

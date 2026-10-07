@@ -62,9 +62,14 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     if (req.url === '/v1/chat/completions') {
         let body = '';
         req.on('data', (c) => { body += c; });
-        req.on('end', () => {
+        req.on('end', async () => {
             let parsed: any = {};
             try { parsed = JSON.parse(body); } catch { /* empty body */ }
+            // Realistic time-to-first-token. Instant mock turns complete in
+            // ~35ms — inside one Cypress poll (50ms) — so the UI's transient
+            // 'Working' status is never observed and the realtime specs flake
+            // (real model turns take seconds; only the mock is this fast).
+            await new Promise((r) => setTimeout(r, 400));
             const messages: any[] = parsed.messages || [];
             const lastUser = [...messages].reverse().find((m) => m.role === 'user');
             const lastRole = messages.length > 0 ? messages[messages.length - 1].role : '';
