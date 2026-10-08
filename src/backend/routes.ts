@@ -250,6 +250,11 @@ async function runHandler(route: RouteDef, match: RegExpMatchArray | null, c: Ct
 import { MonitorRpcClient } from './rpc-client.js';
 
 export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?: Scheduler): ReturnType<typeof createServer> {
+  // Base URL the pi-autere extension uses to reach this server (persisted
+  // into each pi env as autere-agent.json). 127.0.0.1 is correct for host
+  // spawns and for the docker sandbox (--network host).
+  process.env.AUTERE_BACKEND_URL ||= `http://127.0.0.1:${PORT}`;
+
   let sessionRefreshInterval: ReturnType<typeof setInterval> | null = null;
 
   // ── Session-process resolution ──

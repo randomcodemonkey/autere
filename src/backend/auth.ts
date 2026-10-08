@@ -50,6 +50,8 @@ const ROLE_LEVEL: Record<Role, number> = { chat: 1, control: 2, admin: 3 };
 let authTokens: Map<string, TokenEntry> = new Map();
 let authEnabled = true;
 let authPassword = '';
+/** Token file has been read — minting before that would persist a half-empty map. */
+let tokensLoaded = false;
 
 // ── Token management ──
 
@@ -87,6 +89,46 @@ export function loadAuthTokens() {
   } catch (err) {
     log.auth.error('Failed to load auth tokens:', err);
     authTokens = new Map();
+  }
+  tokensLoaded = true;
+}
+
+// ── Agent access (pi-autere) ──
+
+/**
+ * Stable long-lived token for the pi agent processes spawned for `user` —
+ * pi-autere calls the API with it, acting as that user (same role limits).
+ * Minted once per user and reused on every spawn.
+ */
+export function ensureAgentToken(user: string): string {
+  if (!tokensLoaded) loadAuthTokens();
+  const id = `agent-${user}`;
+  const now = Date.now();
+  for (const [token, entry] of authTokens) {
+    if (entry.id === id && entry.expiry > now) return token;
+  }
+  const token = generateToken();
+  authTokens.set(token, { expiry: now + API_TOKEN_EXPIRY_MS, user, id, name: 'pi agent', createdAt: now });
+  saveAuthTokens();
+  return token;
+}
+
+/**
+ * Write the agent's backend access into the pi env (autere-agent.json) so
+ * the pi-autere extension can reach this server. Called from ensurePiEnv,
+ * i.e. before every pi spawn (session, scheduled run, probe).
+ */
+export function writeAgentAccess(user: string): void {
+  try {
+    const file = join(getPiEnvDir(user), 'autere-agent.json');
+    const baseUrl = process.env.AUTERE_BACKEND_URL
+      || `http://127.0.0.1:${parseInt(process.env.AUTERE_PORT || '', 10) || 3456}`;
+    const payload = { baseUrl, user, token: ensureAgentToken(user) };
+    const tmp = join(dirname(file), `.autere-agent-tmp-${randomUUID()}`);
+    writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf-8');
+    renameSync(tmp, file);
+  } catch (err) {
+    log.auth.error('Failed to write agent access file:', err);
   }
 }
 

@@ -161,6 +161,17 @@ extras/pi-janitor/     # pi extension: idle-window context cleanup. Observes
                        # when only janitor keys change. Stats per session in
                        # janitor-stats.json (user's OWN env), injected per
                        # request by withJanitorSections().
+extras/pi-autere/      # pi extension: agent-facing autere API — schedule/list/
+                       # enable scheduled tasks, find sessions with their latest
+                       # messages, deliver a message to another session. The tool
+                       # descriptions carry the generic "keep checking until X,
+                       # then report back" workflow (report + self-disable steps in
+                       # a task-prompt footer); no domain wording. HTTP to this
+                       # backend with the token ensurePiEnv writes to <pi env>
+                       # /autere-agent.json (auth.ensureAgentToken +
+                       # writeAgentAccess; baseUrl from AUTERE_BACKEND_URL, set in
+                       # createMonitorServer); outside autere every tool fails with
+                       # a clear error.
 SKILL.md               # This file — canonical, in-repo
 ```
 
@@ -301,7 +312,8 @@ Logs (supervisord instance): `~/log/autere.out.log` / `~/log/autere.err.log`
 (err log includes EVENT LOOP LAG warnings — useful for diagnosing load).
 
 Data: per-user pi envs in `~/.autere/pi-envs/<user>/` (sessions/, settings.json,
-personas.json, persona-active.json, persona-markers.json, dedup-stats.json),
+personas.json, persona-active.json, persona-markers.json, dedup-stats.json,
+autere-agent.json — pi-autere's backend baseUrl+token),
 `~/.autere/deleted-sessions/`, `~/.autere/monitor-auth-tokens.json`,
 `~/.autere/monitor-last-session.json`.
 

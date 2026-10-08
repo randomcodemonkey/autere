@@ -25,6 +25,7 @@
  */
 
 import { getUserAllowedDirs, getUserRole, isRegisteredUser } from './users.js';
+import { writeAgentAccess } from './auth.js';
 import { lstatSync, readlinkSync } from 'fs';
 import { cpSync, existsSync, mkdirSync, readdirSync, copyFileSync, rmSync, symlinkSync, readFileSync, writeFileSync, renameSync } from 'fs';
 import { randomUUID } from 'crypto';
@@ -263,6 +264,8 @@ export function ensurePiEnv(user: string): string {
       try { mkdirSync(sessionsDir, { recursive: true }); } catch {}
     }
     applyExtraDefaults(user);
+    // pi-autere credentials for the extension about to be loaded
+    writeAgentAccess(user);
   } catch (err) {
     log.piEnv.error(`Failed to ensure pi env for user "${user}":`, err);
   }
