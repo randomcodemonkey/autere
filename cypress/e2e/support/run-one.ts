@@ -3,7 +3,7 @@
  *   npx tsx cypress/e2e/support/run-one.ts cypress/e2e/stream-reload.cy.ts
  */
 import { startBackend, stopBackend, TEST_PORT, getTestEnvsDir } from './start-backend';
-import { execSync } from 'child_process';
+import { spawn } from 'child_process';
 
 async function main() {
   const spec = process.argv[2];
@@ -17,10 +17,20 @@ async function main() {
   try {
     console.log(`[run-one] Starting backend on port ${TEST_PORT}...`);
     await startBackend();
-    execSync(
-      `npx cypress run --e2e --config baseUrl=http://localhost:${TEST_PORT} --spec "${spec}"`,
-      { stdio: 'inherit', env: { ...process.env, AUTERE_E2E_ENVS_DIR: getTestEnvsDir() } },
-    );
+    // NOT execSync — it blocks this process's event loop, and the mock router
+    // lives in this process: a blocked loop leaves the mock's sockets
+    // accepted-but-unserviced (pi's model calls hang until the test times
+    // out). Same reasoning as run-e2e.ts.
+    const code = await new Promise<number>((resolve, reject) => {
+      const cyp = spawn(
+        'npx',
+        ['cypress', 'run', '--e2e', '--config', `baseUrl=http://localhost:${TEST_PORT}`, '--spec', spec],
+        { stdio: 'inherit', env: { ...process.env, AUTERE_E2E_ENVS_DIR: getTestEnvsDir() } },
+      );
+      cyp.on('exit', (c) => resolve(c ?? 1));
+      cyp.on('error', reject);
+    });
+    if (code !== 0) process.exitCode = 1;
   } catch (err: any) {
     console.error('[run-one] failed:', err.message);
     process.exitCode = 1;
