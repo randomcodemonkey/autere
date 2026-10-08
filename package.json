@@ -1,6 +1,6 @@
 {
   "name": "autere",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "description": "Real-time web dashboard for monitoring pi agent sessions",
   "type": "module",
   "main": "src/backend/index.ts",
