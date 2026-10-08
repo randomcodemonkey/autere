@@ -104,7 +104,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
       const { y, rows } = dragStart.current!;
       // Ceiling: half the viewport in rows (matches .chat-input max-height)
       const maxRows = Math.max(4, Math.floor((window.innerHeight * 0.5) / lineHeight) - 1);
-      setInputRows(Math.min(maxRows, Math.max(1, Math.round(rows - (e.clientY - y) / lineHeight))));
+      const r = Math.round(rows - (e.clientY - y) / lineHeight);
+      // Callback to the smallest size re-enables expand-on-focus: rows=1
+      // is what the collapsed state shows anyway, so null restores the
+      // focused/collapsed default instead of a frozen 1-row override.
+      setInputRows(r <= 1 ? null : Math.min(maxRows, r));
     };
     const up = () => setDraggingInput(false);
     window.addEventListener('mousemove', move);
@@ -344,6 +348,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
         title="Drag to resize the input"
         onMouseDown={(e) => {
           e.preventDefault(); // keep textarea selection/focus
+          if (!focused) return; // resizing only while the input is focused
           dragStart.current = { y: e.clientY, rows: inputRows ?? (expanded ? 4 : 1) };
           setDraggingInput(true);
         }}
@@ -402,7 +407,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
           ref={textareaRef}
           className="chat-input"
           placeholder={isStreaming ? 'Steer the agent...' : 'Type a message... (/help for commands)'}
-          rows={inputRows ?? (expanded ? 4 : 1)}
+          rows={focused ? (inputRows ?? 4) : 1}
           value={value}
           onChange={(e) => updateValue(e.target.value)}
           onKeyDown={handleKeyDown}
