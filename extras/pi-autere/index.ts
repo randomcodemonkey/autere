@@ -1,12 +1,13 @@
 /**
  * pi-autere — the agent's side of the autere dashboard.
  *
- * Registers five tools:
+ * Registers six tools:
  *   autere_schedule_task      — create a recurring background task
  *   autere_list_tasks         — inspect scheduled tasks + latest run outcome
  *   autere_set_task_enabled   — stop/resume a task (the "goal reached" step)
  *   autere_find_sessions      — sessions and their latest messages
  *   autere_send_to_session    — deliver a message to another session
+ *   send_notification         — OS-level notification on the user's devices
  *
  * Transport: HTTP against the autere backend, authenticated with the token
  * the backend writes to <pi env>/autere-agent.json when it prepares the env
@@ -324,6 +325,38 @@ export default function (pi: ExtensionAPI) {
 				throw err;
 			}
 			return ok(`Delivered to session "${target.sessionName ?? target.id}" (${target.id}) as a user message.`, { delivered: true, sessionId: target.id });
+		},
+	});
+
+	pi.registerTool({
+		name: "send_notification",
+		label: "Send notification",
+		promptSnippet: "send_notification — OS-level notification on the user's devices",
+		description:
+			"Send an OS-level notification to the user's devices (phone/desktop) — for something that needs their attention outside this chat.\n\n" +
+			"`content` is the notification body: at most 256 characters. The call fails with an explanatory error when it is longer, so shorten it instead of trimming it yourself.\n\n" +
+			"The notification's subject is the session's name (its id when the session has no name) and tapping it opens that session. `sessionId` defaults to this session; pass an id from autere_find_sessions to notify about another one.\n\n" +
+			"The user chooses in Settings → Notifications which notifications they receive. When explicit notifications are off, or no device is subscribed, the call still succeeds but reports `delivered: false` with a `reason` — relay that reason instead of retrying.",
+		parameters: Type.Object({
+			content: Type.String({ description: "Notification body, at most 256 characters" }),
+			sessionId: Type.Optional(Type.String({ description: "Session the notification is about — defaults to this session" })),
+		}),
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const content = String(params.content ?? "");
+			if (!content.trim()) throw new Error("content is empty — the notification body is required");
+			const length = [...content].length;
+			if (length > 256) {
+				throw new Error(`content is ${length} characters — notifications are limited to 256 characters; shorten it and retry`);
+			}
+			const sessionId = String(params.sessionId ?? "").trim() || currentSessionId(ctx);
+			if (!sessionId) throw new Error("sessionId is unavailable here — pass an explicit session id from autere_find_sessions");
+			const res = await api("POST", "/notifications/send", { sessionId, content }, signal);
+			if (!res?.delivered) {
+				return ok(`Notification NOT sent: ${res?.reason ?? "delivery failed"}`, {
+					delivered: false, sessionId, reason: res?.reason ?? "delivery failed",
+				});
+			}
+			return ok(`Notification sent to the subscribed devices (subject: session ${sessionId}).`, { delivered: true, sessionId });
 		},
 	});
 }

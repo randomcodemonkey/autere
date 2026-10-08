@@ -66,6 +66,7 @@ export const log = {
   extensions: new Logger('extensions'),
   extActivity: new Logger('ext-activity'),
   http: new Logger('http'),
+  notifications: new Logger('notifications'),
   piEnv: new Logger('pi-env'),
   processMgr: new Logger('process-mgr'),
   rpc: new Logger('rpc'),

@@ -8,6 +8,9 @@
  * manifest, icons). If the network is unreachable (offline), fall back to
  * the last cached response. API and SSE requests are never intercepted.
  *
+ * It also owns the OS-level notifications: `push` renders the backend's
+ * payload, `notificationclick` opens/focuses the app at the payload path.
+ *
  * On activation it claims all clients and notifies them, so a freshly
  * deployed version takes effect on the next visibility change / update
  * check rather than at an arbitrary later time.
@@ -68,5 +71,44 @@ self.addEventListener('fetch', (event) => {
       if (cached) return cached;
       return new Response('Offline', { status: 503, statusText: 'Offline' });
     }
+  })());
+});
+
+// ── OS-level notifications (Web Push) ──
+// Payload from the backend: { title, body, path, tag } — `path` is relative
+// to this worker's scope (the reverse-proxy base), so no base path travels
+// with the notification.
+
+self.addEventListener('push', (event) => {
+  let data;
+  try {
+    data = event.data ? event.data.json() : null;
+  } catch (_err) {
+    data = { body: event.data ? event.data.text() : '' };
+  }
+  if (!data) return;
+  event.waitUntil(self.registration.showNotification(data.title || 'autere', {
+    body: data.body || '',
+    tag: data.tag || undefined,
+    data: { path: data.path || null },
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const path = (event.notification.data && event.notification.data.path) || null;
+  event.waitUntil((async () => {
+    const target = new URL(path || './', self.registration.scope).href;
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const sameUrl = windows.find((c) => c.url.replace(/\/$/, '') === target.replace(/\/$/, ''));
+    if (sameUrl) { await sameUrl.focus(); return; }
+    if (windows.length > 0) {
+      await windows[0].focus();
+      // Client.navigate() is unsupported in Safari/iOS — fall back to a new window.
+      if (typeof windows[0].navigate === 'function') {
+        try { await windows[0].navigate(target); return; } catch (_err) { /* open below */ }
+      }
+    }
+    await self.clients.openWindow(target);
   })());
 });

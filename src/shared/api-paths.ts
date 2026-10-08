@@ -115,6 +115,14 @@ export const API = {
     restart: `${P}/backend/restart`,
   },
 
+  // Web Push: the key the settings page subscribes with, the subscription
+  // itself, and the agent-facing explicit send.
+  notifications: {
+    vapidPublicKey: `${P}/notifications/vapid-public-key`,
+    subscribe: `${P}/notifications/subscribe`,
+    send: `${P}/notifications/send`,
+  },
+
   images: (name: string) => (name.startsWith('gen-') || name.startsWith('edit-')) ? `${P}/images/generated/${name}` : `${P}/images/${name}`,
   files: (name: string) => `${P}/files/${encodeURIComponent(name)}`,
 } as const;

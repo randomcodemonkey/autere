@@ -25,6 +25,17 @@ deletions), rsyncs `dist-backend/` → `~/dist-backend/`, and lets Vite write
 the frontend straight to `~/dist` (outDir). `--no-ext` skips the extras copy.
 Run it from the repo, then tell the user what needs a reload/restart.
 
+**Container recreation reverts `~/dist`, `~/dist-backend` and `~/pi-ext-extra`
+(or any non-volume path) to the image state** — only `/home/autere/code` is a
+volume. After every container restart, re-run `./build-dev.sh` or the
+dashboard runs an old build. `build-dev.sh` also links `~/node_modules` →
+repo `node_modules`: the compiled backend resolves bare imports from
+`/home/autere/dist-backend` (chain: `dist-backend/node_modules` →
+`~/node_modules` → …), which is NOT where the image installs deps
+(`~/dist/node_modules`) — without that link any runtime dependency
+(e.g. `web-push`) crashes the backend at startup (Dockerfile does the same
+link for image builds).
+
 | Change type | How it goes live |
 |---|---|
 | Frontend only (`src/frontend/`, `styles.scss`) | `./build-dev.sh`, then the user **reloads the UI** (no backend restart; note the PWA service worker — hard reload once if stale) |
@@ -80,6 +91,11 @@ src/backend/
   user-settings.ts      # Per-user settings (schema-driven, admin UI; per-model
                         # thinking levels → pi's modelThinkingLevels, per-model
                         # reserve % → pi-token-reserve config)
+  notifications.ts      # Web Push: one-time VAPID keys (~/.autere/vapid-keys.json),
+                        # per-user push-subscriptions.json, sendNotification(user,
+                        # kind, {title, body, path}) for the three kinds
+                        # (explicit / taskStart / turnEnd); 256-char limit lives in
+                        # shared/notifications.ts (backend + tests)
   extension-handlers.ts # Named extension handlers (9router status, memory, dedup)
   stream-history.ts     # StreamMessage building, extractImages (shared)
   shared/format.ts      # Formatting shared with frontend
@@ -101,6 +117,8 @@ src/frontend/
                         # filters FileBrowser + Changes server-side, getEditIgnorePaths
                         # derived for the pi env)
     ChangesPage.tsx, LoginScreen.tsx,
+    NotificationsSection.tsx # Settings → Notifications: subscribes this browser to
+                        # Web Push + renders the three per-kind toggles
     EditsPage.tsx         # Edits view: two-pane — Files/Changes tabbed list card
                           # on the left, detail on the right (Monaco editor /
                           # diffs). FileBrowser: allowedDirs-rooted lazy tree;
@@ -163,7 +181,9 @@ extras/pi-janitor/     # pi extension: idle-window context cleanup. Observes
                        # request by withJanitorSections().
 extras/pi-autere/      # pi extension: agent-facing autere API — schedule/list/
                        # enable scheduled tasks, find sessions with their latest
-                       # messages, deliver a message to another session. The tool
+                       # messages, deliver a message to another session, send an
+                       # OS-level notification (send_notification — content ≤ 256
+                       # chars, subject = session name/id, opens that session). The tool
                        # descriptions carry the generic "keep checking until X,
                        # then report back" workflow (report + self-disable steps in
                        # a task-prompt footer); no domain wording. HTTP to this
@@ -194,6 +214,28 @@ SKILL.md               # This file — canonical, in-repo
   scrolled-up users get the reading message pinned at its offset after every
   update (`overflow-anchor: none` — CSS anchoring fought React remounts);
   at bottom, autoscroll + a ResizeObserver re-pin on box resize.
+
+## Mobile/PWA notes
+
+- **OS-level notifications (Web Push)**: Settings → Notifications (`NotificationsSection.tsx`)
+  subscribes the browser (`GET /notifications/vapid-public-key` → `POST
+  /notifications/subscribe`); subscriptions are stored per user. The backend
+  pushes `{ title, body, path, tag }` (`src/backend/notifications.ts`) for
+  four kinds — `explicit` (agent tool `send_notification`, content ≤ 256
+  chars, enforced by tool AND route), `taskStart` (scheduler, after the run's
+  pi session exists), `turnEnd` (UserSession, first 256 chars of the last
+  assistant message) and `allDone` (idle with nothing queued, checked 3 s
+  after a turn ends). Title = session name, id when unnamed; `path` is
+  scope-relative (`session/<id>`) and resolved inside `public/sw.js`
+  (`push` renders, `notificationclick` focuses/opens the app there), so no
+  reverse-proxy base path travels with the notification. Toggles are normal
+  settings keys (`notifyExplicit/TaskStart/TurnEnd/AllDone`, default on
+  except all-done, live-read → they are in the settings-save live-apply list,
+  no pi restart). Two policies (pure, in `shared/notifications.ts`):
+  `notifyTurnEndAfterMinutes` (0 = every time) gates BOTH turn-end (per
+  turn) and `allDone` (measured over the whole quiet-to-quiet work block —
+  queued turns count as one run); a turn-end notification sent moments ago
+  suppresses `allDone`, so enabling both never double-notifies one moment.
 
 ## Development
 
@@ -314,6 +356,8 @@ Logs (supervisord instance): `~/log/autere.out.log` / `~/log/autere.err.log`
 Data: per-user pi envs in `~/.autere/pi-envs/<user>/` (sessions/, settings.json,
 personas.json, persona-active.json, persona-markers.json, dedup-stats.json,
 autere-agent.json — pi-autere's backend baseUrl+token),
+`~/.autere/users/<user>/` (settings.json, scheduled-tasks/,
+push-subscriptions.json — Web Push), `~/.autere/vapid-keys.json`,
 `~/.autere/deleted-sessions/`, `~/.autere/monitor-auth-tokens.json`,
 `~/.autere/monitor-last-session.json`.
 

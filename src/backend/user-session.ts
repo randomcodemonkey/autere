@@ -13,7 +13,7 @@ import { autoSessionName, readSessionUsage, scopeModelsForSession } from './util
 import { log, userLog } from './logger.js';
 import { ensurePiEnv, ensureSandboxHomeVolume, ensureSandboxGitconfig, ensureVolumeSubpaths, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage, sandboxSharedEnv, DEFAULT_SANDBOX_IMAGE } from './pi-env.js';
 import { getUserMountDockerSocket } from './users.js';
-import { getEditIgnorePaths, getHistoryLimit, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getShowReadImages, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost, writeReserveTokensConfig, annotateContextUsage } from './user-settings.js';
+import { getEditIgnorePaths, getHistoryLimit, getTurnEndNotifyMinMinutes, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getShowReadImages, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost, writeReserveTokensConfig, annotateContextUsage } from './user-settings.js';
 import { deliverToSession } from './client-hub.js';
 import { getActivePersona } from './personas.js';
 import {
@@ -28,6 +28,8 @@ import {
   extractImages,
 } from './stream-history.js';
 import { formatToolArgs } from '../shared/format.js';
+import { clipNotification, shouldNotifyAllDone, workedLongEnough } from '../shared/notifications.js';
+import { sendNotification } from './notifications.js';
 import { API } from '../shared/api-paths.js';
 
 // ── Per-user state types ──
@@ -88,6 +90,11 @@ function createInitialState(): UserSessionState {
 }
 
 // ── UserSession ──
+
+/** Let queue_update land and a queued message start before judging "nothing
+ *  left to do"; a turn-end notification for the same moment dedupes it. */
+const ALL_DONE_SETTLE_MS = 3000;
+const TURN_END_DEDUPE_MS = 15_000;
 
 export class UserSession {
   /** The user this session (and its pi env) belongs to */
@@ -235,6 +242,19 @@ export class UserSession {
    * agent_settled) — used for deferred settings restarts. */
   onTurnEnd: (() => void) | null = null;
 
+  /** A turn produced output since agent_start — gates the turn-end
+   *  notification so agent_end/agent_settled never notify twice. */
+  private turnActive = false;
+  /** agent_start timestamp — what the turn-end minimum length is measured from */
+  private turnStartedAt = 0;
+  /** When the last turn-end notification was sent (all-done dedupe) */
+  private lastTurnEndNotifyAt = 0;
+  /** Start of the current quiet-to-quiet work block — what "All tasks
+   *  completed" measures against the minimum length (turns that queue up
+   *  behind each other are one block, not several). 0 = no block running. */
+  private blockStartedAt = 0;
+  private allDoneTimer: ReturnType<typeof setTimeout> | null = null;
+
   /** Mark activity and reset idle timer */
   touch() {
     this.lastActivity = Date.now();
@@ -257,6 +277,87 @@ export class UserSession {
    */
   broadcast(data: any) {
     deliverToSession(this.user, this.routedSessionFile(), data);
+  }
+
+  /**
+   * Turn-end notification (Settings → Notifications): the first 256
+   * characters of the last assistant message, subject = session name (id
+   * when unnamed). Fire-and-forget — a push failure never disturbs the turn.
+   */
+  private notifyTurnEnd(): void {
+    try {
+      const s = this.state;
+      const sessionId = s.sessionState.sessionId;
+      if (!sessionId) return;
+      // Minimum turn length: a short turn is noise, a long one is news.
+      const minMinutes = getTurnEndNotifyMinMinutes(this.user);
+      if (!workedLongEnough(minMinutes, Date.now() - this.turnStartedAt)) {
+        log.userSession.forSession(sessionId).debug(
+          `turn-end notification skipped — turn shorter than ${minMinutes} min`);
+        return;
+      }
+      const buf = this.history();
+      let text = '';
+      for (let i = buf.length - 1; i >= 0; i--) {
+        const e = buf[i];
+        if (e.role === 'assistant' && e.text) { text = e.text; break; }
+        if (e.role === 'user') break; // this turn produced no assistant text
+      }
+      if (!text) return;
+      this.lastTurnEndNotifyAt = Date.now();
+      void sendNotification(this.user, 'turnEnd', {
+        title: s.sessionState.sessionName || sessionId,
+        body: clipNotification(text),
+        path: `session/${sessionId}`,
+      }).catch((err) => log.userSession.forSession(sessionId).error('turn-end notification failed:', err));
+    } catch (err) {
+      log.userSession.error('turn-end notification failed:', err);
+    }
+  }
+
+  /**
+   * "All tasks completed" (Settings → Notifications): checked once the work
+   * block has settled — no new turn, queues drained — so it reports "nothing
+   * left running" rather than "one message done".
+   */
+  private scheduleAllDoneCheck(): void {
+    if (this.allDoneTimer) clearTimeout(this.allDoneTimer);
+    this.allDoneTimer = setTimeout(() => {
+      this.allDoneTimer = null;
+      this.notifyAllDone();
+    }, ALL_DONE_SETTLE_MS);
+  }
+
+  private notifyAllDone(): void {
+    try {
+      const s = this.state;
+      const sessionId = s.sessionState.sessionId;
+      if (!sessionId) return;
+      const st = s.sessionState;
+      // Still busy → not quiet yet; the block continues and its next turn
+      // end schedules the following check.
+      if (this.turnActive || st.isStreaming || (st.steerPending || 0) > 0 || (st.followUpPending || 0) > 0) return;
+      // The block is over either way — its length is the shared gate.
+      const workedMs = Date.now() - (this.blockStartedAt || this.turnStartedAt);
+      this.blockStartedAt = 0;
+      const wanted = shouldNotifyAllDone(
+        {
+          workedMs,
+          msSinceTurnEndNotify: this.lastTurnEndNotifyAt
+            ? Date.now() - this.lastTurnEndNotifyAt
+            : Number.POSITIVE_INFINITY,
+        },
+        { minMinutes: getTurnEndNotifyMinMinutes(this.user), dedupeMs: TURN_END_DEDUPE_MS },
+      );
+      if (!wanted) return;
+      void sendNotification(this.user, 'allDone', {
+        title: s.sessionState.sessionName || sessionId,
+        body: 'All tasks completed — the session is idle with no pending messages.',
+        path: `session/${sessionId}`,
+      }).catch((err) => log.userSession.forSession(sessionId).error('all-done notification failed:', err));
+    } catch (err) {
+      log.userSession.error('all-done notification failed:', err);
+    }
   }
 
   /** The session file events are routed by: spawn target or pi-reported. */
@@ -714,6 +815,9 @@ export class UserSession {
           this.handleSessionInfoChanged(event);
           break;
         case 'agent_start':
+          this.turnActive = true;
+          this.turnStartedAt = Date.now();
+          if (!this.blockStartedAt) this.blockStartedAt = this.turnStartedAt;
           // Overlap detection: a new run starting while the previous one never
           // emitted agent_end means the previous stream was aborted or hung —
           // usually an upstream/provider failure. Without this the orphaned
@@ -743,6 +847,13 @@ export class UserSession {
             if (e.streaming) e.streaming = false;
           }
           this.broadcast({ type: 'stream_history', sessionId: s.sessionState.sessionId, data: this.history().slice(-this.historyLimit) });
+          // The turn is over — notify (once: agent_end and agent_settled both
+          // land here, the flag separates them) before deferred work runs.
+          if (this.turnActive) {
+            this.turnActive = false;
+            this.notifyTurnEnd();
+            this.scheduleAllDoneCheck();
+          }
           // Turn is over — a deferred settings restart (queued while this
           // turn was running) may now safely replace the pi process.
           this.onTurnEnd?.();

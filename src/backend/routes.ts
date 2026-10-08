@@ -51,6 +51,8 @@ import {
   type ScheduledTask,
 } from './scheduler.js';
 import { randomUUID, createHash } from 'crypto';
+import { vapidPublicKey, saveSubscription, deleteSubscription, validateSubscription, sendNotification } from './notifications.js';
+import { validateNotificationContent } from '../shared/notifications.js';
 import { API, API_PREFIX } from '../shared/api-paths.js';
 import { buildOpenApiSpec, type RouteDoc } from './openapi.js';
 import type { SessionInfo } from './types.js';
@@ -1944,10 +1946,11 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         saveUserSettings(c.user, settings);
         // Reserve-% and janitor sweep policy are applied live by their pi
         // extensions (mtime-cached config reads, per model/call — no
-        // restart needed) — skip the restart when only those change, so
-        // the running session is not interrupted.
+        // restart needed); notification toggles are read live by the
+        // backend when a notification fires — skip the restart when only
+        // those change, so the running session is not interrupted.
         const onlyLiveApplyKeys = Object.keys(settings).every(
-          (k) => k === 'reserveTokensPercent' || k === 'reserveTokensPercentByModel' || k.startsWith('janitor') || prev[k] === (settings as any)[k]
+          (k) => k === 'reserveTokensPercent' || k === 'reserveTokensPercentByModel' || k.startsWith('janitor') || k.startsWith('notify') || prev[k] === (settings as any)[k]
         );
         if (onlyLiveApplyKeys) {
           sendJSON(c.res, { success: true });
@@ -1970,6 +1973,55 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       } catch (err: any) {
         sendJSON(c.res, { success: false, error: `Failed to save settings: ${err.statusCode ? err.message : err}` }, err.statusCode || 500);
       }
+    },
+  });
+
+  // ── Notifications (Web Push) ──
+  route({
+    method: 'GET', path: API.notifications.vapidPublicKey, template: `${API_PREFIX}/notifications/vapid-public-key`,
+    role: 'chat', tag: 'Notifications', summary: 'VAPID public key the settings page subscribes this browser with',
+    handler: (c) => sendJSON(c.res, { success: true, data: { publicKey: vapidPublicKey() } }),
+  });
+
+  route({
+    method: 'POST', path: API.notifications.subscribe, template: `${API_PREFIX}/notifications/subscribe`,
+    role: 'chat', tag: 'Notifications', summary: 'Register a browser push subscription (body: PushSubscription JSON)',
+    handler: async (c) => {
+      const sub = await readBody(c.req);
+      const err = validateSubscription(sub);
+      if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
+      const subscriptions = saveSubscription(c.user, sub);
+      sendJSON(c.res, { success: true, data: { subscriptions } });
+    },
+  });
+
+  route({
+    method: 'DELETE', path: API.notifications.subscribe, template: `${API_PREFIX}/notifications/subscribe`,
+    role: 'chat', tag: 'Notifications', summary: 'Remove a push subscription (body: { endpoint })',
+    handler: async (c) => {
+      const body = await readBody(c.req);
+      const removed = deleteSubscription(c.user, String(body.endpoint ?? ''));
+      sendJSON(c.res, { success: true, data: { removed } });
+    },
+  });
+
+  route({
+    method: 'POST', path: API.notifications.send, template: `${API_PREFIX}/notifications/send`,
+    role: 'chat', tag: 'Notifications', summary: 'Send an explicit notification to the subscribed devices of the calling user (body: sessionId, content up to 256 characters)',
+    handler: async (c) => {
+      const body = await readBody(c.req);
+      const invalid = validateNotificationContent(body.content);
+      if (invalid) { sendJSON(c.res, { success: false, error: invalid }, 400); return; }
+      const sessionId = String(body.sessionId ?? '').trim();
+      if (!sessionId) { sendJSON(c.res, { success: false, error: 'sessionId is required' }, 400); return; }
+      const sess = pm.findSession(c.user, sessionId, c.viewed);
+      if (!sess) { sendJSON(c.res, { success: false, error: `Session "${sessionId}" not found` }, 404); return; }
+      const result = await sendNotification(c.user, 'explicit', {
+        title: sess.sessionName || sess.id,
+        body: String(body.content).trim(),
+        path: `session/${sess.id}`,
+      });
+      sendJSON(c.res, { success: true, data: { delivered: result.sent > 0, ...result } });
     },
   });
 

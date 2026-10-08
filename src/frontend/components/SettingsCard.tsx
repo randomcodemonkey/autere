@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { SortableList } from './SortableList';
 import { PersonasSettingsSection } from './Personas';
 import { ApiTokensSection } from './ApiTokensSection';
+import { NotificationsSection } from './NotificationsSection';
 import { url } from '../base-path';
 import { API } from '../api-paths';
 import type { SettingSection, SettingField } from '../types';
@@ -660,6 +661,12 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
               <PersonasSettingsSection />
             ) : activeSection === 'apiTokens' ? (
               <ApiTokensSection />
+            ) : activeSection === 'notifications' ? (
+              <NotificationsSection
+                section={schema.find((s) => s.id === 'notifications')}
+                settings={settings}
+                handleChange={handleChange}
+              />
             ) : activeSection === 'models' ? (
               <ModelsSection
                 section={schema.find((s) => s.id === 'models')}

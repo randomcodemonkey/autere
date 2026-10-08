@@ -1,6 +1,6 @@
 // Run: npx tsx smoke-test.mjs  (from extras/pi-autere)
 // Spins up a stub autere backend, has the backend-side helpers mint the agent
-// token + write autere-agent.json, then drives all five tools against it.
+// token + write autere-agent.json, then drives all six tools against it.
 import assert from "node:assert";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, renameSync } from "node:fs";
 import { join } from "node:path";
@@ -15,7 +15,7 @@ process.env.AUTERE_PI_ENVS_DIR = join(root, "pi-envs");
 process.env.PI_CODING_AGENT_DIR = envDir;
 
 // ── Stub autere backend ──
-const state = { tasks: [], runs: [], sessions: [], sent: [], busy: false, auth: new Set() };
+const state = { tasks: [], runs: [], sessions: [], sent: [], notified: [], notifyDisabled: false, busy: false, auth: new Set() };
 let taskSeq = 0;
 
 const json = (res, status, body) => {
@@ -63,6 +63,16 @@ const server = createServer((req, res) => {
       state.sent.push(body);
       return data(res, {});
     }
+    if (req.method === "POST" && path === "/notifications/send") {
+      // mirrors the real route: reject oversize content, else record + deliver
+      if ([...String(body.content ?? "")].length > 256) {
+        return json(res, 400, { success: false, error: `content must be at most 256 characters (got ${[...String(body.content)].length}) — shorten it and retry` });
+      }
+      state.notified.push(body);
+      return data(res, state.notifyDisabled
+        ? { delivered: false, sent: 0, reason: "explicit notifications are off in Settings → Notifications" }
+        : { delivered: true, sent: 1 });
+    }
     return json(res, 404, { success: false, error: `stub: no route ${req.method} ${path}` });
   });
 });
@@ -98,7 +108,7 @@ try {
   const tools = {};
   const { default: factory } = await import("./index.ts");
   factory({ registerTool: (t) => (tools[t.name] = t) });
-  for (const name of ["autere_schedule_task", "autere_list_tasks", "autere_set_task_enabled", "autere_find_sessions", "autere_send_to_session"]) {
+  for (const name of ["autere_schedule_task", "autere_list_tasks", "autere_set_task_enabled", "autere_find_sessions", "autere_send_to_session", "send_notification"]) {
     assert.ok(tools[name], `${name} registered`);
   }
   const run = (name, params, ctx) => tools[name].execute("call-1", params, undefined, undefined, ctx);
@@ -165,10 +175,28 @@ try {
   assert.strictEqual(race.details.reason, "busy", "turn started mid-flight → busy, not an error");
   state.busy = false;
 
-  // 8. every call authenticated with the minted token
+  // 8. send_notification — session defaults to the current one, the 256
+  //    character limit fails locally, and a disabled preference is reported
+  const note = await run("send_notification", { content: "Kettle is done" }, ctx);
+  assert.strictEqual(note.details.delivered, true, "explicit notification delivered");
+  assert.deepStrictEqual(state.notified[0], { sessionId: "s1", content: "Kettle is done" }, "sent for the calling session");
+  await assert.rejects(
+    run("send_notification", { content: "x".repeat(257) }, ctx),
+    /256/,
+    "over-long content rejected",
+  );
+  await assert.rejects(run("send_notification", { content: "   " }, ctx), /required/, "empty content rejected");
+  assert.strictEqual(state.notified.length, 1, "nothing sent when validation fails");
+  state.notifyDisabled = true;
+  const off = await run("send_notification", { content: "Kettle is done" }, ctx);
+  assert.strictEqual(off.details.delivered, false, "disabled preference reported, not an error");
+  assert.ok(off.details.reason.includes("off"), "reason explains why nothing arrived");
+  state.notifyDisabled = false;
+
+  // 9. every call authenticated with the minted token
   assert.deepStrictEqual([...state.auth], [`Bearer ${token}`], "backend saw exactly the agent token");
 
-  // 9. without the access file the tools fail loudly instead of silently
+  // 10. without the access file the tools fail loudly instead of silently
   renameSync(join(envDir, "autere-agent.json"), join(envDir, "autere-agent.json.bak"));
   await assert.rejects(run("autere_find_sessions", {}, ctx), /not reachable/);
   renameSync(join(envDir, "autere-agent.json.bak"), join(envDir, "autere-agent.json"));

@@ -84,7 +84,12 @@ COPY --chown=autere:autere package.json package-lock.json /home/autere/dist/
 COPY --chown=autere:autere extras /home/autere/pi-ext-extra/
 
 WORKDIR /home/autere/dist
+# The compiled backend resolves bare imports starting at /home/autere/dist-backend
+# (chain: dist-backend/node_modules → ~/node_modules → …); the install below
+# lands in /home/autere/dist/node_modules, which is NOT in that chain. Link it,
+# or any runtime dependency (web-push) crashes the backend at startup.
 RUN npm ci --omit=dev --no-audit --no-fund \
+    && ln -s /home/autere/dist/node_modules /home/autere/node_modules \
     && npm cache clean --force \
     && rm -rf /tmp/*
 

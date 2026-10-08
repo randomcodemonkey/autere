@@ -20,8 +20,21 @@ if [[ "${1:-}" != "--no-ext" ]]; then
 fi
 # vite writes frontend to the repo's dist/ (outDir ../../dist) — copy it
 # to the running install's ~/dist (tsc outDir dist-backend needs the same
-# treatment).
-rsync -a --delete dist/ ~/dist/
+# treatment). node_modules is image-baked and root-owned (rsync --delete
+# cannot remove it, and must not): keep it out of the sync.
+rsync -a --delete --exclude node_modules dist/ ~/dist/
 rsync -a --delete dist-backend/ ~/dist-backend/
+
+# The compiled backend resolves bare imports starting at /home/autere/dist-backend
+# (chain: dist-backend/node_modules → ~/node_modules → …). The image's deps live
+# in ~/dist/node_modules — NOT in that chain — so put a node_modules where the
+# backend actually looks: the repo install (matches what was just built), falling
+# back to the image's prod install. It sits in $HOME on purpose: rsync --delete
+# on dist-backend/ would fight a link inside that tree.
+if [[ -d node_modules ]]; then
+  ln -sfn "$here/node_modules" "$HOME/node_modules"
+elif [[ -d "$HOME/dist/node_modules" ]]; then
+  ln -sfn "$HOME/dist/node_modules" "$HOME/node_modules"
+fi
 
 echo "build-dev done: dist, dist-backend, pi-ext-extra updated"

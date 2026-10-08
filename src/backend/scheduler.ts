@@ -31,6 +31,7 @@ import { sanitizeUserName } from '../shared/format.js';
 import { log } from './logger.js';
 import { autoSessionName } from './utils.js';
 import { getUserSetting } from './user-settings.js';
+import { sendNotification } from './notifications.js';
 
 import type {
   ScheduledTask,
@@ -407,15 +408,30 @@ export class Scheduler {
         // Auto-name task-run sessions: "[task] - <user locale + timezone date+time>".
         // Uses the user's persisted locale/IANA timezone so the name matches
         // what the user sees in the UI (Intl does the zone conversion).
+        let runName = '';
         try {
           const locale = getUserSetting(user, 'locale', '');
           const timeZone = getUserSetting(user, 'timeZone', '');
-          await rpc.setSessionName(autoSessionName('[task]', {
+          runName = autoSessionName('[task]', {
             locale: typeof locale === 'string' && locale ? locale : undefined,
             timeZone: typeof timeZone === 'string' && timeZone ? timeZone : undefined,
-          }));
+          });
+          await rpc.setSessionName(runName);
         } catch (err) {
           log.scheduler.error(`Failed to auto-name run session ${runId}:`, err);
+        }
+
+        // Task-start notification (Settings → Notifications): the run's
+        // session exists now, so the notification can name and open it.
+        try {
+          const state = await rpc.getState();
+          await sendNotification(user, 'taskStart', {
+            title: runName || state.sessionName || task.name,
+            body: `Scheduled task "${task.name}" started`,
+            path: state.sessionId ? `session/${state.sessionId}` : null,
+          });
+        } catch (err) {
+          log.scheduler.error(`Task-start notification for "${task.name}" failed:`, err);
         }
 
         // 2. Seed data into the prompt (optional script)

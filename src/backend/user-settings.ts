@@ -435,6 +435,17 @@ export function getGitRepos(user: string): string[] {
   return out;
 }
 
+/**
+ * Minimum turn length (minutes) before a turn-end notification is sent —
+ * 0 = every turn. Stored as a number or a settings-form string.
+ */
+export function getTurnEndNotifyMinMinutes(user: string): number {
+  const raw = getUserSetting(user, 'notifyTurnEndAfterMinutes', 0);
+  const n = typeof raw === 'number' ? raw : parseInt(raw, 10);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(1440, Math.max(0, Math.floor(n)));
+}
+
 export function getHistoryLimit(user: string): number {
   // 200 (not 50): a single agent turn can easily emit 50+ tool/thinking/
   // edit entries — at 50 the trailing window could not even hold one turn
@@ -827,6 +838,16 @@ function getUserSettingsDefaults(user: string): UserSettings {
   defaults.reserveTokensPercent = 0;
   defaults.reserveTokensPercentByModel = {};
   defaults.modelThinkingLevels = {};
+
+  // Notifications (Settings → Notifications) — per-kind toggles, read live
+  // by the backend, default on so a fresh subscription delivers right away.
+  // All-done (idle, nothing queued) is opt-in; turn-end's minimum length is
+  // 0 = notify on every turn end.
+  defaults.notifyExplicit = true;
+  defaults.notifyTaskStart = true;
+  defaults.notifyTurnEnd = true;
+  defaults.notifyAllDone = false;
+  defaults.notifyTurnEndAfterMinutes = 0;
   defaults.janitorMinIdleSec = 600;
   defaults.janitorKeepRecentTurns = 3;
   defaults.janitorWarmGapMultiplier = 2;
@@ -1132,6 +1153,42 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
   // specialized UI when it sees these section ids.
   sections.push({ id: 'personas', label: 'Personas', fields: [] });
   sections.push({ id: 'apiTokens', label: 'API Tokens', fields: [] });
+  sections.push({
+    id: 'notifications',
+    label: 'Notifications',
+    fields: [
+      {
+        key: 'notifyExplicit',
+        label: 'Messages from the agent',
+        type: 'toggle',
+        description: 'Notifications the agent sends on purpose with its send_notification tool. Content is limited to 256 characters.',
+      },
+      {
+        key: 'notifyTaskStart',
+        label: 'Scheduled task start',
+        type: 'toggle',
+        description: 'When a scheduled task starts a run — opens the run session.',
+      },
+      {
+        key: 'notifyTurnEnd',
+        label: 'Turn end',
+        type: 'toggle',
+        description: 'When the agent finishes a turn: the first 256 characters of its last message. Opens that session.',
+      },
+      {
+        key: 'notifyAllDone',
+        label: 'All tasks completed',
+        type: 'toggle',
+        description: 'When the session goes idle with no pending messages (every queued message processed) — unlike Turn end, which fires per message. Suppressed when a Turn end notification just fired for the same moment, so enabling both never doubles a notification.',
+      },
+      {
+        key: 'notifyTurnEndAfterMinutes',
+        label: 'Minimum turn length (minutes)',
+        type: 'number',
+        description: 'Gates Turn end AND All tasks completed: notify only when the agent kept working at least this long — a long turn finishing is worth knowing about. 0 = every turn end.',
+      },
+    ],
+  });
 
   // Canonical display order is decided here — the frontend renders sections
   // in the given order without re-sorting.
