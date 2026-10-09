@@ -87,7 +87,10 @@ src/backend/
   state.ts              # Global mutable state (extensions, sessions)
   sessions.ts           # Session file listing
   personas.ts           # Persona library + per-session bindings (JSON files)
-  scheduler.ts          # Scheduled tasks (cron-style pi prompts)
+  scheduler.ts          # Scheduled tasks (cron-style pi prompts). Each run gets
+                        # its own pi session, deleted for good when the run ends
+                        # unless the task has saveSession: true (Settings card
+                        # "Save task sessions" toggle)
   user-settings.ts      # Per-user settings (schema-driven, admin UI; per-model
                         # thinking levels → pi's modelThinkingLevels, per-model
                         # reserve % → pi-token-reserve config)

@@ -150,6 +150,9 @@ export function validateTaskInput(input: any): string | null {
   if (typeof input.enabled !== 'undefined' && typeof input.enabled !== 'boolean') {
     return 'enabled must be a boolean';
   }
+  if (typeof input.saveSession !== 'undefined' && typeof input.saveSession !== 'boolean') {
+    return 'saveSession must be a boolean';
+  }
   return null;
 }
 
@@ -395,6 +398,9 @@ export class Scheduler {
       },
     };
     this.activeRuns.set(key, active);
+    // Session file of this run's dedicated pi session — captured once pi
+    // reports state, removed at the end unless the task saves its sessions.
+    let runSessionFile = '';
 
     // The run proceeds in the background — the caller gets the runId back
     // immediately and polls the run record for status/log.
@@ -425,6 +431,7 @@ export class Scheduler {
         // session exists now, so the notification can name and open it.
         try {
           const state = await rpc.getState();
+          runSessionFile = state.sessionFile || '';
           await sendNotification(user, 'taskStart', {
             title: runName || state.sessionName || task.name,
             body: `Scheduled task "${task.name}" started`,
@@ -491,6 +498,18 @@ export class Scheduler {
         // 5. Always stop the pi agent started for this run
         try { await rpc.stop(); } catch {}
         addLog('pi agent stopped');
+        // 6. The run's session is disposable unless the task opted in — with
+        //    saveSession off the file is removed for good (the run record
+        //    above is what survives). pi has exited by now, so nothing
+        //    rewrites the file.
+        if (runSessionFile && !task.saveSession) {
+          try {
+            rmSync(runSessionFile, { force: true });
+            addLog('Run session removed (save task sessions is off)');
+          } catch (err) {
+            log.scheduler.error(`Failed to remove run session ${runSessionFile}:`, err);
+          }
+        }
         record.finishedAt = Date.now();
         writeRecord();
         this.activeRuns.delete(key);

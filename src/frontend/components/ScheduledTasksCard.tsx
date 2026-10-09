@@ -25,6 +25,7 @@ interface TaskFormState {
   resultScript: string;
   enabled: boolean;
   model: string; // '' = user's pi default
+  saveSession: boolean;
 }
 
 const EMPTY_FORM: TaskFormState = {
@@ -36,6 +37,7 @@ const EMPTY_FORM: TaskFormState = {
   resultScript: '',
   enabled: true,
   model: '',
+  saveSession: false,
 };
 
 function formatTime(ts?: number): string {
@@ -119,6 +121,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
       resultScript: task.resultScript || '',
       enabled: task.enabled,
       model: task.model || '',
+      saveSession: task.saveSession === true,
     });
   }, []);
 
@@ -155,6 +158,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
           seedScript: form.seedScript,
           resultScript: form.resultScript,
           enabled: form.enabled,
+          saveSession: form.saveSession,
         }),
       });
       const data = await res.json();
@@ -314,6 +318,24 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
               </label>
             </div>
           </div>
+          <div className="settings-field">
+            <div className="settings-field-header">
+              <label className="settings-label">Save task sessions</label>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  className="scheduled-input-savesession"
+                  checked={form.saveSession}
+                  onChange={(e) => setForm({ ...form, saveSession: e.target.checked })}
+                />
+                <span className="settings-toggle-slider" />
+              </label>
+            </div>
+            <div className="settings-description">
+              Keep a run's session after the run finishes. Off (default): the session is
+              deleted for good once the run completes — the run log stays under Runs.
+            </div>
+          </div>
           <div className="scheduled-form-actions">
             <button className="btn btn-primary scheduled-save-btn" onClick={handleSave} disabled={saving || !!cronErrFor}>
               {saving ? 'Saving…' : 'Save Task'}
@@ -360,6 +382,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
               task.model && `Model: ${task.model}`,
               task.seedScript && `Seed script: ${task.seedScript.slice(0, 80)}`,
               task.resultScript && `Result script: ${task.resultScript.slice(0, 80)}`,
+              task.saveSession && 'Saves task sessions',
             ].filter(Boolean) as string[];
             return (
               <Fragment key={task.id}>

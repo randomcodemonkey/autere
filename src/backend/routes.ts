@@ -2052,6 +2052,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           seedScript: typeof input.seedScript === 'string' && input.seedScript.trim() ? input.seedScript : undefined,
           resultScript: typeof input.resultScript === 'string' && input.resultScript.trim() ? input.resultScript : undefined,
           enabled: input.enabled !== false,
+          saveSession: input.saveSession === true,
           createdAt: now,
           updatedAt: now,
         };
@@ -2082,6 +2083,9 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           seedScript: typeof input.seedScript === 'string' && input.seedScript.trim() ? input.seedScript : undefined,
           resultScript: typeof input.resultScript === 'string' && input.resultScript.trim() ? input.resultScript : undefined,
           enabled: input.enabled !== false,
+          // Omitted in the body = keep the stored setting (partial update
+          // from callers such as the agent's set_task_enabled round-trip).
+          saveSession: input.saveSession === undefined ? existing.saveSession : input.saveSession === true,
           updatedAt: Date.now(),
         };
         saveTask(c.user, updated);

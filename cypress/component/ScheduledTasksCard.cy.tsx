@@ -81,6 +81,23 @@ function stubFetch() {
   });
 }
 
+/** Capture the JSON body of a scheduler POST — returns a getter for assertions. */
+function captureSchedulerPost() {
+  let posted: any = null;
+  cy.window({ log: false }).then((win) => {
+    installFetchStub(win, (u, init) => {
+      if (u.includes('/api/v1/scheduler/tasks') && !u.includes('/run') && !u.includes('/runs/')) {
+        if (init?.method === 'POST') {
+          try { posted = JSON.parse(init.body); } catch {}
+        }
+        return { success: true, data: { tasks: [], runs: [] } };
+      }
+      return { success: true };
+    });
+  });
+  return () => posted;
+}
+
 describe('ScheduledTasksCard', () => {
   describe('list view', () => {
     it('shows the empty state when there are no tasks', () => {
@@ -253,6 +270,44 @@ describe('ScheduledTasksCard', () => {
       cy.get('.scheduled-input-name').should('have.value', 'Daily report');
       cy.get('.scheduled-input-prompt').should('have.value', 'Write a report');
       cy.get('.scheduled-input-seed').should('have.value', 'echo seed-data');
+      // A task without the setting keeps sessions deleted (back-compat)
+      cy.get('.scheduled-input-savesession').should('not.be.checked');
+    });
+
+    it('save task sessions defaults to off and the payload carries false', () => {
+      const getPosted = captureSchedulerPost();
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.get('.scheduled-new-btn').click();
+      cy.get('.scheduled-input-savesession').should('not.be.checked');
+      cy.get('.scheduled-input-name').type('Throwaway sessions');
+      cy.get('.scheduled-input-prompt').type('Do the thing');
+      cy.get('.scheduled-save-btn').click();
+      cy.wrap(null).should(() => {
+        expect(getPosted()).to.not.be.null;
+        expect(getPosted().saveSession).to.equal(false);
+      });
+    });
+
+    it('save task sessions toggle sends saveSession: true', () => {
+      const getPosted = captureSchedulerPost();
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.get('.scheduled-new-btn').click();
+      cy.get('.scheduled-input-savesession').check();
+      cy.get('.scheduled-input-name').type('Kept sessions');
+      cy.get('.scheduled-input-prompt').type('Do the thing');
+      cy.get('.scheduled-save-btn').click();
+      cy.wrap(null).should(() => {
+        expect(getPosted()).to.not.be.null;
+        expect(getPosted().saveSession).to.equal(true);
+      });
+    });
+
+    it('prefills save session from a task that keeps its sessions', () => {
+      stubFetch();
+      responseData = { tasks: [{ ...TASK, saveSession: true }], runs: [] };
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.get('.scheduled-edit-btn').click();
+      cy.get('.scheduled-input-savesession').should('be.checked');
     });
 
     it('shows a human description of the schedule', () => {

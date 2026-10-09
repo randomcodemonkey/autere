@@ -69,12 +69,43 @@ describe('autere — scheduled tasks', () => {
     cy.get('.sched-log-lines').should('contain', 'Agent finished');
     cy.get('.sched-log-lines').should('contain', 'Result script produced');
     cy.get('.sched-log-lines').should('contain', 'pi agent stopped');
+    // Run sessions are disposable by default — dropped with the run
+    cy.get('.sched-log-lines').should('contain', 'Run session removed');
     // Seeded data reached the prompt; result script output captured
     cy.get('.sched-log-pre').should('contain', 'e2e-seed-data');
     cy.get('.sched-log-pre').should('contain', 'result-script-ok');
     cy.get('.modal-sched-log .modal-close').click();
     // Modal stays in the DOM when closed (hidden overlay) — assert invisibility
     cy.get('.modal-sched-log', { timeout: 5000 }).should('not.be.visible');
+  });
+
+  it('deletes the run session by default and keeps it with Save task sessions on', function() {
+    this.timeout(180000);
+
+    // Default: the completed run's session is gone from the session list
+    cy.request('/api/v1/sessions').then((res) => {
+      const taskSessions = (res.body.data || [])
+        .filter((s: any) => String(s.sessionName || '').includes('[task]'));
+      expect(taskSessions, 'run sessions after a default run').to.have.length(0);
+    });
+
+    // Opt in, run again, and the session survives
+    openTasks();
+    cy.get('.scheduled-task').contains(TASK_NAME).parents('.scheduled-task')
+      .find('.scheduled-edit-btn').click();
+    cy.get('.scheduled-input-savesession').check({ force: true }); // styled switch: input is 0x0
+    cy.get('.scheduled-save-btn').click();
+    cy.get('.scheduled-task', { timeout: 5000 }).should('contain', TASK_NAME);
+    cy.get('.scheduled-task').contains(TASK_NAME).parents('.scheduled-task')
+      .find('.scheduled-run-btn').click();
+    // Two completed runs by now — the second one keeps its session
+    cy.get('.sched-run-status.sched-run-success', { timeout: 150000 }).should('have.length', 2);
+
+    cy.request('/api/v1/sessions').then((res) => {
+      const taskSessions = (res.body.data || [])
+        .filter((s: any) => String(s.sessionName || '').includes('[task]'));
+      expect(taskSessions, 'run sessions with save on').to.have.length(1);
+    });
   });
 
   it('edits an existing task', () => {

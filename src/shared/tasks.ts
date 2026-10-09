@@ -18,6 +18,10 @@ export interface ScheduledTask {
   seedScript?: string;
   /** Optional shell script run against the final assistant message (stdin) */
   resultScript?: string;
+  /** Keep each run's pi session after the run ends. Unset/false (the
+   *  default): the run's session file is deleted for good once the run
+   *  completes — the run record under scheduled-task-logs/ stays. */
+  saveSession?: boolean;
   enabled: boolean;
   createdAt: number;
   updatedAt: number;
