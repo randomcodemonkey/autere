@@ -155,6 +155,19 @@ extras/pi-personas/    # pi extension: puts the session's bound persona into the
                        # bindings written per user env as persona-active.json,
                        # keyed by session file name; personas.ts stores the
                        # library)
+extras/pi-combo-reasoning/ # pi extension: fixes reasoning on 9router COMBO routes.
+                       # 9router's combo translator inlines the reasoning stream into
+                       # plain `content` when a request carries `reasoning_effort` (which
+                       # pi-9router-ext sends for pi thinking levels) — chain-of-thought
+                       # then shows up as regular assistant text. Runs on session_start
+                       # (after pi-9router-ext registers; npm packages load last, so a
+                       # load-time fix would be stomped) and re-registers the "9router"
+                       # provider with combo models' thinkingLevelMap fully nulled —
+                       # pi-ai drops those levels, pi sends NO reasoning_effort, and
+                       # upstream default reasoning streams as reasoning_content. Combo
+                       # detection = pi-9router-ext's "🔀" name prefix. Add the same fix
+                       # upstream in pi-9router-ext when this is fixed in 9router's
+                       # combo translator.
 extras/pi-dedup/       # pi extension: elides exact-duplicate tool results
                        # (tool_result patch → pointer to the in-context first
                        # occurrence; append-time only so prompt caching keeps
