@@ -15,8 +15,9 @@ process.env.AUTERE_PI_ENVS_DIR = join(root, "pi-envs");
 process.env.PI_CODING_AGENT_DIR = envDir;
 
 // ── Stub autere backend ──
-const state = { tasks: [], runs: [], sessions: [], sent: [], notified: [], notifyDisabled: false, busy: false, auth: new Set() };
+const state = { tasks: [], runs: [], sessions: [], sent: [], notified: [], notifyDisabled: false, busy: false, auth: new Set(), calls: [] };
 let taskSeq = 0;
+let runSeq = 0;
 
 const json = (res, status, body) => {
   res.writeHead(status, { "content-type": "application/json" });
@@ -31,6 +32,7 @@ const server = createServer((req, res) => {
   req.on("end", () => {
     const body = raw ? JSON.parse(raw) : {};
     const path = req.url.replace("/api/v1", "").split("?")[0];
+    state.calls.push(`${req.method} ${path}`);
     if (req.method === "POST" && path === "/scheduler/tasks") {
       const task = { id: `task-${++taskSeq}`, enabled: true, createdAt: 1, updatedAt: 1, ...body };
       state.tasks.push(task);
@@ -43,8 +45,19 @@ const server = createServer((req, res) => {
       state.tasks[i] = { ...state.tasks[i], ...body, id: putTask[1] };
       return data(res, state.tasks[i]);
     }
+    const runTask = path.match(/^\/scheduler\/tasks\/(task-\d+)\/run$/);
+    if (req.method === "POST" && runTask) {
+      if (!state.tasks.some((t) => t.id === runTask[1])) return json(res, 404, { success: false, error: "Task not found" });
+      return data(res, { runId: `run-${++runSeq}` });
+    }
     if (req.method === "GET" && path === "/scheduler/tasks") {
       return data(res, { tasks: state.tasks, runs: state.runs });
+    }
+    if (req.method === "GET" && path === "/session/models") {
+      return data(res, [
+        { provider: "9router", id: "glm-5.3-flash", name: "GLM Flash" },
+        { provider: "9router", id: "mimo-v2.5-all", name: "Mimo" },
+      ]);
     }
     if (req.method === "GET" && path === "/sessions") return data(res, state.sessions);
     if (req.method === "GET" && path === "/sessions/search") {
@@ -192,6 +205,46 @@ try {
   assert.strictEqual(off.details.delivered, false, "disabled preference reported, not an error");
   assert.ok(off.details.reason.includes("off"), "reason explains why nothing arrived");
   state.notifyDisabled = false;
+
+  // 8b. one-off tasks — flag stored, the single run starts right after the
+  //     footer lands, and the footer drops the now-automatic disable step
+  assert.ok(!state.calls.some((c) => c.includes("/run")), "repeating tasks are never auto-triggered");
+  const onceRes = await run("autere_schedule_task", {
+    name: "One-off job", schedule: "0 0 1 1 *", prompt: "Do the bounded thing.", reportTo: "current", once: true,
+  }, ctx);
+  const oneOff = state.tasks[state.tasks.length - 1];
+  assert.strictEqual(oneOff.once, true, "once flag persisted on the task");
+  assert.deepStrictEqual(
+    state.calls.slice(-3),
+    ["POST /scheduler/tasks", `PUT /scheduler/tasks/${oneOff.id}`, `POST /scheduler/tasks/${oneOff.id}/run`],
+    "create → footer PUT → trigger, in that order",
+  );
+  assert.strictEqual(onceRes.details.once, true, "result marks the task one-off");
+  assert.ok(onceRes.details.runId, "result carries the started run id");
+  assert.ok(text(onceRes).includes("one-off run started"), "result names the started run");
+  const oneOffPrompt = oneOff.prompt;
+  assert.ok(oneOffPrompt.includes("One-off task: this is its only run"), "footer marks the one-off");
+  assert.ok(oneOffPrompt.includes(`autere_send_to_session(sessionId: "s1"`), "report step kept for a one-off");
+  assert.ok(!oneOffPrompt.includes("autere_set_task_enabled("), "one-off footer has no disable step (automatic)");
+
+  // 8c. model selection — the listing tool hands out provider/id strings,
+  //     schedule_task stores one verbatim and list_tasks echoes it back
+  const models = await run("autere_find_models", {}, ctx);
+  assert.ok(text(models).includes("- 9router/glm-5.3-flash  (GLM Flash)"), "models listed as provider/id with names");
+  assert.deepStrictEqual(models.details.models[0], { id: "9router/glm-5.3-flash", name: "GLM Flash" }, "structured list for callers");
+  const modeled = await run("autere_schedule_task", {
+    name: "Modelled", schedule: "0 * * * *", prompt: "Do it.", reportTo: "none", model: "9router/glm-5.3-flash",
+  }, ctx);
+  const modelledTask = state.tasks[state.tasks.length - 1];
+  assert.strictEqual(modelledTask.model, "9router/glm-5.3-flash", "model stored on the task");
+  assert.ok(text(modeled).includes("model: 9router/glm-5.3-flash"), "result echoes the chosen model");
+  const defaulted = await run("autere_schedule_task", {
+    name: "Default model", schedule: "0 * * * *", prompt: "Do it.", reportTo: "none",
+  }, ctx);
+  assert.ok(text(defaulted).includes("model: (user's default model)"), "unset model is reported as the default");
+  assert.strictEqual(state.tasks[state.tasks.length - 1].model, undefined, "no model stored when unset");
+  const listedWithModel = text(await run("autere_list_tasks", {}, ctx));
+  assert.ok(listedWithModel.includes("model: 9router/glm-5.3-flash"), "list shows the task's model");
 
   // 9. every call authenticated with the minted token
   assert.deepStrictEqual([...state.auth], [`Bearer ${token}`], "backend saw exactly the agent token");

@@ -2053,6 +2053,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           resultScript: typeof input.resultScript === 'string' && input.resultScript.trim() ? input.resultScript : undefined,
           enabled: input.enabled !== false,
           saveSession: input.saveSession === true,
+          once: input.once === true,
           createdAt: now,
           updatedAt: now,
         };
@@ -2086,6 +2087,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           // Omitted in the body = keep the stored setting (partial update
           // from callers such as the agent's set_task_enabled round-trip).
           saveSession: input.saveSession === undefined ? existing.saveSession : input.saveSession === true,
+          once: input.once === undefined ? existing.once : input.once === true,
           updatedAt: Date.now(),
         };
         saveTask(c.user, updated);
@@ -2120,7 +2122,8 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         sendJSON(c.res, { success: true, data: { runId } }, 202);
       } catch (err: any) {
         const alreadyRunning = /already running/.test(err?.message || '');
-        sendJSON(c.res, { success: false, error: `Failed to run task: ${err}` }, alreadyRunning ? 409 : 404);
+        const oneOffDone = /already run/.test(err?.message || '');
+        sendJSON(c.res, { success: false, error: `Failed to run task: ${err}` }, alreadyRunning || oneOffDone ? 409 : 404);
       }
     },
   });

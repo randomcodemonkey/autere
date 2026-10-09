@@ -29,7 +29,7 @@ import { writeAgentAccess } from './auth.js';
 import { lstatSync, readlinkSync } from 'fs';
 import { cpSync, existsSync, mkdirSync, readdirSync, copyFileSync, rmSync, symlinkSync, readFileSync, writeFileSync, renameSync } from 'fs';
 import { randomUUID } from 'crypto';
-import { readJsonCached, invalidateCache, setExtraEnabled, getAvailableExtras, DEFAULT_ENABLED_EXTRAS, writeSavedExtras, desiredExtras } from './user-settings.js';
+import { invalidateCache, setExtraEnabled, getAvailableExtras, DEFAULT_ENABLED_EXTRAS, writeSavedExtras, desiredExtras } from './user-settings.js';
 import { execFileSync } from 'node:child_process';
 import { join } from 'path';
 import { PI_DIR, AUTERE_DIR } from './constants.js';
@@ -103,46 +103,19 @@ export function materializeEnvExtensions(user: string): void {
 }
 
 /**
- * Sync master ~/.pi/agent/settings.json install state into a seeded env's
- * settings.json. Runs on every ensurePiEnv so master-side `pi install`
- * (container bootstrap, manual installs) propagates to every user env at
- * next spawn. Only keys that cannot change per session are overwritten
- * from master: defaultProvider, defaultModel, enabledModels, defaultTools.
- * `packages` is deliberately excluded (see the sync loop below); everything
- * else in the env copy (per-user picks, model thinking levels) is preserved;
- * a key absent from master is never deleted.
+ * Master ~/.pi/agent/settings.json install state reaches env copies ONLY via
+ * the SEED_FILES copy above (first env creation). It is deliberately NOT
+ * re-synced on every ensurePiEnv: the model keys (defaultProvider,
+ * defaultModel, enabledModels) and defaultTools are per-USER preferences
+ * saved through the settings UI — re-stomping them from master reverted new
+ * sessions to master's stale defaults (e.g. 9router/auto) even with the
+ * user's Models list showing otherwise. `packages` was always excluded;
+ * with the install-state keys gone too, nothing is master-owned anymore.
  */
-function syncMasterSettings(envDir: string): void {
-  const master = readJsonCached(join(PI_DIR, 'settings.json'));
-  if (!master || typeof master !== 'object') return;
-  const envSettingsPath = join(envDir, 'settings.json');
-  let envSettings: any = {};
-  try { envSettings = JSON.parse(readFileSync(envSettingsPath, 'utf-8')); } catch { /* missing/corrupt env copy — start from master's subset */ }
-  const before = JSON.stringify([envSettings.defaultProvider, envSettings.defaultModel, envSettings.enabledModels, envSettings.defaultTools]);
-  for (const key of ['defaultProvider', 'defaultModel', 'enabledModels', 'defaultTools'] as const) {
-    if (master[key] !== undefined) envSettings[key] = master[key];
-  }
-  // `packages` deliberately NOT synced: the env's packages ARE the user's
-  // enabled set (the UI's extensions toggle writes it). Stomping it from
-  // master would resurrect packages the user has disabled on the next
-  // ensurePiEnv; master installs surface as available via
-  // getAvailablePackages and activate through the settings UI.
-  if (JSON.stringify([envSettings.packages, envSettings.defaultProvider, envSettings.defaultModel, envSettings.enabledModels, envSettings.defaultTools]) === before) return;
-  try {
-    const tmp = join(envDir, `.settings-tmp-${randomUUID()}`);
-    writeFileSync(tmp, JSON.stringify(envSettings, null, 2), 'utf-8');
-    renameSync(tmp, envSettingsPath);
-    invalidateCache(envSettingsPath);
-  } catch (err) {
-    log.piEnv.error(`Failed to sync master settings into ${envSettingsPath}:`, err);
-  }
-}
 
 /** E2E harness only: probeTestModels (start-backend.ts) provisioned working
  *  models via AUTERE_TEST_MODELS — the test env has no user model settings,
- *  so pi would otherwise fall back to its builtin (unroutable) default.
- *  Runs after syncMasterSettings, which would otherwise overwrite it with
- *  the master's list. */
+ *  so pi would otherwise fall back to its builtin (unroutable) default. */
 function applyTestModels(envDir: string): void {
   const raw = process.env.AUTERE_TEST_MODELS;
   if (!raw) return;
@@ -216,9 +189,8 @@ export function ensurePiEnv(user: string): string {
       }
     }
 
-    // Master settings drift (new `pi install`s, default model changes)
-    // reaches env copies only here — pi instances read the env settings.
-    syncMasterSettings(envDir);
+    // Master settings reach env copies only at first seed (SEED_FILES) —
+    // per-user picks (models, tools) must survive every ensure.
     applyTestModels(envDir);
 
     // When pi runs against a non-9router provider, neutralize

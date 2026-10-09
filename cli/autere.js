@@ -470,7 +470,7 @@ cmds['personas-generate'] = {
 };
 cmds['tasks-list'] = { desc: 'tasks-list — scheduled tasks + recent runs', fn: async () => out(await get('/api/v1/scheduler/tasks')) };
 cmds['task-create'] = {
-  desc: 'task-create <name> <cron> <prompt> [--model m] [--seed script] [--result script] [--enabled false] — create a task (control)',
+  desc: 'task-create <name> <cron> <prompt> [--model m] [--seed script] [--result script] [--enabled false] [--once] — create a task (control); --once = one-off (runs at most once)',
   fn: async (args) => {
     const [name, schedule, prompt, ...rest] = args;
     requireArgs([name, schedule, prompt], 3, 'task-create <name> <cron> <prompt> [options]');
@@ -480,6 +480,7 @@ cmds['task-create'] = {
       else if (rest[i] === '--seed') body.seedScript = rest[++i];
       else if (rest[i] === '--result') body.resultScript = rest[++i];
       else if (rest[i] === '--enabled') body.enabled = rest[++i] !== 'false';
+      else if (rest[i] === '--once') body.once = true;
     }
     out(await request('POST', '/api/v1/scheduler/tasks', { body }));
   },
@@ -497,9 +498,42 @@ cmds['task-delete'] = {
   desc: 'task-delete <id> — delete a task (control)',
   fn: async ([id]) => { requireArgs([id], 1, 'task-delete <id>'); await request('DELETE', `/api/v1/scheduler/tasks/${id}`); console.log('Deleted.'); },
 };
+// Block on a run by polling its record: one long HTTP request would hit
+// undici's 5-minute headers timeout on a slow run, while polling also
+// survives backend restarts / keep-alives.
+const RUN_POLL_MS = 1000;
+const RUN_WAIT_LIMIT_MS = 15 * 60 * 1000; // matches the scheduler's per-run timeout
+async function waitForRun(taskId, runId) {
+  const deadline = Date.now() + RUN_WAIT_LIMIT_MS;
+  for (;;) {
+    const rec = await get(`/api/v1/scheduler/runs/${taskId}/${runId}`);
+    if (rec && rec.status && rec.status !== 'running') return rec;
+    if (Date.now() > deadline) throw new Error('timed out waiting for the run (15m)');
+    await new Promise((r) => setTimeout(r, RUN_POLL_MS));
+  }
+}
 cmds['task-run'] = {
-  desc: 'task-run <id> — trigger a task run now (control)',
-  fn: async ([id]) => { requireArgs([id], 1, 'task-run <id>'); out(await request('POST', `/api/v1/scheduler/tasks/${id}/run`)); },
+  desc: 'task-run <id> [--wait] — trigger a task run now; --wait blocks until it finishes and prints the run record (one-off tasks only) (control)',
+  fn: async ([id, flag]) => {
+    requireArgs([id], 1, 'task-run <id> [--wait]');
+    if (flag === undefined) {
+      out(await request('POST', `/api/v1/scheduler/tasks/${id}/run`));
+      return;
+    }
+    if (flag !== '--wait') { console.error('Usage: autere task-run <id> [--wait]'); process.exit(2); }
+    // Validate BEFORE triggering: a blocking run only exists for one-offs
+    const { tasks } = await get('/api/v1/scheduler/tasks');
+    const task = (tasks || []).find((t) => t.id === id);
+    if (!task) { console.error(`Task ${id} not found`); process.exit(1); }
+    if (!task.once) {
+      console.error('--wait applies only to one-off tasks — create one with: autere task-create <name> <cron> <prompt> --once');
+      process.exit(2);
+    }
+    const { runId } = await request('POST', `/api/v1/scheduler/tasks/${id}/run`);
+    const rec = await waitForRun(id, runId);
+    out(rec);
+    if (rec.status !== 'success') process.exitCode = 1;
+  },
 };
 cmds['runs-list'] = {
   desc: 'runs-list [taskId] [limit] — task runs',

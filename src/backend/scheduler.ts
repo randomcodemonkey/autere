@@ -153,6 +153,9 @@ export function validateTaskInput(input: any): string | null {
   if (typeof input.saveSession !== 'undefined' && typeof input.saveSession !== 'boolean') {
     return 'saveSession must be a boolean';
   }
+  if (typeof input.once !== 'undefined' && typeof input.once !== 'boolean') {
+    return 'once must be a boolean';
+  }
   return null;
 }
 
@@ -309,6 +312,9 @@ export class Scheduler {
     for (const user of this.usersWithTasks()) {
       for (const task of listTasks(user)) {
         if (!task.enabled) continue;
+        // One-off tasks run at most once, ever — the first run disables
+        // them; this also covers someone re-enabling the task afterwards.
+        if (task.once && listRuns(user, task.id, 1).length > 0) continue;
         let fired = this.firedMinutes.get(task.id);
         if (!fired) { fired = new Set(); this.firedMinutes.set(task.id, fired); }
         if (fired.has(minuteKey)) continue;
@@ -338,6 +344,11 @@ export class Scheduler {
   async runNow(user: string, taskId: string): Promise<string> {
     const task = getTask(user, taskId);
     if (!task) throw new Error('Task not found');
+    // Same contract as the scheduler tick: a one-off task runs once, then
+    // never again — not even by an explicit trigger.
+    if (task.once && listRuns(user, taskId, 1).length > 0) {
+      throw new Error('One-off task has already run');
+    }
     return this.startRun(user, task, 'manual');
   }
 
@@ -508,6 +519,19 @@ export class Scheduler {
             addLog('Run session removed (save task sessions is off)');
           } catch (err) {
             log.scheduler.error(`Failed to remove run session ${runSessionFile}:`, err);
+          }
+        }
+        // 7. One-off tasks stop here whatever the outcome — re-read first so
+        //    an edit made while the run was in flight isn't clobbered.
+        if (task.once) {
+          try {
+            const current = getTask(user, task.id);
+            if (current?.enabled) {
+              saveTask(user, { ...current, enabled: false, updatedAt: Date.now() });
+              addLog('One-off task completed — disabled');
+            }
+          } catch (err) {
+            log.scheduler.error(`Failed to disable one-off task ${task.id}:`, err);
           }
         }
         record.finishedAt = Date.now();

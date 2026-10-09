@@ -90,7 +90,11 @@ src/backend/
   scheduler.ts          # Scheduled tasks (cron-style pi prompts). Each run gets
                         # its own pi session, deleted for good when the run ends
                         # unless the task has saveSession: true (Settings card
-                        # "Save task sessions" toggle)
+                        # "Save task sessions" toggle). once: true = one-off,
+                        # at most one run ever (auto-disabled after it; both a
+                        # scheduled tick and a manual trigger are refused
+                        # afterwards) — CLI `task-run <id> --wait` blocks on
+                        # those and prints the run record
   user-settings.ts      # Per-user settings (schema-driven, admin UI; per-model
                         # thinking levels → pi's modelThinkingLevels, per-model
                         # reserve % → pi-token-reserve config)
@@ -183,7 +187,8 @@ extras/pi-janitor/     # pi extension: idle-window context cleanup. Observes
                        # janitor-stats.json (user's OWN env), injected per
                        # request by withJanitorSections().
 extras/pi-autere/      # pi extension: agent-facing autere API — schedule/list/
-                       # enable scheduled tasks, find sessions with their latest
+                       # enable scheduled tasks (per-task model = provider/id from
+                       # autere_find_models), find sessions with their latest
                        # messages, deliver a message to another session, send an
                        # OS-level notification (send_notification — content ≤ 256
                        # chars, subject = session name/id, opens that session). The tool

@@ -22,6 +22,9 @@ export interface ScheduledTask {
    *  default): the run's session file is deleted for good once the run
    *  completes — the run record under scheduled-task-logs/ stays. */
   saveSession?: boolean;
+  /** One-off task: at most one run ever — the run disables the task, and
+   *  both a scheduled tick and a manual trigger are refused afterwards. */
+  once?: boolean;
   enabled: boolean;
   createdAt: number;
   updatedAt: number;

@@ -383,6 +383,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
               task.seedScript && `Seed script: ${task.seedScript.slice(0, 80)}`,
               task.resultScript && `Result script: ${task.resultScript.slice(0, 80)}`,
               task.saveSession && 'Saves task sessions',
+              task.once && 'One-off (runs once)',
             ].filter(Boolean) as string[];
             return (
               <Fragment key={task.id}>

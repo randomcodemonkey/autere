@@ -119,21 +119,36 @@ function resolveReportTarget(reportTo: string, ctx: any): string | null {
  * close the loop. Keeping it here means `prompt` needs no ids from the
  * scheduling conversation.
  */
-function runFooter(task: { id: string; name: string }, reportSessionId: string | null): string {
+function runFooter(task: { id: string; name: string; once?: boolean }, reportSessionId: string | null): string {
+	const once = task.once === true;
 	const lines = [
 		"",
 		"---",
 		`[autere] Background run of scheduled task "${task.name}" (task id: ${task.id}).`,
 		"It was scheduled from another conversation, which is NOT available here — act only on the instructions above.",
 	];
+	if (once) lines.push("One-off task: this is its only run — it disables itself when the run ends.");
 	if (reportSessionId) {
 		lines.push(
 			"When those instructions reach a conclusion (the goal is met, or it can clearly never be met):",
 			`1. deliver the outcome: autere_send_to_session(sessionId: "${reportSessionId}", message: <self-contained outcome>)`,
-			`2. stop future runs: autere_set_task_enabled(taskId: "${task.id}", enabled: false)`,
-			`If session "${reportSessionId}" no longer exists, skip step 1 (there is nowhere to report) and still do step 2.`,
-			`If that session exists but cannot take the message yet, do neither — a later run will finish the job.`,
-			"While the instructions are still inconclusive: finish the run without reporting and without disabling anything.",
+		);
+		if (once) {
+			lines.push(
+				`If that session exists but cannot take the message yet, wait (bash sleep) and retry — there is no later run to fall back on.`,
+				`If session "${reportSessionId}" no longer exists, there is nowhere to report — finish without it.`,
+			);
+		} else {
+			lines.push(
+				`2. stop future runs: autere_set_task_enabled(taskId: "${task.id}", enabled: false)`,
+				`If session "${reportSessionId}" no longer exists, skip step 1 (there is nowhere to report) and still do step 2.`,
+				`If that session exists but cannot take the message yet, do neither — a later run will finish the job.`,
+				"While the instructions are still inconclusive: finish the run without reporting and without disabling anything.",
+			);
+		}
+	} else if (once) {
+		lines.push(
+			`When those instructions reach a conclusion you are done: this one-off task disables itself after this run (the run log is the only record).`,
 		);
 	} else {
 		lines.push(
@@ -148,12 +163,14 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "autere_schedule_task",
 		label: "Schedule task",
-		promptSnippet: "autere_schedule_task — recurring background task: a fresh agent runs a prompt on a cron schedule",
+		promptSnippet: "autere_schedule_task — background task on a cron schedule, optionally one-off (runs once)",
 		description:
 			"Create a recurring background task in autere. Whenever `schedule` matches (5-field cron in the server's local time), a separate agent instance runs `prompt` from scratch: same tools as you, no memory of this conversation, final answer stored in the task's run log. Runs repeat until the task is disabled.\n\n" +
 			"Use it for work that must continue after this conversation ends — watching for a condition that is checked again later, recurring maintenance, repeated reports.\n\n" +
+			"One-off work: set `once` and the task becomes a single-shot background operation — its one run starts immediately after creation and the task disables itself when that run ends (it can never run again). A one-off absorbs a single attempt, so keep its check self-contained and conclusive; use a repeating task when the outcome may need several runs.\n\n" +
+			"Model: call autere_find_models and pass `model` as `provider/id`. Choose it deliberately — every run of this schedule pays for that model — and leave it unset only when the user's default model is the right one for background runs.\n\n" +
 			"How to write `prompt`: one run must stand on its own. State what to check, how to check it with the available tools, what outcome counts as a conclusion, and what a run must do while the check is still inconclusive (usually: conclude nothing, report nothing). No ids or secrets from this conversation belong in it.\n\n" +
-			"Reporting workflow (\"keep checking until X, then tell me here\"): `reportTo` picks who hears a conclusive outcome — \"current\" = the session making this call, an explicit session id (find one with autere_find_sessions), or \"none\" when only the run log matters. For a real target, a footer is appended to the prompt giving the run its task id, the target session id and the two closing steps (report via autere_send_to_session, then autere_set_task_enabled false), so `prompt` itself needs no ids. A report target may be deleted before the outcome arrives — the run then skips the report and disables the task.\n\n" +
+			"Reporting workflow (\"keep checking until X, then tell me here\"): `reportTo` picks who hears a conclusive outcome — \"current\" = the session making this call, an explicit session id (find one with autere_find_sessions), or \"none\" when only the run log matters. For a real target, a footer is appended to the prompt giving the run its task id, the target session id and the closing steps (report via autere_send_to_session, then — for repeating tasks — autere_set_task_enabled false), so `prompt` itself needs no ids. A report target may be deleted before the outcome arrives — the run then skips the report and disables the task.\n\n" +
 			"Returns the task id and the exact prompt runs will see.",
 		parameters: Type.Object({
 			name: Type.String({ description: "Short human-readable task name, shown in the autere dashboard" }),
@@ -163,27 +180,52 @@ export default function (pi: ExtensionAPI) {
 			prompt: Type.String({
 				description: "What one run does — self-contained: the check, how to perform it, what counts as a conclusion, what to do while inconclusive.",
 			}),
+			model: Type.Optional(Type.String({
+				description: "Model for the runs as `provider/id` from autere_find_models (e.g. \"9router/glm-5.3-flash\"). Omit to fall back to the user's default model.",
+			})),
 			reportTo: Type.String({
 				description: "Where a conclusive outcome is reported: \"current\" (this session), an explicit session id, or \"none\" for no report.",
 			}),
+			once: Type.Optional(Type.Boolean({
+				description: "One-off background operation: the single run starts right after creation and the task disables itself when it ends (at most one run, ever). Omit for a repeating task.",
+			})),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const target = resolveReportTarget(params.reportTo, ctx);
+			const once = params.once === true;
 			const task = await api("POST", "/scheduler/tasks", {
 				name: params.name,
 				schedule: params.schedule,
 				prompt: params.prompt,
+				model: params.model || undefined,
+				once,
 			}, signal);
 			if (!task?.id) throw new Error("autere did not return the created task");
 			// Two-phase create: the id only exists after POST, and the footer must carry it.
 			const prompt = `${params.prompt}\n${runFooter(task, target)}`;
 			await api("PUT", `/scheduler/tasks/${task.id}`, { ...task, prompt }, signal);
+			// A one-off IS the background operation: start its single run now —
+			// after the PUT, so the run sees the footer.
+			let runId: string | undefined;
+			let runLine = "";
+			if (once) {
+				try {
+					const started = await api("POST", `/scheduler/tasks/${task.id}/run`, undefined, signal);
+					runId = started?.runId;
+					runLine = `one-off run started (${runId}) — autere_list_tasks shows its result\n`;
+				} catch (err: any) {
+					runLine = `one-off run failed to start: ${err?.message || err}\n`;
+				}
+			}
 			return ok(
 				`Scheduled task "${task.name}" (task id: ${task.id})\n` +
-				`schedule: ${params.schedule} — a fresh agent runs the prompt each time until the task is disabled\n` +
-				`report target: ${target ? `session ${target}` : "none"}\n\n` +
-				`prompt runs will see:\n${clip(prompt, 1500)}`,
-				{ taskId: task.id, name: task.name, schedule: params.schedule, reportTo: target },
+				`schedule: ${params.schedule} — ${once
+					? "one-off: a single run, started now; the task disables itself when it ends"
+					: "a fresh agent runs the prompt each time until the task is disabled"}\n` +
+				`report target: ${target ? `session ${target}` : "none"}\n` +
+				`model: ${params.model || "(user's default model)"}\n` + runLine +
+				`\nprompt runs will see:\n${clip(prompt, 1500)}`,
+				{ taskId: task.id, name: task.name, schedule: params.schedule, model: params.model || null, reportTo: target, once, runId },
 			);
 		},
 	});
@@ -210,10 +252,10 @@ export default function (pi: ExtensionAPI) {
 				const lastRun = r
 					? `last run: ${r.status} at ${iso(r.startedAt)}${r.error ? ` — ${clip(r.error, 200)}` : r.agentResult ? ` — ${clip(r.agentResult, 300)}` : ""}`
 					: "no runs yet";
-				return `- ${t.id}  [${t.enabled ? "enabled" : "DISABLED"}]  "${t.name}"  cron: ${t.schedule}\n  prompt: ${clip(t.prompt, 600)}\n  ${lastRun}`;
+				return `- ${t.id}  [${t.enabled ? "enabled" : "DISABLED"}]  ${t.once ? "[one-off]  " : ""}"${t.name}"  cron: ${t.schedule}${t.model ? `  model: ${t.model}` : ""}\n  prompt: ${clip(t.prompt, 600)}\n  ${lastRun}`;
 			});
 			return ok(`${tasks.length} scheduled task(s):\n${lines.join("\n")}`, {
-				tasks: tasks.map((t) => ({ id: t.id, name: t.name, enabled: !!t.enabled, schedule: t.schedule })),
+				tasks: tasks.map((t) => ({ id: t.id, name: t.name, enabled: !!t.enabled, once: !!t.once, model: t.model || null, schedule: t.schedule })),
 			});
 		},
 	});
@@ -278,6 +320,27 @@ export default function (pi: ExtensionAPI) {
 				sessions: sessions.map((s: any) => ({
 					id: s.id, name: s.sessionName ?? null, active: !!s.active, streaming: !!s.streaming, lastActivity: s.lastActivity,
 				})),
+			});
+		},
+	});
+
+	pi.registerTool({
+		name: "autere_find_models",
+		label: "Find models",
+		promptSnippet: "autere_find_models — models a session or background task can run on (provider/id)",
+		description:
+			"List the models this user can run: the `provider/id` pair (e.g. \"9router/glm-5.3-flash\"), which is exactly the string a scheduled task's `model` field and a session's model selector expect, plus each model's display name.\n\n" +
+			"Call it before choosing a model with autere_schedule_task, or when asked which models are available. The list is what this user's settings enable — an empty list means no model is configured for them yet.",
+		parameters: Type.Object({}),
+		annotations: { readOnlyHint: true },
+		async execute(_toolCallId, _params, signal) {
+			const models: any[] = (await api("GET", "/session/models", undefined, signal)) ?? [];
+			if (models.length === 0) {
+				return ok("No models are enabled for this user — nothing to choose from (see Settings → Models).", { models: [] });
+			}
+			const lines = models.map((m) => `- ${m.provider}/${m.id}${m.name && m.name !== m.id ? `  (${m.name})` : ""}`);
+			return ok(`${models.length} model(s) available:\n${lines.join("\n")}`, {
+				models: models.map((m) => ({ id: `${m.provider}/${m.id}`, name: m.name || m.id })),
 			});
 		},
 	});

@@ -267,6 +267,37 @@ assert_exit 0 "runs-list"
 cli task-delete "$TASK_ID" > /dev/null
 assert_exit 0 "task-delete"
 
+section "one-off task (blocking run)"
+cli task-create "one-off $$" "0 0 1 1 *" "Reply with exactly: OK" --once
+assert_exit 0 "task-create --once"
+ONE_ID=$(printf '%s' "$OUT" | node -e 'try{console.log(JSON.parse(require("fs").readFileSync(0)).id)}catch{}')
+[ -n "$ONE_ID" ] && ok "one-off task id captured" || fail "one-off task id"
+assert_in '"once": true' "created task is marked one-off"
+cli task-run "$ONE_ID" --wait
+assert_exit 0 "task-run --wait blocks until the run finishes"
+assert_in '"status": "success"' "blocking run returns the finished run record"
+RUN_ID=$(printf '%s' "$OUT" | node -e 'try{console.log(JSON.parse(require("fs").readFileSync(0)).runId)}catch{}')
+[ -n "$RUN_ID" ] && ok "run id captured from the blocking result" || fail "run id from blocking result"
+printf '%s' "$OUT" | grep -q '"agentResult"' && ok "blocking result carries the agent result" || fail "agent result missing"
+cli run-log "$ONE_ID" "$RUN_ID"
+assert_in "One-off task completed" "run log records the auto-disable"
+cli tasks-list
+assert_in '"enabled": false' "one-off task disabled itself after its run"
+cli task-run "$ONE_ID" --wait
+assert_exit 1 "a one-off task refuses to run a second time"
+assert_in "already run" "refusal states the one-off contract"
+
+# --wait exists for one-off tasks only, and the refusal must come BEFORE a run starts
+cli task-create "repeat $$" "0 0 1 1 *" "say hi" --enabled false
+assert_exit 0 "repeating task created"
+REP_ID=$(printf '%s' "$OUT" | node -e 'try{console.log(JSON.parse(require("fs").readFileSync(0)).id)}catch{}')
+cli task-run "$REP_ID" --wait
+assert_exit 2 "--wait on a repeating task is a usage error"
+cli runs-list "$REP_ID"
+[ "$OUT" = "[]" ] && ok "refused --wait started no run" || fail "unexpected runs: $OUT"
+cli task-delete "$REP_ID" > /dev/null
+cli task-delete "$ONE_ID" > /dev/null
+
 section "files"
 cli file-roots
 assert_in "$WORK" "file-roots reflect the seeded allowedDirs"
