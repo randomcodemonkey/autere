@@ -454,11 +454,21 @@ export class UserSession {
    * pending copy — pi does not emit message_end for user messages, so
    * without this the pending indicator would linger until turn end.
    */
-  addUserEntry(text: string, queued = false): void {
+  addUserEntry(text: string, queued = false): boolean {
     const buf = this.history();
+    // pi's user-role message_end can beat the prompt RPC response back (respawn
+    // latencies reorder them); its "pending copy missing" branch then re-appends
+    // the entry first — pushing again here duplicates it in chat.
+    const existing = [...buf].reverse().find((e: any) => e.role === 'user' && e.text === text);
+    if (existing) {
+      existing.pending = false;
+      this.broadcastHistoryUpsert([existing]);
+      return false; // already in the buffer — nothing appended
+    }
     const entry = this.tagEntry({ role: 'user', text, streaming: false, timestamp: Date.now(), ...(queued ? { pending: true } : {}) });
     buf.push(entry);
     this.broadcastHistoryUpsert([entry]);
+    return true;
   }
 
   /**
