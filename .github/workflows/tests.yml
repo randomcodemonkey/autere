@@ -1,30 +1,17 @@
 name: Tests
 
-# Every push that is NOT a release version bump runs the full test suite:
-# typecheck + lint, component tests, CLI integration tests, extension
-# smoke tests, and e2e (real pi turns via 9router).
+# Every push runs the full test suite: typecheck + lint, component tests,
+# CLI integration tests, extension smoke tests, and e2e (real pi turns via
+# an in-process mock router). Only tag pushes starting with a version
+# number (v0.2.0 etc.) are skipped.
 on:
   push:
     branches: ['**']
+    tags-ignore:
+      - 'v[0-9]*'
 
 jobs:
-  guard:
-    runs-on: ubuntu-latest
-    outputs:
-      skip: ${{ steps.commit.outputs.skip }}
-    steps:
-      - uses: actions/checkout@v5
-      - id: commit
-        name: Skip when the commit is a version-bump release commit
-        run: |
-          subj="$(git log -1 --pretty=%s)"
-          if echo "$subj" | grep -qE '^version: [0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          fi
-
   test:
-    needs: guard
-    if: needs.guard.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
