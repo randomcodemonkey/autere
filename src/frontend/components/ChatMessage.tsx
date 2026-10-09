@@ -13,6 +13,12 @@ import { ZoomableImage } from './ZoomableImage';
 import { url } from '../base-path';
 import { API } from '../api-paths';
 
+// File-sharing capability (module level, evaluated once): Web Share with
+// file support must be claimed (iOS/iPadOS/macOS Safari, Android Chrome).
+const canShareFiles = typeof navigator.share === 'function'
+  && navigator.canShare?.({ files: [new File([''], 'probe.txt', { type: 'text/plain' })] }) === true;
+const isTouchDevice = navigator.maxTouchPoints > 0;
+
 marked.setOptions({
   gfm: true,
   breaks: true,
@@ -153,10 +159,8 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   // url() adds the reverse-proxy base path — raw /api/... 404s behind it.
   const imageSrc = (img: StreamImage) => (img.url ? url(img.url) : `data:${img.mimeType};base64,${img.data ?? ''}`);
 
-  // Save a stream image (or any file) via Web Share (iOS) or a Blob-URL
-  // download anchor. Never navigates — safe in standalone PWAs where
-  // target=_blank is unreliable (iOS opens the preview over the app).
-  const saveImage = async (mimeType: string, src: string, filename?: string) => {
+  // Fetch the file's bytes (backend URL or inline data:) into a File.
+  const toFile = async (mimeType: string, src: string, filename?: string): Promise<File> => {
     let blob: Blob;
     if (src.startsWith('data:')) {
       const data = src.slice(src.indexOf(',') + 1);
@@ -166,23 +170,38 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
       blob = await resp.blob();
     }
     const ext = mimeType.split('/')[1] || 'png';
-    const file = new File([blob], filename || `image-${Date.now()}.${ext}`, { type: mimeType });
-    if (typeof navigator.share === 'function' && navigator.canShare?.({ files: [file] })) {
-      try { await navigator.share({ files: [file] }); return; } catch (err) {
-        // User cancelled the share sheet — not an error
-        if ((err as DOMException)?.name === 'AbortError') return;
-        console.error('Web Share failed:', err);
-      }
+    return new File([blob], filename || `image-${Date.now()}.${ext}`, { type: mimeType });
+  };
+
+  // Open the OS share sheet. Never navigates — safe in standalone PWAs
+  // where target=_blank is unreliable (iOS covers the app with a preview).
+  const shareFile = async (mimeType: string, src: string, filename?: string) => {
+    const file = await toFile(mimeType, src, filename);
+    try { await navigator.share({ files: [file] }); } catch (err) {
+      // User cancelled the share sheet — not an error
+      if ((err as DOMException)?.name === 'AbortError') return;
+      console.error('Web Share failed:', err);
     }
+  };
+
+  // Plain local download (Blob URL + download anchor — ~/Downloads, no UI).
+  // iOS Safari ignores the download attribute → touch devices use Share.
+  const downloadFile = async (mimeType: string, src: string, filename?: string) => {
+    const blob = (await toFile(mimeType, src, filename)) as File & { blob?: Blob };
     const url2 = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url2;
-    a.download = file.name;
+    a.download = blob.name;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url2), 10_000);
   };
+
+  // Image save: touch devices without share fallback → share; else download
+  const saveImage = (mimeType: string, src: string, filename?: string) =>
+    (isTouchDevice && canShareFiles ? shareFile(mimeType, src, filename) : downloadFile(mimeType, src, filename))
+      .catch((err) => console.error('Image save failed:', err));
 
   return (
     <div className={`stream-msg${msg.pending ? ' stream-msg-pending' : ''}`} data-msg-key={dataKey}>
@@ -225,22 +244,30 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
                 {msg.file.size >= 1048576 ? `${(msg.file.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(msg.file.size / 1024))} KB`}
               </div>
             </div>
-            <a
-              className="file-dl"
-              href={url(API.files(msg.file.savedName))}
-              download={msg.file.name}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => {
-                // Route through Web Share / Blob download — never navigate
-                // (iOS PWA preview otherwise covers the app, no way back).
-                e.preventDefault();
-                void saveImage(msg.file!.mimeType || 'application/octet-stream', url(API.files(msg.file!.savedName)), msg.file!.name)
-                  .catch((err) => console.error('File download failed:', err));
-              }}
-            >
-              Download
-            </a>
+            {canShareFiles && (
+              <button
+                className="file-dl"
+                onClick={() => void shareFile(msg.file!.mimeType || 'application/octet-stream', url(API.files(msg.file!.savedName)), msg.file!.name)}
+              >
+                Share
+              </button>
+            )}
+            {(!isTouchDevice || !canShareFiles) && (
+              <a
+                className="file-dl"
+                href={url(API.files(msg.file.savedName))}
+                download={msg.file.name}
+                onClick={(e) => {
+                  // Blob download — never navigate (iOS PWA preview otherwise
+                  // covers the app, no way back).
+                  e.preventDefault();
+                  void downloadFile(msg.file!.mimeType || 'application/octet-stream', url(API.files(msg.file!.savedName)), msg.file!.name)
+                    .catch((err) => console.error('File download failed:', err));
+                }}
+              >
+                Download
+              </a>
+            )}
           </div>
         )}
         {msg.images && msg.images.length > 0 && (

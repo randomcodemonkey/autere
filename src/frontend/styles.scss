@@ -1580,6 +1580,9 @@ body {
     // color lands on the dark card — unreadable.
     color: var(--c-info);
 
+    cursor: pointer;
+    font-family: inherit;
+    background: none;
     &:hover { background: rgba(255, 255, 255, 0.1); }
   }
 }
