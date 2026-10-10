@@ -33,7 +33,7 @@ export const NotificationsSection: React.FC<NotificationsSectionProps> = ({ sect
   const [note, setNote] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+    if (!isSecureContext || !('Notification' in window) || !('serviceWorker' in navigator)) {
       setSupported(false);
       return;
     }
@@ -110,7 +110,14 @@ export const NotificationsSection: React.FC<NotificationsSectionProps> = ({ sect
   };
 
   const deviceBlock = !supported ? (
-    <div className="settings-description">This browser does not support web notifications.</div>
+    <div className="settings-description">
+      Web notifications are unavailable in this browser context —{' '}
+      {!isSecureContext
+        ? 'the page is not served over HTTPS (or localhost), which iOS and desktop browsers require before exposing notifications to a site.'
+        : !('Notification' in window)
+          ? 'this browser does not expose the Notification API. On iOS, notifications only work for the PWA added to the Home Screen (iOS 16.4+) — install this instance from Safari’s share menu and open it via its icon.'
+          : 'this browser has no service-worker support.'}
+    </div>
   ) : permission === 'denied' ? (
     <div className="settings-description">
       Notifications are blocked — allow them for this site in your browser settings, then reload.
