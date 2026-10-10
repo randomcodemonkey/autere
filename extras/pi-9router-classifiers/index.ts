@@ -24,7 +24,11 @@ const SYSTEM_ONE_IDS = /(^|\/)(typesafe|jev)/i;
 const isClassifierCandidate = (id: string): boolean => SYSTEM_ONE_IDS.test(id);
 
 export default function (pi: any) {
-	pi.on("session_start", async (_event: unknown, ctx: any) => {
+	// For a resumed session, session_start can fire BEFORE pi-9router-ext's
+	// async /v1/models discovery finishes registering (empty/nonexistent
+	// provider config ⇒ nothing to patch) — so also retry on each agent
+	// start; patching is idempotent (classifiers impl already set = no-op).
+	const patch = async (_event: unknown, ctx: any) => {
 		try {
 			const registry = ctx?.modelRegistry;
 			const cfg = registry?.getRegisteredProviderConfig?.("9router");
@@ -45,11 +49,16 @@ export default function (pi: any) {
 				}));
 			if (defs.length === 0) return;
 			pi.registerProvider("9router", {
+				api: "openai-completions",
+				baseUrl: cfg.baseUrl,
+				apiKey: cfg.apiKey,
 				classifiers: { "typesafe-system-one": { classify: systemOneClassify } },
 				models: [...cfg.models, ...defs],
 			});
 		} catch (err) {
 			console.warn(`[pi-9router-classifiers] ${err instanceof Error ? err.message : err}`);
 		}
-	});
+	};
+	pi.on("session_start", patch);
+	pi.on("before_agent_start", patch);
 }
