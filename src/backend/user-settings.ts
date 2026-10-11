@@ -1143,7 +1143,7 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
         key: 'mcpServers',
         label: 'MCP servers',
         type: 'mcpServers',
-        description: 'Model Context Protocol servers for your pi sessions (pi reads the env mcp.json). Tools are callable from codemode scripts by default; exposure controls whether the model also sees them directly. Applies after a pi restart.',
+        description: 'Model Context Protocol servers for your sessions. Tools are callable from codemode scripts by default; exposure controls whether the model also sees them directly. Applies after a pi restart.',
       },
     ],
   });

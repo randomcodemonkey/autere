@@ -57,6 +57,7 @@ const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChang
       <div className="sortable-list mcp-list">
         {names.map((name) => {
           const s = servers[name] || {};
+          const exposure = s.exposure || 'codemode';
           return (
             <div key={name} className="mcp-server-row">
               <div className="mcp-row-line">
@@ -109,19 +110,47 @@ const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChang
                     </div>
                   </>
                 ) : (
-                  <div className="mcp-field">
-                    <span className="mcp-field-label">URL</span>
-                    <input
-                      className="sortable-list-input mcp-command"
-                      type="text"
-                      value={s.url || ''}
-                      placeholder="https://example.com/mcp"
-                      spellCheck={false}
-                      onChange={(e) => patch(name, name, { url: e.target.value })}
-                    />
-                  </div>
+                  <>
+                    <div className="mcp-field">
+                      <span className="mcp-field-label">URL</span>
+                      <input
+                        className="sortable-list-input mcp-command"
+                        type="text"
+                        value={s.url || ''}
+                        placeholder="https://example.com/mcp"
+                        spellCheck={false}
+                        onChange={(e) => patch(name, name, { url: e.target.value })}
+                      />
+                    </div>
+                    <div className="mcp-field">
+                      <span className="mcp-field-label">HTTP headers</span>
+                      <div className="settings-description">One per line: Name: value</div>
+                      <textarea
+                        className="mcp-textarea"
+                        rows={Math.max(2, Object.keys(s.headers || {}).length + 1)}
+                        value={Object.entries(s.headers || {}).map(([h, v]) => `${h}: ${v}`).join('\n')}
+                        placeholder={"Authorization: Bearer …\nX-Custom: value"}
+                        spellCheck={false}
+                        onChange={(e) => {
+                          const headers: Record<string, string> | undefined = e.target.value.trim()
+                            ? Object.fromEntries(
+                              e.target.value.split('\n')
+                                .map((l) => l.trim())
+                                .filter(Boolean)
+                                .map((l) => {
+                                  const i = l.indexOf(':');
+                                  return i < 0 ? null : [l.slice(0, i).trim(), l.slice(i + 1).trim()];
+                                })
+                                .filter((h): h is [string, string] => h !== null && h[0] !== '')
+                            )
+                            : undefined;
+                          patch(name, name, { headers });
+                        }}
+                      />
+                    </div>
+                  </>
                 )}
-                <div className="mcp-field">
+                <div className="mcp-field mcp-field-wide">
                   <span className="mcp-field-label">Exposure</span>
                   <select
                     className="settings-input mcp-exposure"
@@ -132,28 +161,37 @@ const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChang
                     <option value="codemode">codemode</option>
                     <option value="deferred">deferred (tool search)</option>
                     <option value="direct">direct</option>
-                    <option value="hidden">hidden</option>
                   </select>
+                  <span className="settings-description" key={exposure}>
+                    {exposure === 'codemode' && 'Tools stay out of the model’s tool declarations; codemode scripts call them via functions like mcp__server__tool and discover them with searchTools(). Keeps the context small and avoids tool-description injection.'}
+                    {exposure === 'deferred' && 'The model first sees only a name stub per tool; calling one (or using tool_search) loads the full schema on demand. Callable both natively and from codemode.'}
+                    {exposure === 'direct' && 'The full tool schemas are declared to the model like built-in tools. Most discoverable; costs the most context.'}
+                  </span>
                 </div>
-                <button className="sortable-list-remove mcp-remove" onClick={() => onChange(field.key, Object.fromEntries(names.filter((n) => n !== name).map((n) => [n, servers[n]])))} title={`Remove ${name}`}>✕</button>
               </div>
               <div className="mcp-field mcp-field-wide">
                 <span className="mcp-field-label">Description</span>
-                <input
-                  className="sortable-list-input mcp-description"
-                  type="text"
+                <textarea
+                  className="mcp-textarea"
+                  rows={2}
                   value={s.description || ''}
                   placeholder="What this server offers (shown in the system prompt and used by tool search)"
+                  spellCheck={false}
                   onChange={(e) => patch(name, name, { description: e.target.value })}
                 />
               </div>
-              <div className="mcp-enabled-row">
-                <label className="settings-label">Enabled</label>
-                <label className="settings-toggle" title="Connect this server when the session starts">
-                  <input type="checkbox" checked={s.enabled !== false} onChange={(e) => patch(name, name, { enabled: e.target.checked })} />
-                  <span className="settings-toggle-slider" />
-                </label>
+              <div className="settings-field mcp-enabled-row">
+                <div className="settings-field-header">
+                  <label className="settings-label">Enabled</label>
+                  <label className="settings-toggle" title="Connect this server when the session starts">
+                    <input type="checkbox" checked={s.enabled !== false} onChange={(e) => patch(name, name, { enabled: e.target.checked })} />
+                    <span className="settings-toggle-slider" />
+                  </label>
+                </div>
                 <span className="settings-description">Enable or disable this server. When off, pi keeps the entry but does not connect to it.</span>
+              </div>
+              <div className="mcp-remove-row">
+                <button className="btn btn-danger mcp-remove" onClick={() => onChange(field.key, Object.fromEntries(names.filter((n) => n !== name).map((n) => [n, servers[n]])))} title={`Remove ${name}`}>Remove</button>
               </div>
             </div>
           );

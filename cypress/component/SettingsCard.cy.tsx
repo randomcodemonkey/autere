@@ -416,7 +416,7 @@ describe('SettingsCard codemode/mcp (pi 1.0)', () => {
     cy.get('.mcp-server-row').should('have.length', 1);
     cy.get('.mcp-exposure').select('direct');
     cy.get('.mcp-exposure').should('have.value', 'direct');
-    cy.get('.sortable-list-remove').click();
+    cy.get('.mcp-remove').click();
     cy.get('.mcp-server-row').should('have.length', 0);
   });
 });
