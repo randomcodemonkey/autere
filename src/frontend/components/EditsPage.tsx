@@ -721,6 +721,16 @@ const FileBrowser: React.FC<{
             </div>
           </div>
         ) : null}
+        {/* Root IS a configured repo but git itself failed (dubious ownership,
+         * corrupt repo…) — repoDetail is null, so the detail pane above never
+         * rendered. Surface the error instead of clicking into a void. */}
+        {reposMode && detailRoot && rootIsRepo.get(detailRoot) && !repoDetail && repoError && (
+          <div className="repo-detail">
+            <div className="repo-detail-title">{detailRoot}</div>
+            <div className="files-error">{repoError}</div>
+            <button className="btn" onClick={() => loadRepoDetail(detailRoot, logCount)}>Retry</button>
+          </div>
+        )}
         {selected && fileCommits !== null && reposMode && (
           <div className="files-detail-tabs">
             <button className={detailTab === 'editor' ? 'active' : ''} onClick={() => setDetailTab('editor')}>Editor</button>

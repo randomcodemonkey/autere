@@ -134,7 +134,10 @@ export function repoDetail(user: string, path: string, commitCount: number): Bro
   } catch (err: any) {
     // Empty repo (no commits yet): status/remote still worked above the throw
     if (!String(err.message).includes('does not have any commits yet') && !String(err.message).includes('unborn')) {
-      return { error: `git failed: ${err.message}`, status: 500 };
+      // Prefer the stderr tail — that's where git writes actionable errors
+      // (e.g. "detected dubious ownership in repository at …").
+      const stderr = typeof err.stderr === 'string' && err.stderr.trim() ? err.stderr.trim() : String(err.message);
+      return { error: `git failed: ${stderr}`, status: 500 };
     }
   }
   return { data: detail };
