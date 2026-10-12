@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, existsSync, openSync, readSync, closeSync, fstatSync, statSync } from 'fs';
+import { readFileSync, readdirSync, existsSync, openSync, readSync, closeSync, fstatSync, statSync, appendFileSync } from 'fs';
 import { join } from 'path';
 import { SessionInfo } from './types.js';
 import { getPiEnvDir, sandboxWorkPathToHost } from './pi-env.js';
@@ -87,8 +87,10 @@ function readSessionInfoPartial(fullPath: string, prev?: SessionInfo & { cachedS
         if (!lines[i].trim()) continue;
         try {
           const e = JSON.parse(lines[i]);
-          if (e.type === 'session_info' && e.name) {
-            sessionName = e.name;
+          if (e.type === 'session_info') {
+            // The LAST session_info entry wins — an empty/null name is pi's
+            // explicit "title cleared" (session-manager.js), not a gap.
+            sessionName = (e.name ?? '').trim() || null;
             return true;
           }
         } catch {
@@ -174,8 +176,8 @@ function readSessionInfoFull(fullPath: string): SessionInfo | null {
           if (!lines[i].trim()) continue;
           try {
             const e = JSON.parse(lines[i]);
-            if (e.type === 'session_info' && e.name) {
-              sessionName = e.name;
+            if (e.type === 'session_info') {
+              sessionName = (e.name ?? '').trim() || null; // last wins; empty = cleared title
               break;
             }
           } catch (lineErr) { log.sessions.error('Failed to parse session name:', lineErr); break; }
@@ -211,6 +213,38 @@ function readSessionInfoFull(fullPath: string): SessionInfo | null {
 }
 
 // ── Session listing ──
+
+/** Append a session_info entry (pi's label format — session-manager.js
+ *  appendSessionInfo) WITHOUT a live pi process: rename/clear must work on
+ *  an inactive session, whose label lives only in this file. An empty name
+ *  is pi's explicit "title cleared" — the disk readers honor the LAST
+ *  entry regardless of name. parentId chains to the file's leaf entry so
+ *  pi's entry tree stays intact on resume. */
+export function appendSessionInfo(sessionPath: string, name: string | null): void {
+  try {
+    let parentId: string | undefined;
+    const size = statSync(sessionPath).size;
+    if (size > 0) {
+      const fd = openSync(sessionPath, 'r');
+      try {
+        const start = Math.max(0, size - 1024);
+        const tail = Buffer.alloc(size - start);
+        readSync(fd, tail, 0, tail.length, start);
+        const lines = tail.toString('utf-8').split('\n').filter((l) => l.trim());
+        const last = lines[lines.length - 1];
+        if (last) { try { parentId = JSON.parse(last).id; } catch { /* chain is best-effort */ } }
+      } finally { closeSync(fd); }
+    }
+    const entry = {
+      type: 'session_info',
+      id: Math.random().toString(16).slice(2, 10).padEnd(8, '0'),
+      parentId,
+      timestamp: new Date().toISOString(),
+      name: (name ?? '').replace(/[\r\n]+/g, ' ').trim(),
+    };
+    appendFileSync(sessionPath, JSON.stringify(entry) + '\n', 'utf-8');
+  } catch (err) { log.sessions.error(`Failed to append session_info to ${sessionPath}:`, err); }
+}
 
 /**
  * Read session files for ONE user — exclusively from that user's own pi

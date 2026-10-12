@@ -35,6 +35,7 @@ import { isPiImagesInstalled } from './image-models.js';
 import { getPiEnvDir, ensurePiEnv, validateSandboxImage } from './pi-env.js';
 import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
+import { appendSessionInfo } from './sessions.js';
 import { getHistoryLimit } from './user-settings.js';
 import { getMcpServers, setMcpServer, deleteMcpServer } from './mcp-config.js';
 import { extensionsState } from './state.js';
@@ -1192,15 +1193,28 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     handler: async (c) => {
       try {
         const body = await readBody(c.req);
-        const t = await resolveTarget(c, body.sessionId);
-        if (!t) { sendTargetMissing(c); return; }
         const { name } = body;
         if (typeof name !== 'string') { sendJSON(c.res, { success: false, error: 'name must be a string' }, 400); return; }
         const trimmed = name.trim();
-        t.state.sessionState.sessionName = trimmed || null;
-        t.broadcast({ type: 'status', data: { ...t.state.sessionState } });
+        // Label lives in the session jsonl (session_info entry) — the FILE is
+        // the source of truth (pi rebuilds its state from it on respawn), so
+        // renaming works on inactive sessions without spawning a process.
+        const t = await resolveTarget(c, body.sessionId); // may be undefined when inactive
+        const liveFile = t?.routedSessionFile();
+        const viewId = typeof body.sessionId === 'string' ? body.sessionId : null;
+        const info = pm.readSessionsForUser(c.user).find((s) => viewId
+          ? s.id === viewId || s.sessionFile === viewId
+          : c.viewed?.has?.(s.id));
+        const sessionFile = liveFile && existsSync(liveFile)
+          ? liveFile
+          : info?.sessionFile;
+        if (!sessionFile) { sendTargetMissing(c); return; }
+        appendSessionInfo(sessionFile, trimmed || null); // empty = cleared title
+        if (liveFile === sessionFile && t?.state.sessionState) {
+          t.state.sessionState.sessionName = trimmed || null;
+          t.broadcast({ type: 'status', data: { ...t.state.sessionState } });
+        }
         broadcastToUser(c.user, { type: 'sessions', data: pm.listSessions(c.user, c.viewed) });
-        await t.rpc.setSessionName(trimmed);
         sendJSON(c.res, { success: true });
       } catch (err: any) {
         sendJSON(c.res, { success: false, error: `Failed to set session name: ${err.statusCode ? err.message : err}` }, err.statusCode || 400);
