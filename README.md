@@ -19,12 +19,13 @@ Optionally build the docker image with the included `build.sh` script, you may a
 
 The service is intended to be ran with docker-compose. All configuration is via env variables (see below for supported variables). 
 
+### Running
 
 Start Autere backend using the default [docker-compose.yaml](docker/docker-compose.yaml) file.
 
 ```bash
 mkdir autere && \
-curl -o autere/docker-compose-yml "https://raw.githubusercontent.com/randomcodemonkey/autere/refs/heads/main/docker/docker-compose.yaml" && \
+curl -o autere/docker-compose.yaml "https://raw.githubusercontent.com/randomcodemonkey/autere/refs/heads/main/docker/docker-compose.yaml" && \
 $(cd autere && docker compose up -d)
 ```
 
