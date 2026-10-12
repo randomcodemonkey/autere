@@ -27,7 +27,7 @@
 import { getUserAllowedDirs, getUserRole, isRegisteredUser } from './users.js';
 import { writeAgentAccess } from './auth.js';
 import { lstatSync, readlinkSync } from 'fs';
-import { cpSync, existsSync, mkdirSync, readdirSync, copyFileSync, rmSync, symlinkSync, readFileSync, writeFileSync, renameSync } from 'fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, copyFileSync, rmSync, symlinkSync, readFileSync, writeFileSync, renameSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { invalidateCache, setExtraEnabled, getAvailableExtras, DEFAULT_ENABLED_EXTRAS, writeSavedExtras, desiredExtras } from './user-settings.js';
 import { execFileSync } from 'node:child_process';
@@ -334,11 +334,28 @@ export function prepareSandboxEnvDir(agentDir: string): void {
     const link = join(agentDir, name);
     let src: string | null = null;
     try { src = readlinkSync(link); } catch { /* not a symlink — leave */ }
-    if (!src) continue;
-    const target = src.startsWith('/') ? src : join(agentDir, src);
-    try { rmSync(link); } catch { /* already replaced */ }
-    try { cpSync(target, link, { recursive: true, dereference: true, force: true }); }
-    catch { /* missing master dir — pi tolerates absent optional pieces */ }
+    if (src) {
+      const target = src.startsWith('/') ? src : join(agentDir, src);
+      try { rmSync(link); } catch { /* already replaced */ }
+      try { cpSync(target, link, { recursive: true, dereference: true, force: true }); }
+      catch { /* missing master dir — pi tolerates absent optional pieces */ }
+      continue;
+    }
+    // Real dir whose entries may be symlinks (extensions after
+    // materializeEnvExtensions point at ~/pi-ext-extra) — flatten those too:
+    // their targets are NOT mounted in the sandbox, so a symlink copied
+    // through dangles in-container (tools silently vanish).
+    let entries: import('fs').Dirent[];
+    try { entries = readdirSync(link, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (!e.isSymbolicLink()) continue;
+      const entry = join(link, e.name);
+      let dest: string;
+      try { dest = realpathSync(entry); } catch { rmSync(entry, { recursive: true }); continue; }
+      rmSync(entry, { recursive: true });
+      try { cpSync(dest, entry, { recursive: true, dereference: true, force: true }); }
+      catch { /* unreadable in env's context — pi tolerates a missing extra */ }
+    }
   }
 }
 
