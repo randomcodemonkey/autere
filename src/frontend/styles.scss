@@ -821,6 +821,29 @@ body {
   border: 2px solid transparent;
 }
 
+// ── ErrorBoundary fallback ──
+.error-boundary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.9rem 1rem;
+  border-color: var(--c-danger-border, var(--c-border));
+
+  .card-title {
+    font-weight: 600;
+  }
+
+  .btn-group {
+    display: flex;
+  }
+}
+
+.error-boundary-message {
+  color: var(--c-text-2);
+  font-size: 0.85rem;
+  word-break: break-word;
+}
+
 .card {
   background: var(--c-surface-2);
   border-radius: 0.75rem;

@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { basePath, url } from './base-path';
 import { getClientId, CLIENT_ID_HEADER } from './client-id';
+import ErrorBoundary from './components/ErrorBoundary';
 import './styles.scss';
 
 // Stamp every same-origin API/SSE request with this tab's client id — the
@@ -27,9 +28,11 @@ console.log(`[autere] UI build ${__BUILD_ID__}`);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <BrowserRouter basename={basePath()}>
-      <App />
-    </BrowserRouter>
+    <ErrorBoundary name="Application" isRoot>
+      <BrowserRouter basename={basePath()}>
+        <App />
+      </BrowserRouter>
+    </ErrorBoundary>
   </React.StrictMode>
 );
 

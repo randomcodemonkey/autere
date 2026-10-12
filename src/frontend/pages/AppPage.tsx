@@ -10,6 +10,7 @@ const EditsPage = lazy(() => import('../components/EditsPage').then((m) => ({ de
 import { UsersCard } from '../components/UsersCard';
 import { UserCard } from '../components/UserCard';
 import { StreamCard } from '../components/StreamCard';
+import ErrorBoundary from '../components/ErrorBoundary';
 import { Modal } from '../components/Modal';
 import { SessionView, workdirsUnsaved, acknowledgeWorkdirsDirty } from '../components/SessionModal';
 import { url, basePath } from '../base-path';
@@ -390,6 +391,7 @@ export function AppPage({
         </div>
         <div className="chat-wrapper">
           {activeView === 'sessions' && (
+            <ErrorBoundary key="v-sessions" name="Sessions">
             <SessionView
               initialView={newFormRequested ? 'new' : undefined}
               onConsumedInitial={() => setNewFormRequested(false)}
@@ -403,28 +405,41 @@ export function AppPage({
               onSwitchSession={handleSwitchSession}
               switching={switchingSession}
             />
+            </ErrorBoundary>
           )}
           {activeView === 'chat' && (
+            <ErrorBoundary key="v-chat" name="Chat">
             <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={() => { setNewFormRequested(true); handleSetView('sessions'); }} onGoToView={(v) => handleSetView(v === 'files' ? 'edits' : v)} onSetModel={handleCommandSetModel} onSetPersona={handleCommandSetPersona} modelNames={models.map((m) => m.id)} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={urlSessionId || sessionState.sessionId} />
+            </ErrorBoundary>
           )}
           {activeView === 'settings' && (
-            <SettingsCard sseConnected={sseConnected} />
+            <ErrorBoundary key="v-settings" name="Settings">
+              <SettingsCard sseConnected={sseConnected} />
+            </ErrorBoundary>
           )}
           {activeView === 'tasks' && (
-            <ScheduledTasksCard sseConnected={sseConnected} />
+            <ErrorBoundary key="v-tasks" name="Scheduled tasks">
+              <ScheduledTasksCard sseConnected={sseConnected} />
+            </ErrorBoundary>
           )}
           {activeView === 'edits' && (
-            <div className="card edits-card">
-              <Suspense fallback={<div className="settings-description" style={{ padding: 12 }}>Loading files…</div>}>
-                <EditsPage sessionId={targetSessionRef.current} userRole={userRole} />
-              </Suspense>
-            </div>
+            <ErrorBoundary key="v-edits" name="Files">
+              <div className="card edits-card">
+                <Suspense fallback={<div className="settings-description" style={{ padding: 12 }}>Loading files…</div>}>
+                  <EditsPage sessionId={targetSessionRef.current} userRole={userRole} />
+                </Suspense>
+              </div>
+            </ErrorBoundary>
           )}
           {activeView === 'users' && (
-            <UsersCard username={username} />
+            <ErrorBoundary key="v-users" name="Users">
+              <UsersCard username={username} />
+            </ErrorBoundary>
           )}
           {activeView === 'user' && (
-            <UserCard username={username} />
+            <ErrorBoundary key="v-user" name="Account">
+              <UserCard username={username} />
+            </ErrorBoundary>
           )}
         </div>
       </div>
