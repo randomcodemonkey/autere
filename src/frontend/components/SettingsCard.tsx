@@ -29,13 +29,28 @@ const FieldShell: React.FC<{ field: SettingField; children: React.ReactNode }> =
 // Per-user pi mcp.json editor. One row per server: name, stdio command
 // (+args) or http url, exposure, enabled. Rendered as a full section so the
 // Add button can sit on the section title row.
+let mcpRowSeq = 0;
 const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChange: (key: string, v: Record<string, any>) => void }> = ({ field, value, onChange }) => {
   const servers: Record<string, any> = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {};
   const names = Object.keys(servers);
+  // Rows are keyed by a stable id, NOT the server name: the name field is
+  // itself editable, so keying by name remounts the row on every keystroke
+  // (focus loss). The map is rename-aware (name edit moves the id) and
+  // pruned to current entries so removed/reloaded servers don't leak ids.
+  const idsRef = useRef<Record<string, string>>({});
+  const rowId = (name: string): string => {
+    if (!idsRef.current[name]) idsRef.current[name] = `mcp-row-${++mcpRowSeq}`;
+    return idsRef.current[name];
+  };
   const patch = (oldName: string, name: string, s: any) => {
     const next: Record<string, any> = {};
     for (const n of names) next[n === oldName ? name : n] = servers[n];
     next[name] = { ...next[name], ...s };
+    // Rename: move the row id so the edited row keeps its DOM (and focus)
+    if (oldName !== name && idsRef.current[oldName]) {
+      idsRef.current[name] = idsRef.current[oldName];
+      delete idsRef.current[oldName];
+    }
     onChange(field.key, next);
   };
   // args round-trip through a comma-separated string; entries with
@@ -59,7 +74,7 @@ const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChang
           const s = servers[name] || {};
           const exposure = s.exposure || 'codemode';
           return (
-            <div key={name} className="mcp-server-row">
+            <div key={rowId(name)} className="mcp-server-row">
               <div className="mcp-row-line">
                 <div className="mcp-field">
                   <span className="mcp-field-label">Name</span>

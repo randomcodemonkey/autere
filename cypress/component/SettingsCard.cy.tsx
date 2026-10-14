@@ -409,6 +409,17 @@ describe('SettingsCard codemode/mcp (pi 1.0)', () => {
     });
   });
 
+  it('typing in an MCP name/url field keeps focus row-stable', () => {
+    stub({ codemode: false, mcpServers: { fs: { command: 'npx', exposure: 'codemode' } } }, false);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
+    cy.get('.mcp-name').click().type('-v2');
+    cy.focused().should('have.class', 'mcp-name');
+    cy.get('.mcp-name').should('have.value', 'fs-v2');
+    cy.get('.mcp-command').click().type(' -y pkg');
+    cy.focused().should('have.class', 'mcp-command');
+    cy.get('.mcp-name').should('have.value', 'fs-v2'); // row not remounted
+  });
+
   it('add/remove rows and exposure select edit the mcp draft', () => {
     stub({ codemode: false, mcpServers: {} }, false);
     cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
