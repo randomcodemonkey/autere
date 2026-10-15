@@ -317,6 +317,69 @@ const piImagesHandler: ExtensionHandler = {
   },
 };
 
+// ── pi-web-search handler ──
+
+// pi-web-search reads its optional dedicated-model config from
+// web-search.json in the pi agent dir (respects PI_CODING_AGENT_DIR, so
+// per-user envs shadow the master copy — same precedence at runtime).
+const WEB_SEARCH_ENV_KEYS: Record<string, string> = {
+  'google-generative-ai': 'GEMINI_API_KEY',
+  'google': 'GEMINI_API_KEY',
+  'antigravity': 'GEMINI_API_KEY',
+  'xai': 'XAI_API_KEY',
+  'openai': 'OPENAI_API_KEY',
+  'anthropic': 'ANTHROPIC_API_KEY',
+  'deepseek': 'DEEPSEEK_API_KEY',
+};
+
+const piWebSearchHandler: ExtensionHandler = {
+  name: 'pi-web-search',
+  displayName: 'Web Search',
+
+  enrich(info: ExtensionInfo): ExtensionInfo {
+    // Config precedence mirrors the extension: per-user env dir first.
+    const envAgentDir = join(PI_ENVS_DIR, sanitizeUserName('admin'));
+    const configPath = process.env.PI_WEB_SEARCH_CONFIG
+      || join(existsSync(envAgentDir) ? envAgentDir : PI_DIR, 'web-search.json');
+    info.configPath = configPath;
+    let raw: string | null = null;
+    let parsed: any = {};
+    let invalid: string | null = null;
+    try {
+      raw = readFileSync(configPath, 'utf-8');
+      try { parsed = JSON.parse(raw); } catch (e: any) { invalid = `Invalid JSON: ${e?.message || e}`; parsed = {}; }
+      if (!invalid && (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !String(parsed?.provider || '') || !String(parsed?.model || parsed?.modelId || ''))) {
+        invalid = 'Expected a JSON object with non-empty provider and model fields';
+        parsed = {};
+      }
+    } catch { /* missing = fine, falls back to current model */ }
+    const mode: Record<string, any> = { 'Config path': configPath };
+    if (invalid) {
+      info.status = 'error';
+      info.statusText = 'Error';
+      info.details.configError = invalid;
+      mode['Mode'] = `Invalid config — ${invalid}`;
+    } else if (raw !== null) {
+      info.details.dedicatedModel = `${parsed.provider}/${parsed.model ?? parsed.modelId}`;
+      info.status = 'ok';
+      info.statusText = 'Active';
+      mode['Mode'] = 'Dedicated search model';
+      mode['Search model'] = info.details.dedicatedModel;
+      mode['Credentials'] = WEB_SEARCH_ENV_KEYS[parsed.provider]
+        ? (process.env[WEB_SEARCH_ENV_KEYS[parsed.provider]] ? `${WEB_SEARCH_ENV_KEYS[parsed.provider]} set` : `${WEB_SEARCH_ENV_KEYS[parsed.provider]} NOT set`)
+        : 'via agent auth';
+    } else {
+      // No dedicated model: the tool uses the current conversation model
+      // when it natively supports search, errors otherwise.
+      info.status = info.status === 'error' ? info.status : 'neutral';
+      if (!info.statusText || info.statusText === 'Loaded') info.statusText = 'Uses current model';
+      mode['Mode'] = 'Current conversation model (must support native search)';
+    }
+    info.sections = [...(info.sections || []), { header: 'Search mode', items: [mode] }];
+    return info;
+  },
+};
+
 // ── Registry ──
 
 const handlers = new Map<string, ExtensionHandler>();
@@ -328,6 +391,7 @@ function register(handler: ExtensionHandler) {
 // Register built-in handlers
 register(nineRouterHandler);
 register(memoryHandler);
+register(piWebSearchHandler);
 register(piImagesHandler);
 
 // ── pi-dedup handler ──

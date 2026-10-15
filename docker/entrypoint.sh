@@ -16,6 +16,8 @@ done
 # npm packages: pi-9router-ext only when 9router is actually the provider.
 if [ "$AUTERE_PROVIDER" ] && [ "$AUTERE_PROVIDER" != "9router" ]; then
   echo "AUTERE_PROVIDER=$AUTERE_PROVIDER — skipping 9router extension install"
+  echo "Installing pi-web-search (provider-native web search)"
+  pi install npm:pi-web-search
 else
   echo "Installing pi extensions"
   pi install npm:pi-9router-ext
