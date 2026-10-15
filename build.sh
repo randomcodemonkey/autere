@@ -74,6 +74,7 @@ if [[ -n $increment ]]; then
   version="$(bump_field "$here/version.txt" "$increment")"
   echo "$version" > "$here/version.txt"
   node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json'));p.version='$version';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+  [[ ! -f package-lock.json ]] || node -e "const fs=require('fs');const l=JSON.parse(fs.readFileSync('package-lock.json'));l.version='$version';if(l.packages&&l.packages[''])l.packages[''].version='$version';fs.writeFileSync('package-lock.json',JSON.stringify(l,null,2)+'\n');"
 fi
 
 version_file="$(cat "$here/version.txt")"
@@ -92,7 +93,13 @@ args+=("-f" "$here/docker/Dockerfile")
 
 if [[ $release -eq 1 ]]; then
   git add "$here/version.txt" "$here/package.json"
-  git commit -m "version: $version"
+  [[ ! -f "$here/package-lock.json" ]] || git add "$here/package-lock.json"
+  if ! git diff --cached --quiet; then
+    git commit -m "version: $version"
+    git tag -f "v$version"
+  else
+    echo "version files already committed — skipping commit/tag"
+  fi
 fi
 
 if docker buildx version >/dev/null 2>&1; then

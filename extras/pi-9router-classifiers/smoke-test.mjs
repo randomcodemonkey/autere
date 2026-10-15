@@ -39,7 +39,8 @@ factory({
 	on(ev, h) { if (ev === "session_start") handler = h; },
 	registerProvider(name, config) { registered = { name, config }; },
 });
-handler?.({ type: "session_start", reason: "startup" }, {
+// Handler is async (classifier impl resolves lazily) — must await it before asserting.
+await handler?.({ type: "session_start", reason: "startup" }, {
 	modelRegistry: { getRegisteredProviderConfig: () => cfg },
 });
 

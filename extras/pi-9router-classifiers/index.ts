@@ -17,9 +17,38 @@
  * metadata is untouched and that extension's session_start listener already
  * fixed the combos by the time this merge sees the models list.
  */
-import { classify as systemOneClassify } from "@earendil-works/pi-ai/api/typesafe-system-one";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const SYSTEM_ONE_IDS = /(^|\/)(typesafe|jev)/i;
+
+type Classify = (model: unknown, context: unknown, options: unknown) => Promise<unknown>;
+
+// pi-ai exports the System One classify only via the deep subpath
+// `@earendil-works/pi-ai/api/typesafe-system-one`. Bundled pi resolves
+// extension imports through an internal module map that carries NO pi-ai
+// deep subpaths — a top-level (or even lazily attempted) specifier import
+// fails there, so fall back to importing the vendored file from pi's own
+// install directory, located by walking up from the running CLI entry.
+let classifyCache: Classify | null | undefined;
+const loadSystemOneClassify = async (): Promise<Classify | null> => {
+	if (classifyCache !== undefined) return classifyCache;
+	try {
+		classifyCache = (await import("@earendil-works/pi-ai/api/typesafe-system-one")).classify;
+		return classifyCache;
+	} catch { /* bundled pi: subpath not in the module map */ }
+	const start = process.argv?.[1] ? dirname(process.argv[1]) : "";
+	for (let dir = start, prev = ""; dir && dir !== prev; [prev, dir] = [dir, dirname(dir)]) {
+		const file = join(dir, "node_modules", "@earendil-works", "pi-ai", "dist", "api", "typesafe-system-one.js");
+		if (!existsSync(file)) continue;
+		try {
+			classifyCache = (await import(pathToFileURL(file).href)).classify;
+		} catch { break; }
+		return classifyCache;
+	}
+	return (classifyCache = null);
+};
 
 const isClassifierCandidate = (id: string): boolean => SYSTEM_ONE_IDS.test(id);
 
@@ -30,6 +59,8 @@ export default function (pi: any) {
 	// start; patching is idempotent (classifiers impl already set = no-op).
 	const patch = async (_event: unknown, ctx: any) => {
 		try {
+			const classify = await loadSystemOneClassify();
+			if (!classify) return; // pi-ai vendored copy unavailable — log once below
 			const registry = ctx?.modelRegistry;
 			const cfg = registry?.getRegisteredProviderConfig?.("9router");
 			if (!cfg || !Array.isArray(cfg.models) || !cfg.baseUrl) return;
@@ -52,7 +83,7 @@ export default function (pi: any) {
 				api: "openai-completions",
 				baseUrl: cfg.baseUrl,
 				apiKey: cfg.apiKey,
-				classifiers: { "typesafe-system-one": { classify: systemOneClassify } },
+				classifiers: { "typesafe-system-one": { classify } },
 				models: [...cfg.models, ...defs],
 			});
 		} catch (err) {
