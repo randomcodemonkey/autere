@@ -2667,6 +2667,83 @@ body {
   }
 }
 
+// Markdown-enabled chat input (CodeMirror, desktop only) — shares
+// .chat-input's border/background. On touch the editor is never mounted,
+// so the textarea below keeps its real padding; this block only applies
+// to the CodeMirror case.
+//
+// Scrolling caveat: with CodeMirror the scroll container is .cm-scroller
+// (inside .chat-input), so .chat-input's padding would leave 0.6rem dead
+// strips at the top/bottom edges where wheel/touch scrolling does nothing.
+// Fix: visually keep the padding (border, bg, rounded corners on
+// .chat-input), but zero .chat-input's padding and apply the same inset as
+// margin on .cm-content inside the scroll container — the whole box is
+// then scroll-sensitive. (On touch we never mount the editor here — the
+// textarea keeps real padding; this block only reconfigures the
+// CodeMirror case.)
+.chat-input.chat-editor {
+  display: flex;
+  cursor: text;
+  // .chat-input's padding is reclaimed: content spacing is applied to
+  // .cm-content below instead
+  padding: 0;
+
+  &:focus-within { border-color: var(--c-info); }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .cm-editor {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    height: 100%;
+  }
+
+  .cm-scroller {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    font-family: inherit;
+    line-height: 1.4;
+
+    // Same visual inset as .chat-input's 0.6rem/0.75rem padding, but on the
+    // content inside the scroll container → no dead scroll zones at edges
+    .cm-content {
+      margin: 0.6rem 0.75rem;
+      padding: 0 !important;
+      max-width: none;
+    }
+  }
+}
+
+// Markdown syntax highlighting in the chat input (classes assigned by
+// MarkdownEditor's HighlightStyle)
+.md-heading {
+  font-weight: bold;
+  font-size: 1.05em;
+}
+
+.md-strong { font-weight: bold; }
+.md-emphasis { font-style: italic; }
+.md-strikethrough { text-decoration: line-through; }
+
+.md-link {
+  color: var(--c-info);
+  text-decoration: underline;
+}
+
+.md-code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.93em;
+  background: var(--c-surface-2);
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.25rem;
+}
+
+.md-quote {
+  color: var(--c-text-dimmest);
+  font-style: italic;
+}
+
 .chat-send-btn {
   background: var(--c-border);
   border: 1px solid var(--c-border-2);

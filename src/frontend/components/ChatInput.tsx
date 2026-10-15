@@ -1,6 +1,10 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useRef, useCallback, useEffect } from 'react';
 import { url } from '../base-path';
 import { API } from '../api-paths';
+
+// CodeMirror markdown editor loads as a separate chunk — it's only used on
+// desktop, and the initial bundle stays lean.
+const MarkdownEditor = lazy(() => import('./MarkdownEditor'));
 
 interface AttachedFile {
   mimeType: string;
@@ -38,6 +42,16 @@ interface ChatInputProps {
 // Detect touch devices: on mobile, the virtual keyboard's Return key should
 // insert a newline, not submit.  Users tap the Send button instead.
 const IS_TOUCH_DEVICE = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
+
+// CodeMirror markdown input is desktop-only: touch keeps the plain textarea
+// (virtual keyboards are flaky with CodeMirror's contenteditable), and under
+// Cypress the tests drive the textarea's .value semantics.
+const USE_MARKDOWN_EDITOR = !IS_TOUCH_DEVICE && typeof window !== 'undefined' && !('Cypress' in window);
+
+// Editor box height for a row count — derived from .chat-input's .85rem font
+// at line-height 1.4 plus the .6rem top/bottom padding. ponytail: computed
+// from CSS values; update both together if .chat-input's metrics change.
+const editorHeight = (rows: number) => `calc(${rows} * 1.19rem + 1.2rem + 2px)`;
 
 const MAX_ATTACHED = 4;
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB per file — matches backend limit
@@ -99,7 +113,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
   // Drag-to-resize: track vertical movement while the handle is held
   useEffect(() => {
     if (!draggingInput) return;
-    const lineHeight = parseFloat(getComputedStyle(textareaRef.current!).lineHeight) || 21;
+    const el = USE_MARKDOWN_EDITOR ? editorApiRef.current?.contentDOM() : editAreaRef.current;
+    if (!el || !dragStart.current) return;
+    const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 21;
     const move = (e: MouseEvent) => {
       const { y, rows } = dragStart.current!;
       // Ceiling: half the viewport in rows (matches .chat-input max-height)
@@ -123,7 +139,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
   // Persona names for /persona tab-completion (fetched once on demand)
   const personaNamesRef = useRef<string[] | null>(null);
   const [images, setImages] = useState<AttachedFile[]>([]);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // The editable element: either the plain textarea or the CodeMirror
+  // wrapper — used for drag-resize metrics and post-send cleanup.
+  const editAreaRef = useRef<HTMLElement>(null);
+  const editorApiRef = useRef<import('./MarkdownEditor').MarkdownEditorHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // NOTE: the textarea has a CONSTANT size in both states (1 row collapsed,
@@ -179,7 +198,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
       const cmd = tokens[0];
       const arg = tokens.slice(1).join(' ').trim();
       updateValue('');
-      if (textareaRef.current) textareaRef.current.style.height = '';
+      if (editAreaRef.current) editAreaRef.current.style.height = '';
 
       switch (cmd) {
         case '/new':
@@ -258,8 +277,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
         // Collapse the expanded input and release focus so the UI returns to
         // the compact one-row state after sending (Enter submit included).
         setFocused(false);
-        textareaRef.current?.blur();
-        if (textareaRef.current) textareaRef.current.style.height = '';
+        if (USE_MARKDOWN_EDITOR) editorApiRef.current?.blur();
+        else editAreaRef.current?.blur();
+        if (editAreaRef.current) editAreaRef.current.style.height = '';
         // On mobile, force the browser to recalculate layout after keyboard dismisses
         requestAnimationFrame(() => window.scrollTo(0, 0));
       } else {
@@ -309,10 +329,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Tab' && value.startsWith('/')) {
-      const ta = textareaRef.current;
+      const ta = editAreaRef.current;
       const el = e.target as HTMLTextAreaElement;
       completeSlash(value, (v) => {
-        if (ta) {
+        if (ta instanceof HTMLTextAreaElement) {
           const end = v.length;
           ta.setSelectionRange(end, end);
         }
@@ -334,6 +354,25 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
       send(isStreaming ? 'steer' : 'prompt');
     }
   };
+
+  // CodeMirror path: Tab fires here via bubbling (Enter/Shift-Enter are
+  // handled inside the editor's keymap — see MarkdownEditor.tsx).
+  const handleEditorKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Tab' && value.startsWith('/')) {
+      completeSlash(value, () => {
+        editorApiRef.current?.moveCursorToEnd();
+      });
+      e.preventDefault();
+    }
+  }, [value, completeSlash]);
+
+  const handleEditableBlur = useCallback(() => {
+    setFocused(false);
+    // On mobile, when the keyboard dismisses, the viewport may not
+    // resize correctly, leaving a gray gap.  Scrolling to top forces
+    // the browser to recalculate the layout.
+    requestAnimationFrame(() => window.scrollTo(0, 0));
+  }, []);
 
   const isDisabled = sending || disabled;
   const canSend = !isDisabled && (value.trim().length > 0 || images.length > 0);
@@ -403,24 +442,36 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
         </div>
       )}
       <div className="chat-input-row">
-        <textarea
-          ref={textareaRef}
-          className="chat-input"
-          placeholder={isStreaming ? 'Steer the agent...' : 'Type a message... (/help for commands)'}
-          rows={focused ? (inputRows ?? 4) : 1}
-          value={value}
-          onChange={(e) => updateValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onFocus={() => setFocused(true)}
-          onBlur={() => {
-            setFocused(false);
-            // On mobile, when the keyboard dismisses, the viewport may not
-            // resize correctly, leaving a gray gap.  Scrolling to top forces
-            // the browser to recalculate the layout.
-            requestAnimationFrame(() => window.scrollTo(0, 0));
-          }}
-          disabled={disabled}
-        />
+        {USE_MARKDOWN_EDITOR ? (
+          <Suspense fallback={null}> {/* ponytail: chunk loads fast; add a loading textarea fallback if mount flicker is ever visible */}
+            <MarkdownEditor
+              ref={editorApiRef}
+              className="chat-input chat-editor"
+              style={{ height: editorHeight(focused ? (inputRows ?? 4) : 1) }}
+              value={value}
+              onChange={updateValue}
+              onSend={() => send(isStreaming ? 'steer' : 'prompt')}
+              placeholder={isStreaming ? 'Steer the agent...' : 'Type a message... (/help for commands)'}
+              disabled={disabled}
+              onFocus={() => setFocused(true)}
+              onBlur={handleEditableBlur}
+              onKeyDown={handleEditorKeyDown}
+            />
+          </Suspense>
+        ) : (
+          <textarea
+            ref={editAreaRef as React.Ref<HTMLTextAreaElement>}
+            className="chat-input"
+            placeholder={isStreaming ? 'Steer the agent...' : 'Type a message... (/help for commands)'}
+            rows={focused ? (inputRows ?? 4) : 1}
+            value={value}
+            onChange={(e) => updateValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onFocus={() => setFocused(true)}
+            onBlur={handleEditableBlur}
+            disabled={disabled}
+          />
+        )}
         {isStreaming ? (
           <div className="chat-action-buttons">
             <button
