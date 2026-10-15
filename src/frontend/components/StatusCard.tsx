@@ -191,12 +191,12 @@ export const StatusCard: React.FC<StatusCardProps> = ({
           <span className="modal-uptime-value">{formatUptime(uptime.autereStartedAt, now)}</span>
         </div>
         <div className="modal-uptime-row">
-          <span className="modal-uptime-label">autere version</span>
-          <span className="modal-uptime-value">{formatAppVersion()}</span>
-        </div>
-        <div className="modal-uptime-row">
           <span className="modal-uptime-label">pi version</span>
           <span className="modal-uptime-value">{uptime.piVersion || '—'}</span>
+        </div>
+        <div className="modal-uptime-row">
+          <span className="modal-uptime-label">autere version</span>
+          <span className="modal-uptime-value">{formatAppVersion()}</span>
         </div>
         <div className="modal-uptime-row">
           <span className="modal-uptime-label">UI build</span>
