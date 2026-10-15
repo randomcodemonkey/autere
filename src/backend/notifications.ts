@@ -13,6 +13,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
 import { randomUUID } from 'crypto';
+import { createTransport } from 'nodemailer';
 import webpush from 'web-push';
 import { AUTERE_DIR, USER_SETTINGS_DIR } from './constants.js';
 import { getUserSetting } from './user-settings.js';
@@ -123,7 +124,58 @@ export function deleteSubscription(user: string, endpoint: string): boolean {
   return true;
 }
 
-// ── Sending ──
+// ── Email (SMTP) channel ──
+// Per-user settings (Settings → Notifications): notifySmtp toggle + server
+// config. Same kind toggles, content limits and payload as push.
+
+/** SMTP transport for a notification email; input already validated. */
+function smtpTransport(cfg: { host: string; port: number; tls: string; user?: string; pass?: string }) {
+  return createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.tls === 'implicit', // TLS from the first byte (port 465)
+    requireTLS: cfg.tls === 'starttls', // start plaintext, then STARTTLS
+    ignoreTLS: cfg.tls === 'none',
+    auth: cfg.user ? { user: cfg.user, pass: cfg.pass ?? '' } : undefined,
+    connectionTimeout: 15_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 30_000,
+  });
+}
+
+/**
+ * Deliver one notification by email — fire-and-forget helper shared by
+ * sendNotification; resolves with the same {sent, reason} shape.
+ */
+async function sendEmail(
+  user: string,
+  payload: NotificationPayload,
+  cfg: { host: string; port: number; tls: string; user?: string; pass?: string; address: string },
+): Promise<{ sent: number; reason?: string }> {
+  const t0 = Date.now();
+  try {
+    const transport = smtpTransport(cfg);
+    try {
+      await transport.sendMail({
+        from: cfg.address,
+        to: cfg.address,
+        subject: clipNotification(payload.title),
+        text: payload.body,
+      });
+      log.notifications.info(`Email notification to "${user}" delivered in ${Date.now() - t0}ms`);
+      return { sent: 1 };
+    } finally {
+      transport.close();
+    }
+  } catch (err: any) {
+    // err.response carries the SMTP server's own refusal text when there is one
+    const reason = `${err?.message ?? err}${err?.response ? ` — ${err.response}` : ''}`;
+    log.notifications.error(`Email notification to "${user}" failed after ${Date.now() - t0}ms: ${reason}`);
+    return { sent: 0, reason };
+  }
+}
+
+  // ── Sending ──
 
 /** Whether the user wants this kind of notification (default on). */
 export function notificationsWanted(user: string, kind: NotificationKind): boolean {
@@ -131,10 +183,35 @@ export function notificationsWanted(user: string, kind: NotificationKind): boole
 }
 
 /**
- * Push one notification to every subscribed device of `user`.
- * Dead subscriptions (404/410 from the push service) are dropped.
- * Resolves with the delivery count; never rejects — a failed notification
- * must not take down the turn end / task run that triggered it.
+ * The user's SMTP config when email notifications are enabled AND valid;
+ * null otherwise (reason logged by the caller when a config is broken).
+ * Password is stored in the user's settings file in plain text — same file
+ * already holds pi API keys.
+ */
+export function getSmtpConfig(user: string): {
+  host: string; port: number; tls: string; user?: string; pass?: string; address: string;
+} | null {
+  if (getUserSetting(user, 'notifySmtp', false) !== true) return null;
+  const host = String(getUserSetting(user, 'notifySmtpHost', '')).trim();
+  if (!host) return null;
+  const portRaw = getUserSetting(user, 'notifySmtpPort', 587);
+  const port = typeof portRaw === 'number' ? portRaw : parseInt(String(portRaw), 10);
+  const tls = String(getUserSetting(user, 'notifySmtpTls', 'starttls'));
+  if (!Number.isFinite(port) || port < 1 || port > 65535 || !["implicit", "starttls", "none"].includes(tls)) return null;
+  const address = String(getUserSetting(user, 'notifyEmailAddress', '')).trim();
+  if (!/^[^@\s]+@[^@\s]+$/.test(address)) return null;
+  const user0 = String(getUserSetting(user, 'notifySmtpUser', '')).trim();
+  const pass0 = String(getUserSetting(user, 'notifySmtpPass', ''));
+  return { host, port, tls, user: user0 || undefined, pass: pass0 || undefined, address };
+}
+
+/**
+ * Push one notification to every subscribed device of `user` (kind toggles
+ * apply to both channels) and, when the user enabled it, send the same
+ * notification by email. Dead subscriptions (404/410 from the push service)
+ * are dropped. Resolves with the delivery count across channels; never
+ * rejects — a failed notification must not take down the turn end / task
+ * run that triggered it.
  */
 export async function sendNotification(
   user: string,
@@ -143,16 +220,20 @@ export async function sendNotification(
 ): Promise<{ sent: number; reason?: string }> {
   try {
     if (!notificationsWanted(user, kind)) return { sent: 0, reason: `${kind} notifications are off in Settings → Notifications` };
-    const subs = listSubscriptions(user);
-    if (subs.length === 0) return { sent: 0, reason: 'no subscribed device — enable notifications in Settings → Notifications' };
+    const reasons: string[] = [];
 
+    // Channel 1: web push to every subscribed device.
+    let sent = 0;
+    const subs = listSubscriptions(user);
+    if (subs.length === 0) {
+      reasons.push('no subscribed device — enable notifications in Settings → Notifications');
+    }
     const body = JSON.stringify({
       title: payload.title,
       body: clipNotification(payload.body),
       path: payload.path || null,
       tag: kind,
     });
-    let sent = 0;
     for (const sub of subs) {
       try {
         await webpush.sendNotification(sub, body, { vapidDetails: loadVapid(), TTL: 24 * 3600 });
@@ -169,7 +250,17 @@ export async function sendNotification(
         }
       }
     }
-    return sent > 0 ? { sent } : { sent: 0, reason: 'delivery failed on every subscribed device' };
+
+    // Channel 2: email, when the user enabled SMTP and configured it.
+    const smtp = getSmtpConfig(user);
+    if (smtp) {
+      const email = await sendEmail(user, payload, smtp);
+      sent += email.sent;
+      if (email.sent === 0 && email.reason) reasons.push(`email: ${email.reason}`);
+    }
+
+    if (sent > 0) return { sent };
+    return { sent: 0, reason: reasons.length > 0 ? reasons.join('; ') : 'delivery failed on every channel' };
   } catch (err) {
     log.notifications.error(`sendNotification(${kind}) for "${user}" failed:`, err);
     return { sent: 0, reason: 'notification delivery failed' };

@@ -262,6 +262,17 @@ SKILL.md               # This file — canonical, in-repo
   queued turns count as one run); a turn-end notification sent moments ago
   suppresses `allDone`, so enabling both never double-notifies one moment.
 
+- **Email (SMTP) channel**: the same Notifications page has an `Email (SMTP)`
+  toggle (`notifySmtp`, opt-in) with per-user server settings — host, port
+  (default 587), TLS mode `starttls|implicit|none`, optional user/password,
+  and one address used as both sender and recipient (`notifyEmailAddress`).
+  When enabled AND valid (host + syntactically valid address + sane port/TLS →
+  `getSmtpConfig` returns null otherwise), every enabled kind is ALSO emailed
+  (`nodemailer`, fresh transport per mail, ~30 s socket timeouts, server's
+  refusal text in the error log/reason) — kind toggles and the minimum
+  length gate both channels. When no channel delivers, the returned
+  `reason` joins them (`no subscribed device…; email: …`).
+
 ## Development
 
 ```bash

@@ -848,6 +848,14 @@ function getUserSettingsDefaults(user: string): UserSettings {
   defaults.notifyTurnEnd = true;
   defaults.notifyAllDone = false;
   defaults.notifyTurnEndAfterMinutes = 0;
+  // Email (SMTP) channel — opt-in; STARTTLS on 587 is the common default.
+  defaults.notifySmtp = false;
+  defaults.notifySmtpHost = '';
+  defaults.notifySmtpPort = 587;
+  defaults.notifySmtpTls = 'starttls';
+  defaults.notifySmtpUser = '';
+  defaults.notifySmtpPass = '';
+  defaults.notifyEmailAddress = '';
   defaults.janitorMinIdleSec = 600;
   defaults.janitorKeepRecentTurns = 3;
   defaults.janitorWarmGapMultiplier = 2;
@@ -1157,6 +1165,30 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
     id: 'notifications',
     label: 'Notifications',
     fields: [
+      // Email (SMTP) channel — same kind toggles, content limits and payload
+      // as web push; rendered as one group by NotificationsSection (config
+      // fields only shown while notifySmtp is on).
+      {
+        key: 'notifySmtp',
+        label: 'Email (SMTP)',
+        type: 'toggle',
+        description: 'Also deliver the notifications selected below by email. The password is stored in plain text in your settings file, like other secrets in autere.',
+      },
+      { key: 'notifySmtpHost', label: 'Server host', type: 'text', placeholder: 'smtp.example.org' },
+      { key: 'notifySmtpPort', label: 'Server port', type: 'number', placeholder: '587' },
+      {
+        key: 'notifySmtpTls',
+        label: 'TLS',
+        type: 'select',
+        options: [
+          { value: 'starttls', label: 'STARTTLS (implicit port 587)' },
+          { value: 'implicit', label: 'TLS/SSL from the start (implicit port 465)' },
+          { value: 'none', label: 'No TLS' },
+        ],
+      },
+      { key: 'notifySmtpUser', label: 'Username (optional)', type: 'text' },
+      { key: 'notifySmtpPass', label: 'Password (optional)', type: 'password' },
+      { key: 'notifyEmailAddress', label: 'Email address (to and from)', type: 'text', description: 'Notifications are sent from and to this address.' },
       {
         key: 'notifyExplicit',
         label: 'Messages from the agent',

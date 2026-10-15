@@ -13,6 +13,13 @@ const section: SettingSection = {
   id: 'notifications',
   label: 'Notifications',
   fields: [
+    { key: 'notifySmtp', label: 'Email (SMTP)', type: 'toggle' as const, description: 'also deliver by email' },
+    { key: 'notifySmtpHost', label: 'Server host', type: 'text' as const },
+    { key: 'notifySmtpPort', label: 'Server port', type: 'number' as const },
+    { key: 'notifySmtpTls', label: 'TLS', type: 'select' as const, options: [{ value: 'starttls', label: 'STARTTLS' }, { value: 'implicit', label: 'TLS/SSL' }, { value: 'none', label: 'None' }] },
+    { key: 'notifySmtpUser', label: 'Username (optional)', type: 'text' as const },
+    { key: 'notifySmtpPass', label: 'Password (optional)', type: 'password' as const },
+    { key: 'notifyEmailAddress', label: 'Email address (to and from)', type: 'text' as const },
     { key: 'notifyExplicit', label: 'Messages from the agent', type: 'toggle' as const, description: 'sent by the agent' },
     { key: 'notifyTaskStart', label: 'Scheduled task start', type: 'toggle' as const, description: 'a run starts' },
     { key: 'notifyTurnEnd', label: 'Turn end', type: 'toggle' as const, description: 'the agent finished a turn' },
@@ -72,6 +79,26 @@ describe('notification content rules (shared)', () => {
 });
 
 describe('NotificationsSection', () => {
+  it('hides SMTP config fields until Email (SMTP) is on, then renders its inputs', () => {
+    const Harness: React.FC = () => {
+      const [v, setV] = useState<Record<string, any>>({ notifySmtp: false, notifyExplicit: true, notifyTaskStart: false, notifyTurnEnd: true, notifyAllDone: false, notifyTurnEndAfterMinutes: 3 });
+      return (
+        <NotificationsSection section={section} settings={v} handleChange={(k, val) => setV((p) => ({ ...p, [k]: val }))} />
+      );
+    };
+    cy.mount(<Harness />);
+    cy.contains('.settings-label', 'Server host').should('not.exist');
+    cy.get('input[type="checkbox"]').should('have.length', 5); // smtp + 4 kinds
+
+    cy.get('input[type="checkbox"]').first().click(); // enable SMTP
+    cy.contains('.settings-label', 'Server host').should('exist');
+    cy.get('input[type="text"]').should('have.length', 3); // host, user, address
+    cy.get('input[type="password"]').should('have.length', 1);
+    cy.get('input[type="number"]').should('have.length', 2); // port + min length
+    cy.get('select').should('have.length', 1).and("have.value", "starttls");
+    cy.contains(".settings-label", "Minimum turn length (minutes)").should("exist");
+  });
+
   it('renders the device block, the toggles and the minimum-length input', () => {
     cy.mount(
       <NotificationsSection
@@ -82,15 +109,15 @@ describe('NotificationsSection', () => {
     );
     cy.contains('h3.settings-section-title', 'Notifications').should('be.visible');
     cy.contains('.settings-label', 'This device').should('exist');
-    cy.get('.settings-field').should('have.length', 6); // device + 5 kinds/options
-    for (const label of ['Messages from the agent', 'Scheduled task start', 'Turn end', 'Minimum turn length (minutes)', 'All tasks completed']) {
+    cy.get('.settings-field').should('have.length', 7); // device + smtp toggle + 4 kinds + min length
+    for (const label of ['Messages from the agent', 'Scheduled task start', 'Turn end', 'All tasks completed', 'Minimum turn length (minutes)']) {
       cy.contains('.settings-label', label).should('exist');
     }
-    cy.get('input[type="checkbox"]').should('have.length', 4);
-    cy.get('input[type="checkbox"]').eq(0).should('be.checked');
-    cy.get('input[type="checkbox"]').eq(1).should('not.be.checked');
-    cy.get('input[type="checkbox"]').eq(2).should('be.checked');
-    cy.get('input[type="checkbox"]').eq(3).should('not.be.checked');
+    cy.get('input[type="checkbox"]').should('have.length', 5);
+    cy.get('input[type="checkbox"]').eq(1).should('be.checked');
+    cy.get('input[type="checkbox"]').eq(2).should('not.be.checked');
+    cy.get('input[type="checkbox"]').eq(3).should('be.checked');
+    cy.get('input[type="checkbox"]').eq(4).should('not.be.checked');
     cy.get('input[type="number"]').should('have.length', 1).and('have.value', 3);
   });
 
@@ -99,11 +126,11 @@ describe('NotificationsSection', () => {
     cy.mount(
       <NotificationsSection
         section={section}
-        settings={{ notifyExplicit: true, notifyTaskStart: true, notifyTurnEnd: true, notifyAllDone: true }}
+        settings={{ notifySmtp: true, notifyExplicit: true, notifyTaskStart: true, notifyTurnEnd: true, notifyAllDone: true, notifyEmailAddress: 'x@y.z' }}
         handleChange={(key, value) => changed.push([key, value])}
       />,
     );
-    cy.get('input[type="checkbox"]').eq(1).click();
+    cy.get('input[type="checkbox"]').eq(2).click();
     cy.then(() => {
       expect(changed).to.deep.equal([['notifyTaskStart', false]]);
     });

@@ -156,7 +156,13 @@ export const NotificationsSection: React.FC<NotificationsSectionProps> = ({ sect
           {note && <div className="settings-saved">{note}</div>}
         </div>
 
-        {(section?.fields || []).map((field) => (
+        {(section?.fields || []).map((field) => {
+          // SMTP config fields (everything after the notifySmtp toggle up to
+          // the first kind toggle) form one group, shown only while SMTP is on.
+          const smtpEnabled = settings.notifySmtp === true;
+          if (field.key !== 'notifySmtp' && field.key.startsWith('notifySmtp') && !smtpEnabled) return null;
+          if (field.key === 'notifyEmailAddress' && !smtpEnabled) return null;
+          return (
           <div key={field.key} className="settings-field">
             <div className="settings-field-header">
               <label className="settings-label">{field.label}</label>
@@ -181,8 +187,30 @@ export const NotificationsSection: React.FC<NotificationsSectionProps> = ({ sect
                 onChange={(e) => handleChange(field.key, e.target.value)}
               />
             )}
+            {(field.type === 'text' || field.type === 'password') && (
+              <input
+                type={field.type === 'password' ? 'password' : 'text'}
+                className="settings-input"
+                placeholder={field.placeholder}
+                autoComplete={field.type === 'password' ? 'new-password' : undefined}
+                value={String(settings[field.key] ?? '')}
+                onChange={(e) => handleChange(field.key, e.target.value)}
+              />
+            )}
+            {field.type === 'select' && (
+              <select
+                className="settings-input"
+                value={String(settings[field.key] ?? field.options?.[0]?.value ?? '')}
+                onChange={(e) => handleChange(field.key, e.target.value)}
+              >
+                {(field.options || []).map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
