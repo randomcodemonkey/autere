@@ -2074,6 +2074,19 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         const err = validateTaskInput(input);
         if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
         const now = Date.now();
+        // Inherit the creating session's environment: when the caller (the
+        // agent's schedule_task tool) passes its own session id, resolve
+        // cwd/workdirs from backend state — client-supplied paths are never
+        // trusted. Unresolvable/omitted = spawn like any new session.
+        let cwd: string | undefined;
+        let workdirs: string[] | undefined;
+        if (typeof input.session === 'string' && input.session.trim()) {
+          const origin = pm.findSession(c.user, input.session.trim(), new Set());
+          if (origin) {
+            cwd = origin.cwd ?? undefined;
+            workdirs = origin.workdirs?.length ? [...origin.workdirs] : undefined;
+          }
+        }
         const task: ScheduledTask = {
           id: randomUUID(),
           name: input.name.trim(),
@@ -2085,6 +2098,8 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           enabled: input.enabled !== false,
           saveSession: input.saveSession === true,
           once: input.once === true,
+          cwd,
+          workdirs,
           createdAt: now,
           updatedAt: now,
         };

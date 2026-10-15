@@ -25,6 +25,8 @@ import { join, dirname } from 'path';
 import { randomUUID } from 'crypto';
 import { USER_SETTINGS_DIR } from './constants.js';
 import { ensurePiEnv } from './pi-env.js';
+import { sandboxSpawnOptions } from './user-session.js';
+import { getEditIgnorePaths, getSendImagesToChatModel, getImagePreviewQuality, getImageStreamFix } from './user-settings.js';
 import { MonitorRpcClient } from './rpc-client.js';
 import { cronMatches, validateCron } from '../shared/cron.js';
 import { sanitizeUserName } from '../shared/format.js';
@@ -390,12 +392,22 @@ export class Scheduler {
 
     let aborted = false;
     let abortWaiter: (() => void) | null = null;
+    const piEnvDir = ensurePiEnv(user);
     const rpc = new MonitorRpcClient({
       // Per-task model override wins over the scheduler default; when unset
       // the user's pi default model applies.
       model: task.model || this.spawnOptions.model,
       args: this.spawnOptions.args,
-      agentDir: ensurePiEnv(user),
+      agentDir: piEnvDir,
+      // Runs inherit the creating session's environment (spawn settings,
+      // sandbox image/mounts) and workdirs — resolved from backend state at
+      // task creation. No sandbox/workdirs = host spawn like any session.
+      editIgnorePaths: getEditIgnorePaths(user),
+      sendImagesToChatModel: getSendImagesToChatModel(user),
+      imagePreviewQuality: getImagePreviewQuality(user),
+      imageStreamFix: getImageStreamFix(user),
+      ...(task.cwd ? { cwd: task.cwd } : {}),
+      ...sandboxSpawnOptions(user, piEnvDir, task.cwd, task.workdirs),
     });
     const active: ActiveRun = {
       user,

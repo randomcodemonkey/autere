@@ -25,6 +25,11 @@ export interface ScheduledTask {
   /** One-off task: at most one run ever — the run disables the task, and
    *  both a scheduled tick and a manual trigger are refused afterwards. */
   once?: boolean;
+  /** Spawn environment inherited from the session that created the task:
+   *  run sessions spawn in this cwd and sandbox work area. Resolved by the
+   *  backend from the creating session (never trusted from the client). */
+  cwd?: string;
+  workdirs?: string[];
   enabled: boolean;
   createdAt: number;
   updatedAt: number;

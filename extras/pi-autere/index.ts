@@ -166,6 +166,7 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: "autere_schedule_task — background task on a cron schedule, optionally one-off (runs once)",
 		description:
 			"Create a recurring background task in autere. Whenever `schedule` matches (5-field cron in the server's local time), a separate agent instance runs `prompt` from scratch: same tools as you, no memory of this conversation, final answer stored in the task's run log. Runs repeat until the task is disabled.\n\n" +
+			"Runs inherit this session's environment and workdirs (cwd, sandbox work area, spawn settings) — a run sees the same filesystem context you do.\n\n" +
 			"Use it for work that must continue after this conversation ends — watching for a condition that is checked again later, recurring maintenance, repeated reports.\n\n" +
 			"One-off work: set `once` and the task becomes a single-shot background operation — its one run starts immediately after creation and the task disables itself when that run ends (it can never run again). A one-off absorbs a single attempt, so keep its check self-contained and conclusive; use a repeating task when the outcome may need several runs.\n\n" +
 			"Model: call autere_find_models and pass `model` as `provider/id`. Choose it deliberately — every run of this schedule pays for that model — and leave it unset only when the user's default model is the right one for background runs.\n\n" +
@@ -199,6 +200,9 @@ export default function (pi: ExtensionAPI) {
 				prompt: params.prompt,
 				model: params.model || undefined,
 				once,
+				// Runs inherit this session's environment and workdirs — the
+				// backend resolves cwd/workdirs from its own spawn state.
+				session: currentSessionId(ctx) || undefined,
 			}, signal);
 			if (!task?.id) throw new Error("autere did not return the created task");
 			// Two-phase create: the id only exists after POST, and the footer must carry it.

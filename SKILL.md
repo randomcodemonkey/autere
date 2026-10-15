@@ -92,6 +92,10 @@ src/backend/
                         # unless the task has saveSession: true (Settings card
                         # "Save task sessions" toggle). once: true = one-off,
                         # at most one run ever (auto-disabled after it; both a
+                        # task run inherits the creating session's cwd and
+                        # workdirs (stored on the task at creation from the
+                        # `session` id the agent's schedule_task tool passes;
+                        # backend-resolved, never client paths)
                         # scheduled tick and a manual trigger are refused
                         # afterwards) — CLI `task-run <id> --wait` blocks on
                         # those and prints the run record

@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { basename, join } from 'path';
 import { createHash } from 'crypto';
-import { MonitorRpcClient } from './rpc-client.js';
+import { MonitorRpcClient, type RpcClientOptions } from './rpc-client.js';
 import { autoSessionName, readSessionUsage, scopeModelsForSession } from './utils.js';
 import { log, userLog } from './logger.js';
 import { ensurePiEnv, ensureSandboxHomeVolume, ensureSandboxGitconfig, ensureVolumeSubpaths, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage, sandboxSharedEnv, DEFAULT_SANDBOX_IMAGE } from './pi-env.js';
@@ -29,6 +29,30 @@ import {
 } from './stream-history.js';
 import { formatToolArgs } from '../shared/format.js';
 import { clipNotification, shouldNotifyAllDone, workedLongEnough } from '../shared/notifications.js';
+
+/** Sandbox spawn options for a (user, cwd, workdirs) spawn — shared by
+ *  interactive sessions AND scheduled-task runs so both inherit the same
+ *  environment. Workdirs request sandboxing explicitly, even when the
+ *  user's sandbox setting is off. Returns {} for host spawns. */
+export function sandboxSpawnOptions(user: string, piEnvDir: string, cwd: string | undefined, workdirs: string[] | undefined): Partial<RpcClientOptions> {
+  let image = resolveSandboxImage(user, getUserSetting(user, 'piSandboxImage', ''), process.env.AUTERE_SANDBOX_IMAGE);
+  if (!image && workdirs?.length) {
+    image = process.env.AUTERE_SANDBOX_IMAGE?.trim() || DEFAULT_SANDBOX_IMAGE;
+    if (/^(off|none|disabled)$/i.test(image)) image = '';
+  }
+  if (!image) return {};
+  // Sandbox startup: copy the master agent dir's shared pieces (skills,
+  // extensions, bin, tmp) into the env dir so nothing outside the env dir
+  // and the work area needs to be mounted, then plan the mounts. Spawns
+  // run with the backend's cwd, translated by planSandboxMounts into the
+  // container's $HOME/work/... layout.
+  prepareSandboxEnvDir(piEnvDir);
+  const homeVolume = ensureSandboxHomeVolume(user, image);
+  ensureSandboxGitconfig(homeVolume, image);
+  const plan = planSandboxMounts(user, cwd || process.cwd(), piEnvDir, homeVolume, workdirs);
+  ensureVolumeSubpaths(plan.mounts, image);
+  return { sandboxImage: image, sandboxMounts: plan.mounts, sandboxWorkingDir: plan.cwd, sandboxEnv: sandboxSharedEnv(), sandboxDockerSocket: getUserMountDockerSocket(user) };
+}
 import { sendNotification } from './notifications.js';
 import { API } from '../shared/api-paths.js';
 
@@ -199,35 +223,13 @@ export class UserSession {
     // Default: sandbox every session (autere sandbox image). Override via the
     // piSandboxImage setting, AUTERE_SANDBOX_IMAGE env (off/none/disabled
     // runs pi on the host).
-    const sandboxImage = resolveSandboxImage(user, getUserSetting(user, 'piSandboxImage', ''),
-      process.env.AUTERE_SANDBOX_IMAGE);
     this.rpc = new MonitorRpcClient({
       ...rpcOptions, args, agentDir: piEnvDir,
       editIgnorePaths: getEditIgnorePaths(user),
       sendImagesToChatModel: getSendImagesToChatModel(user),
       imagePreviewQuality: getImagePreviewQuality(user),
       imageStreamFix: getImageStreamFix(user),
-      ...(() => {
-        // Per-session workdirs (New Session modal) request sandboxing
-        // explicitly — even when the user's sandbox setting is off.
-        let image = sandboxImage;
-        if (!image && rpcOptions.workdirs?.length) {
-          image = process.env.AUTERE_SANDBOX_IMAGE?.trim() || DEFAULT_SANDBOX_IMAGE;
-          if (/^(off|none|disabled)$/i.test(image)) image = '';
-        }
-        if (!image) return {};
-        // Sandbox startup: copy the master agent dir's shared pieces
-        // (skills, extensions, bin, tmp) into the env dir so nothing outside
-        // the env dir and the work area needs to be mounted, then plan the
-        // mounts. Sessions spawn with the backend's cwd, translated by
-        // planSandboxMounts into the container's $HOME/work/... layout.
-        prepareSandboxEnvDir(piEnvDir);
-        const homeVolume = ensureSandboxHomeVolume(user, image);
-        ensureSandboxGitconfig(homeVolume, image);
-        const plan = planSandboxMounts(user, rpcOptions.cwd || process.cwd(), piEnvDir, homeVolume, rpcOptions.workdirs);
-        ensureVolumeSubpaths(plan.mounts, image);
-        return { sandboxImage: image, sandboxMounts: plan.mounts, sandboxWorkingDir: plan.cwd, sandboxEnv: sandboxSharedEnv(), args, sandboxDockerSocket: getUserMountDockerSocket(user) };
-      })(),
+      ...sandboxSpawnOptions(user, piEnvDir, rpcOptions.cwd, rpcOptions.workdirs),
     });
     this.state = createInitialState();
     this._idleTimeoutMs = idleTimeoutMs;
