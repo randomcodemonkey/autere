@@ -93,7 +93,7 @@ describe('autere — dashboard', () => {
     });
 
     it('shows uptime rows', () => {
-      cy.get('.status-card-system .modal-uptime-row').should('have.length', 3); // pi uptime, autere uptime, UI build
+      cy.get('.status-card-system .modal-uptime-row').should('have.length', 5); // pi uptime, autere uptime, autere version, pi version, UI build
     });
 
     it('shows logout button', () => {
