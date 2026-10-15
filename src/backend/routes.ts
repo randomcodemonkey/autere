@@ -17,6 +17,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
+import { execFileSync } from 'child_process';
 import { readFileSync, writeFileSync, existsSync, renameSync, mkdirSync, openSync, readSync, closeSync, statSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { homedir } from 'os';
@@ -36,6 +37,21 @@ import { getPiEnvDir, ensurePiEnv, validateSandboxImage } from './pi-env.js';
 import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
 import { appendSessionInfo } from './sessions.js';
+
+// pi --version, resolved once per backend process (cached — the binary does
+// not change mid-process). Empty string on failure so the UI shows '—'.
+let piVersionCache: string | null = null;
+function piVersion(): string {
+  if (piVersionCache === null) {
+    try {
+      piVersionCache = String(execFileSync('pi', ['--version'], { encoding: 'utf-8', timeout: 5000 }).trim());
+    } catch (e: any) {
+      console.error('pi --version failed:', e?.message || e);
+      piVersionCache = '';
+    }
+  }
+  return piVersionCache;
+}
 import { getHistoryLimit } from './user-settings.js';
 import { getMcpServers, setMcpServer, deleteMcpServer } from './mcp-config.js';
 import { extensionsState } from './state.js';
@@ -1087,6 +1103,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         data: {
           autereStartedAt: Date.now() - Math.round(process.uptime() * 1000),
           piStartedAt: t?.state.sessionState.connected ? t.state.sessionState.startTime : null,
+          piVersion: piVersion(),
         },
       });
     },

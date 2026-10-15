@@ -48,6 +48,7 @@ interface StatusCardProps {
 interface UptimeInfo {
   autereStartedAt: number | null;
   piStartedAt: number | null;
+  piVersion?: string;
 }
 
 const EMPTY_UPTIME: UptimeInfo = { autereStartedAt: null, piStartedAt: null };
@@ -61,6 +62,12 @@ function formatBuildId(): string {
   if (typeof __BUILD_ID__ === 'undefined') return 'dev';
   const d = new Date(__BUILD_ID__);
   return isNaN(d.getTime()) ? __BUILD_ID__ : d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' });
+}
+
+declare const __APP_VERSION__: string;
+function formatAppVersion(): string {
+  if (typeof __APP_VERSION__ === 'undefined') return 'dev';
+  return __APP_VERSION__;
 }
 
 function formatUptime(startedAt: number | null, now: number): string {
@@ -182,6 +189,14 @@ export const StatusCard: React.FC<StatusCardProps> = ({
         <div className="modal-uptime-row">
           <span className="modal-uptime-label">autere uptime</span>
           <span className="modal-uptime-value">{formatUptime(uptime.autereStartedAt, now)}</span>
+        </div>
+        <div className="modal-uptime-row">
+          <span className="modal-uptime-label">autere version</span>
+          <span className="modal-uptime-value">{formatAppVersion()}</span>
+        </div>
+        <div className="modal-uptime-row">
+          <span className="modal-uptime-label">pi version</span>
+          <span className="modal-uptime-value">{uptime.piVersion || '—'}</span>
         </div>
         <div className="modal-uptime-row">
           <span className="modal-uptime-label">UI build</span>
