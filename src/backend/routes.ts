@@ -71,6 +71,7 @@ import { randomUUID, createHash } from 'crypto';
 import { vapidPublicKey, saveSubscription, deleteSubscription, validateSubscription, sendNotification } from './notifications.js';
 import { validateNotificationContent } from '../shared/notifications.js';
 import { API, API_PREFIX } from '../shared/api-paths.js';
+import { TASK_REPORT_MARKER } from '../shared/format.js';
 import { buildOpenApiSpec, type RouteDoc } from './openapi.js';
 import type { SessionInfo } from './types.js';
 
@@ -1509,6 +1510,16 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         if (rpcImages.length === 0) rpcImages = undefined;
       }
       let text = (message || '').trim();
+      // Deliveries from a live scheduled-task run (pi-autere passes the run's
+      // own session id) get a first-line marker: chat renders them with a
+      // distinct "task" sender and the receiving agent knows it is not the
+      // user's words.
+      const fromRun = body.fromSession
+        ? scheduler?.findRunBySession(c.user, String(body.fromSession))
+        : null;
+      if (fromRun) {
+        text = `${TASK_REPORT_MARKER} Scheduled task "${fromRun.taskName}" reported:\n\n${text}`;
+      }
       // steer/followUp only make sense mid-turn — when idle, pi would leave
       // the message queued without ever starting a turn. Downgrade to a
       // plain prompt instead (same text, actually runs).

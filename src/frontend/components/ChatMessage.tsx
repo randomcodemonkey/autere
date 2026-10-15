@@ -143,12 +143,17 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   // mid-stream. Bounded height also keeps autoscroll stable on long turns.
   const showText = expanded || !isLong ? bodyText : bodyText.slice(0, truncLen);
   const roleClass = role === 'user' ? 'stream-role-user' : role === 'assistant' ? 'stream-role-assistant' : `stream-role-${role}`;
-  const isNonText = displayText.startsWith('[');
+  // Task deliveries (scheduled-task reports committed as user-role messages)
+  // read like assistant output: markdown body, distinct "task" sender.
+  const isTaskReport = role === 'taskReport';
+  const roleLabel = isTaskReport ? 'task' : role;
+  const likeAssistant = isAssistant || isTaskReport;
+  const isNonText = displayText.startsWith('[') && !isTaskReport;
   const isError = msg.isError;
-  const mdClass = isAssistant ? ' md-rendered' : '';
+  const mdClass = likeAssistant ? ' md-rendered' : '';
   const textClass = (isToolResult ? 'stream-tool-output' : 'stream-text' + (isNonText ? ' stream-non-text' : '') + mdClass) + (expanded ? ' expanded' : '') + (isError ? ' stream-error' : '');
   const renderText = role === 'thinking' ? stripExtraNewlines(showText) : showText;
-  const renderedText = isAssistant ? renderMd(renderText) : role === 'edit' ? '' : escHtml(renderText);
+  const renderedText = likeAssistant ? renderMd(renderText) : role === 'edit' ? '' : escHtml(renderText);
   const ts = formatTimestamp(msg.timestamp);
 
   // Download an image. Mobile Safari ignores the download attribute on
@@ -206,7 +211,7 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   return (
     <div className={`stream-msg${msg.pending ? ' stream-msg-pending' : ''}`} data-msg-key={dataKey}>
       <div className={`stream-role ${roleClass}${msg.isError ? ' stream-role-error' : ''}`}>
-        <span>{role}</span>
+        <span>{roleLabel}</span>
         {ts && <span className="stream-timestamp">{ts}</span>}
         {msg.pending && <span className="stream-pending-indicator" title="Sending…">⏳ pending</span>}
         {msg.pending && role === 'user' && onCancelPending && (

@@ -63,6 +63,8 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
   const [viewLog, setViewLog] = useState<TaskRunLog | null>(null);
   const [runningTaskIds, setRunningTaskIds] = useState<Set<string>>(new Set());
   const [models, setModels] = useState<TaskModelOption[]>([]);
+  const [query, setQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'lastrun' | 'name' | 'created'>('lastrun');
 
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -226,6 +228,22 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
 
   const cronErrFor = form ? validateCron(form.schedule.trim()) : null;
 
+  // Most recent run per task — the default sort key (newest first; tasks
+  // that never ran sort last, ties fall back to creation order).
+  const lastRunAt = new Map<string, number>();
+  for (const r of runs) {
+    const prev = lastRunAt.get(r.taskId) ?? 0;
+    if (r.startedAt > prev) lastRunAt.set(r.taskId, r.startedAt);
+  }
+  const needle = query.trim().toLowerCase();
+  const visibleTasks = tasks
+    .filter((t) => !needle || t.name.toLowerCase().includes(needle))
+    .sort((a, b) => {
+      if (sortBy === 'name') return a.name.localeCompare(b.name);
+      if (sortBy === 'created') return b.createdAt - a.createdAt;
+      return (lastRunAt.get(b.id) ?? 0) - (lastRunAt.get(a.id) ?? 0) || b.createdAt - a.createdAt;
+    });
+
   // ── Form view ──
 
   if (form) {
@@ -356,14 +374,36 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
         <button className="btn btn-primary scheduled-new-btn" onClick={handleNew}>New Task</button>
       </div>
 
+      <div className="scheduled-toolbar">
+        <input
+          className="scheduled-search"
+          type="text"
+          placeholder="Search tasks by name…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <select
+          className="scheduled-sort"
+          value={sortBy}
+          title="Sort tasks"
+          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+        >
+          <option value="lastrun">Sort: last run</option>
+          <option value="name">Sort: name</option>
+          <option value="created">Sort: created</option>
+        </select>
+      </div>
+
       {!sseConnected && <div className="settings-error">Not connected to the backend.</div>}
       {error && <div className="scheduled-error">{error}</div>}
 
       {loading ? (
         <div className="scheduled-loading">Loading scheduled tasks…</div>
-      ) : tasks.length === 0 ? (
+      ) : visibleTasks.length === 0 ? (
         <div className="scheduled-empty">
-          No scheduled tasks yet. Create one to run prompts on a schedule.
+          {tasks.length === 0
+            ? 'No scheduled tasks yet. Create one to run prompts on a schedule.'
+            : `No tasks match "${query.trim()}".`}
         </div>
       ) : (
         <DataTable
@@ -375,7 +415,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
             { key: 'actions', label: '' },
           ]}
         >
-          {tasks.map((task) => {
+          {visibleTasks.map((task) => {
             const isRunning = runningTaskIds.has(task.id);
             const expanded = expandedTaskId === task.id;
             const details = [
@@ -392,8 +432,13 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
                     <span className={`scheduled-enabled-dot ${task.enabled ? 'on' : 'off'}`}
                           title={task.enabled ? 'Enabled' : 'Disabled'} />
                   </td>
-                  <td data-label="Task">
+                  <td data-label="Task" className="scheduled-task-cell">
                     <span className="scheduled-task-name">{task.name}</span>
+                    {details.length > 0 && (
+                      <div className="scheduled-task-detail">
+                        {details.map((d, i) => <div key={i}>{d}</div>)}
+                      </div>
+                    )}
                   </td>
                   <td data-label="Schedule">
                     <span className="scheduled-task-schedule" title={task.schedule}>
@@ -419,13 +464,6 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
                     <button className="btn btn-danger btn-row scheduled-delete-btn" onClick={() => handleDelete(task)}>Delete</button>
                   </td>
                 </tr>
-                {details.length > 0 && (
-                  <tr className="scheduled-task-detail-row">
-                    <td colSpan={4} className="scheduled-task-detail">
-                      {details.map((d, i) => <div key={i}>{d}</div>)}
-                    </td>
-                  </tr>
-                )}
                 {expanded && (
                   <tr className="scheduled-runs-tr">
                     <td colSpan={4}>

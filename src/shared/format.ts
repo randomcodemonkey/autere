@@ -225,6 +225,23 @@ export function sessionLocaleStamp(opts: SessionStampOptions = {}, date: Date = 
   }
 }
 
+/**
+ * First-line marker stamped by the delivery route onto messages a scheduled-
+ * task run delivers to another session (pi-autere passes the run's own pi
+ * session id; the scheduler confirms it belongs to a live run). Chat renders
+ * these with a distinct "task" sender instead of as the user's own words —
+ * and the parent agent sees the marker too, which is the point.
+ */
+export const TASK_REPORT_MARKER = '[autere task]';
+
+/**
+ * Chat stream role for a committed user-role message: task deliveries get
+ * their own role so the frontend styles them apart from the user's words.
+ */
+export function streamRoleForUserText(text: string): string {
+  return text.startsWith(TASK_REPORT_MARKER) ? 'taskReport' : 'user';
+}
+
 /** Full auto-generated session name, e.g. "[ui] - Sep 3, 2026, 12:00:45 PM" */
 export function autoSessionName(prefix: '[ui]' | '[task]', opts: SessionStampOptions = {}, date: Date = new Date()): string {
   return `${prefix} - ${sessionLocaleStamp(opts, date)}`;

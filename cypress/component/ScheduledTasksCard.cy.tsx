@@ -207,7 +207,10 @@ describe('ScheduledTasksCard', () => {
       stubFetch();
       responseData = { tasks: [TASK, DISABLED_TASK], runs: [RUNNING_RUN] };
       cy.mount(<ScheduledTasksCard sseConnected={true} />);
-      cy.get('.scheduled-toggle-runs-btn').eq(1).click();
+      // Scoped to the running task's row — the default sort (last run) puts
+      // it first, so positional indexes are not stable.
+      cy.get('.scheduled-task').contains('Disabled task').parents('.scheduled-task')
+        .find('.scheduled-toggle-runs-btn').click();
       cy.get('.sched-run-status').should('contain', 'running');
       cy.get('.sched-run-status.sched-run-running').should('exist');
     });
@@ -381,6 +384,47 @@ describe('ScheduledTasksCard', () => {
       cy.get('.scheduled-save-btn').click();
       cy.get('.scheduled-error').should('contain', 'Invalid schedule');
       cy.get('.card-title').should('contain', 'New Scheduled Task');
+    });
+  });
+
+  describe('search & sort', () => {
+    const A = { ...TASK, id: 't-a', name: 'Alpha', createdAt: 1000 };
+    const B = { ...TASK, id: 't-b', name: 'Beta', createdAt: 2000 };
+    const G = { ...TASK, id: 't-g', name: 'Gamma', createdAt: 3000 };
+    const mount3 = () => {
+      stubFetch();
+      responseData = {
+        tasks: [A, B, G],
+        runs: [
+          { ...RUN, runId: 'r-a', taskId: 't-a', startedAt: 5000 },
+          { ...RUN, runId: 'r-b', taskId: 't-b', startedAt: 9000 },
+        ],
+      };
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+    };
+    const order = () => cy.get('.scheduled-task-name').then(($els) => $els.toArray().map((e) => e.textContent));
+
+    it('defaults to sorting by last run, newest first, never-run tasks last', () => {
+      mount3();
+      cy.get('.scheduled-task-name').should(($els) => {
+        expect($els.toArray().map((e) => e.textContent)).to.deep.equal(['Beta', 'Alpha', 'Gamma']);
+      });
+    });
+
+    it('filters tasks by name', () => {
+      mount3();
+      cy.get('.scheduled-search').type('alp');
+      order().should('deep.equal', ['Alpha']);
+      cy.get('.scheduled-search').clear().type('zzz');
+      cy.get('.scheduled-empty').should('contain', 'No tasks match "zzz"');
+    });
+
+    it('sorts by name and by created', () => {
+      mount3();
+      cy.get('.scheduled-sort').select('name');
+      order().should('deep.equal', ['Alpha', 'Beta', 'Gamma']);
+      cy.get('.scheduled-sort').select('created');
+      order().should('deep.equal', ['Gamma', 'Beta', 'Alpha']);
     });
   });
 

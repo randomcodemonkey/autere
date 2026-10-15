@@ -377,7 +377,14 @@ export default function (pi: ExtensionAPI) {
 				);
 			}
 			try {
-				await api("POST", "/session/messages", { sessionId: target.id, message: params.message, type: "prompt" }, signal);
+				await api("POST", "/session/messages", {
+					sessionId: target.id,
+					message: params.message,
+					type: "prompt",
+					// Self-identify: the backend stamps task-run deliveries so chat
+					// renders them with a distinct "task" sender.
+					fromSession: currentSessionId(ctx) ?? undefined,
+				}, signal);
 			} catch (err: any) {
 				// Busy race: the turn started between our check and the delivery.
 				if (/already processing/i.test(String(err?.message))) {

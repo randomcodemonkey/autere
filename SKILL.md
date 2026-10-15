@@ -98,7 +98,10 @@ src/backend/
                         # backend-resolved, never client paths)
                         # scheduled tick and a manual trigger are refused
                         # afterwards) — CLI `task-run <id> --wait` blocks on
-                        # those and prints the run record
+                        # those and prints the run record. Deliveries a run
+                        # makes via pi-autere carry the run's session id
+                        # (findRunBySession) and get a `[autere task]` envelope —
+                        # chat renders them with a distinct "task" sender
   user-settings.ts      # Per-user settings (schema-driven, admin UI; per-model
                         # thinking levels → pi's modelThinkingLevels, per-model
                         # reserve % → pi-token-reserve config)

@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'fs';
 // ── rm command detection ──
 
 export { isRmCommand, extractRmPaths, accumulateUsage, extractImages } from '../shared/format.js';
-import { isRmCommand, extractRmPaths, extractImages , formatToolArgs } from '../shared/format.js';
+import { isRmCommand, extractRmPaths, extractImages , formatToolArgs, streamRoleForUserText } from '../shared/format.js';
 import type { StreamImage } from '../shared/format.js';
 import { API } from '../shared/api-paths.js';
 
@@ -331,9 +331,14 @@ function buildOneEntry(
       if (role === 'custom') return [];
       const text = msgText(msg.content);
       const images = extractImages(msg.content);
-      return text || images.length > 0
-        ? [{ role, text, streaming: false, timestamp, ...(images.length > 0 ? { images } : {}) }]
-        : [];
+      if (text || images.length > 0) {
+        // Task deliveries arrive as user-role messages carrying the autere
+        // marker — project them to their own stream role so chat styles them
+        // with a distinct "task" sender.
+        const streamRole = role === 'user' ? streamRoleForUserText(text) : role;
+        return [{ role: streamRole, text, streaming: false, timestamp, ...(images.length > 0 ? { images } : {}) }];
+      }
+      return [];
 }
 
 // ── Image pseudo-entry ──

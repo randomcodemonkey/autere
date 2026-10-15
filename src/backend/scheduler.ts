@@ -254,6 +254,9 @@ interface ActiveRun {
   taskId: string;
   runId: string;
   rpc: MonitorRpcClient;
+  /** pi session id of this run — set once the run's agent reports state;
+   *  lets the delivery route recognize messages coming from a task run. */
+  piSessionId: string;
   abort: () => void;
 }
 
@@ -343,6 +346,21 @@ export class Scheduler {
    * task is already running. The run proceeds in the background; its
    * progress and logs are observed via listRuns()/readRunLog().
    */
+  /**
+   * The live run of this user's scheduled task whose pi session matches
+   * `sessionId` — used by the delivery route to recognize messages coming
+   * from a background task run (they get a distinct chat sender).
+   */
+  findRunBySession(user: string, sessionId: string): { taskId: string; taskName: string; runId: string } | null {
+    if (!sessionId) return null;
+    for (const [key, active] of this.activeRuns) {
+      if (key.split('/')[0] !== user || active.piSessionId !== sessionId) continue;
+      const task = getTask(user, active.taskId);
+      return task ? { taskId: active.taskId, taskName: task.name, runId: active.runId } : null;
+    }
+    return null;
+  }
+
   async runNow(user: string, taskId: string): Promise<string> {
     const task = getTask(user, taskId);
     if (!task) throw new Error('Task not found');
@@ -414,6 +432,7 @@ export class Scheduler {
       taskId: task.id,
       runId,
       rpc,
+      piSessionId: '',
       abort: () => {
         aborted = true;
         abortWaiter?.();
@@ -455,6 +474,7 @@ export class Scheduler {
         try {
           const state = await rpc.getState();
           runSessionFile = state.sessionFile || '';
+          active.piSessionId = state.sessionId || '';
           await sendNotification(user, 'taskStart', {
             title: runName || state.sessionName || task.name,
             body: `Scheduled task "${task.name}" started`,

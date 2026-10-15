@@ -182,7 +182,7 @@ try {
   assert.strictEqual(state.sent.length, 0, "nothing delivered yet");
   const delivered = await run("autere_send_to_session", { sessionId: "current", message: "outcome: still waiting" }, ctx);
   assert.strictEqual(delivered.details.delivered, true, "delivered to the idle session");
-  assert.deepStrictEqual(state.sent[0], { sessionId: "s1", message: "outcome: still waiting", type: "prompt" }, "sent as a user prompt");
+  assert.deepStrictEqual(state.sent[0], { sessionId: "s1", message: "outcome: still waiting", type: "prompt", fromSession: "s1" }, "sent as a user prompt, self-identified");
   state.busy = true;
   const race = await run("autere_send_to_session", { sessionId: "s1", message: "hi" }, ctx);
   assert.strictEqual(race.details.reason, "busy", "turn started mid-flight → busy, not an error");

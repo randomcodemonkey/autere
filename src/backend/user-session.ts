@@ -28,6 +28,7 @@ import {
   extractImages,
 } from './stream-history.js';
 import { formatToolArgs } from '../shared/format.js';
+import { streamRoleForUserText } from '../shared/format.js';
 import { clipNotification, shouldNotifyAllDone, workedLongEnough } from '../shared/notifications.js';
 
 /** Sandbox spawn options for a (user, cwd, workdirs) spawn — shared by
@@ -467,7 +468,7 @@ export class UserSession {
       this.broadcastHistoryUpsert([existing]);
       return false; // already in the buffer — nothing appended
     }
-    const entry = this.tagEntry({ role: 'user', text, streaming: false, timestamp: Date.now(), ...(queued ? { pending: true } : {}) });
+    const entry = this.tagEntry({ role: streamRoleForUserText(text), text, streaming: false, timestamp: Date.now(), ...(queued ? { pending: true } : {}) });
     buf.push(entry);
     this.broadcastHistoryUpsert([entry]);
     return true;

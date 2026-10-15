@@ -2127,6 +2127,8 @@ body {
   margin-left: 0.4rem;
 }
 .stream-role-assistant { color: var(--c-info); }
+// Scheduled-task deliveries: assistant-blue, distinct "task" sender
+.stream-role-taskReport { color: var(--c-info); font-style: italic; }
 .stream-role-thinking  { color: var(--c-purple); font-style: italic; }
 .stream-role-tool      { color: var(--c-purple); }
 .stream-role-toolResult { color: var(--c-purple); }
@@ -3504,6 +3506,7 @@ body {
       &.data-table-actions {
         justify-content: flex-end;
         gap: 0.5rem;
+        flex-wrap: wrap; // a full button row must never force horizontal scroll
 
         &::before { margin-right: auto; }
       }
@@ -3523,6 +3526,23 @@ body {
         color: var(--c-text-faint);
         font-weight: 600;
         white-space: nowrap;
+      }
+
+      // Task view: long names/schedules/scripts wrap inside the card instead
+      // of forcing the whole table to scroll horizontally.
+      .scheduled-task-name,
+      .scheduled-task-schedule {
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+
+      // The Task field stacks (label / name / details) so the task's own
+      // details read as part of its card, not as a detached block.
+      &.scheduled-task-cell {
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: flex-start;
+        gap: 0.15rem;
       }
     }
   }
@@ -4281,6 +4301,34 @@ body {
   margin: 0.5rem 0.625rem;
 }
 
+// Search + sort row above the task table
+.scheduled-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0.625rem;
+}
+
+.scheduled-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.scheduled-search,
+.scheduled-sort {
+  background: var(--c-surface-deep);
+  border: 1px solid var(--c-border-2);
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  color: var(--c-text-2);
+  font-size: 0.8rem;
+  font-family: inherit;
+  outline: none;
+
+  &:focus {
+    border-color: var(--c-info);
+  }
+}
+
 .scheduled-loading,
 .scheduled-empty {
   color: var(--c-text-dimmer);
@@ -4347,7 +4395,10 @@ body {
   color: var(--c-text-dimmer);
   font-family: 'SF Mono', 'Fira Code', monospace;
   margin-top: 0.35rem;
-  white-space: nowrap;
+  // Lives inside the Task column now (mobile: inside the task card) — long
+  // script/model lines must wrap instead of widening the column/table.
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .scheduled-runs {
@@ -4447,10 +4498,16 @@ textarea.settings-input {
   gap: 0.75rem;
   font-size: 0.75rem;
   color: var(--c-text-faint);
+  // Long errors wrap to their own line instead of overflowing the modal
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .sched-log-error {
   color: var(--c-danger-strong);
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
 }
 
 .sched-log-label {

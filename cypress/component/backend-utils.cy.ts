@@ -7,8 +7,22 @@ import { parseCookies, extractFullText, formatToolArgs, dedupHistory, extractIma
 import { findSession, type SessionRef } from '../../src/shared/find-session';
 import { isRmCommand, extractRmPaths, accumulateUsage, sanitizeUserName, filterModelsByPatterns, matchModelMap, sessionLocaleStamp, autoSessionName } from '../../src/shared/format';
 import { pathIsIgnored } from '../../src/shared/edit-ignore';
+import { TASK_REPORT_MARKER, streamRoleForUserText } from '../../src/shared/format';
 
 describe('Backend Utilities (real implementations)', () => {
+  describe('streamRoleForUserText (task-report projection)', () => {
+    it('maps marker-prefixed deliveries to the taskReport role', () => {
+      expect(streamRoleForUserText(`${TASK_REPORT_MARKER} Scheduled task "X" reported:\n\nboom`)).to.equal('taskReport');
+      expect(streamRoleForUserText(TASK_REPORT_MARKER)).to.equal('taskReport');
+    });
+
+    it('keeps everything else a user message', () => {
+      expect(streamRoleForUserText('hello there')).to.equal('user');
+      expect(streamRoleForUserText('mentions [autere task] in passing')).to.equal('user');
+      expect(streamRoleForUserText('')).to.equal('user');
+    });
+  });
+
   describe('matchModelMap', () => {
     const map = { 'z-ai/glm-5.3-flash': 10, 'claude-x': 50 };
 
