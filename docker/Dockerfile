@@ -14,12 +14,13 @@ RUN npm ci --no-audit --no-fund && npm run build
 FROM ubuntu:resolute
 
 USER root
+ENV DEBIAN_FRONTEND=noninteractive
 # ubuntu:resolute ships ca-certificates without a usable trust bundle
 # (postinst trigger bug) — reinstall before ANY TLS fetch.
-RUN apt-get -y update \
-    && apt-get install -y --reinstall ca-certificates \
-    && apt-get -y upgrade \
-    && apt-get install -y --no-install-recommends \
+RUN apt-get -y -qq update \
+    && apt-get install -y -qq --reinstall ca-certificates \
+    && apt-get -y -qq upgrade \
+    && apt-get install -y -qq --no-install-recommends \
       autoconf \
       automake \
       apt-transport-https \
@@ -50,8 +51,8 @@ RUN apt-get -y update \
     && chmod a+r /etc/apt/keyrings/*.asc \
     && printf 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: %s\nComponents: stable\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/docker.asc\n' "$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/docker.sources \
      && printf 'Types: deb\nURIs: https://repo.scala-sbt.org/scalasbt/debian\nSuites: all\nComponents: main\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/sbt.asc\n' "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/sbt.sources \
-    && apt-get -y update \
-    && apt-get install -y --no-install-recommends \
+    && apt-get -y -qq update \
+    && apt-get install -y -qq --no-install-recommends \
       docker-ce-cli \
       sbt \
     && apt-get -y clean \
