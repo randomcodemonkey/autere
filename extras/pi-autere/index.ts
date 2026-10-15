@@ -165,13 +165,10 @@ export default function (pi: ExtensionAPI) {
 		label: "Schedule task",
 		promptSnippet: "autere_schedule_task — background task on a cron schedule, optionally one-off (runs once)",
 		description:
-			"Create a recurring background task in autere. Whenever `schedule` matches (5-field cron in the server's local time), a separate agent instance runs `prompt` from scratch: same tools as you, no memory of this conversation, final answer stored in the task's run log. Runs repeat until the task is disabled.\n\n" +
-			"Runs inherit this session's environment and workdirs (cwd, sandbox work area, spawn settings) — a run sees the same filesystem context you do.\n\n" +
-			"Use it for work that must continue after this conversation ends — watching for a condition that is checked again later, recurring maintenance, repeated reports.\n\n" +
-			"One-off work: set `once` and the task becomes a single-shot background operation — its one run starts immediately after creation and the task disables itself when that run ends (it can never run again). A one-off absorbs a single attempt, so keep its check self-contained and conclusive; use a repeating task when the outcome may need several runs.\n\n" +
-			"Model: call autere_find_models and pass `model` as `provider/id`. Choose it deliberately — every run of this schedule pays for that model — and leave it unset only when the user's default model is the right one for background runs.\n\n" +
+			"Create a recurring background task: a separate agent instance runs `prompt` from scratch (same tools as you, no memory of this conversation) each time `schedule` matches. Final answers land in the task's run log. Runs repeat until the task is disabled.\n\n" +
+			"Runs inherit this session's environment and workdirs. Set `once` for a single-shot operation that runs immediately and disables itself when done; omit for repeating. Pass `model` as `provider/id` from autere_find_models (omit = user's default).\n\n" +
 			"How to write `prompt`: one run must stand on its own. State what to check, how to check it with the available tools, what outcome counts as a conclusion, and what a run must do while the check is still inconclusive (usually: conclude nothing, report nothing). No ids or secrets from this conversation belong in it.\n\n" +
-			"Reporting workflow (\"keep checking until X, then tell me here\"): `reportTo` picks who hears a conclusive outcome — \"current\" = the session making this call, an explicit session id (find one with autere_find_sessions), or \"none\" when only the run log matters. For a real target, a footer is appended to the prompt giving the run its task id, the target session id and the closing steps (report via autere_send_to_session, then — for repeating tasks — autere_set_task_enabled false), so `prompt` itself needs no ids. A report target may be deleted before the outcome arrives — the run then skips the report and disables the task.\n\n" +
+			"`reportTo` picks who hears a conclusive outcome: \"current\" (this session), an explicit session id, or \"none\" (run log only). For a real target, a footer is appended to `prompt` giving the run its task id, target session id and closing steps (report via autere_send_to_session, then — for repeating tasks — autere_set_task_enabled false), so `prompt` needs no ids. A deleted report target makes the run skip the report and disable the task.\n\n" +
 			"Returns the task id and the exact prompt runs will see.",
 		parameters: Type.Object({
 			name: Type.String({ description: "Short human-readable task name, shown in the autere dashboard" }),
@@ -295,8 +292,7 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: "autere_find_sessions — locate sessions and read their latest messages",
 		description:
 			"Find this user's sessions (the sessions behind the autere dashboard) together with their latest messages.\n\n" +
-			"Without `query` you get the most recently active sessions; with `query` (2+ characters) sessions match on name, id and message content. Each result carries the session id, name, last activity, whether a pi process is running/streaming (busy), and the last few messages, clipped.\n\n" +
-			"Use it to resolve a target session id for autere_send_to_session, to answer what a session was about, or to catch up on another session's recent exchanges. Sessions that were deleted do not appear.",
+			"Without `query` you get the most recently active sessions; with `query` (2+ characters) sessions match on name, id and message content. Each result carries the session id, name, last activity, whether a pi process is running/streaming (busy), and the last few messages, clipped. Sessions that were deleted do not appear.",
 		parameters: Type.Object({
 			query: Type.Optional(Type.String({ description: "Search text (name, id, message content); omit to list recent sessions" })),
 			limit: Type.Optional(Type.Integer({ description: "How many sessions to return (default 5, max 10)", default: 5, minimum: 1, maximum: 10 })),
@@ -333,8 +329,7 @@ export default function (pi: ExtensionAPI) {
 		label: "Find models",
 		promptSnippet: "autere_find_models — models a session or background task can run on (provider/id)",
 		description:
-			"List the models this user can run: the `provider/id` pair (e.g. \"9router/glm-5.3-flash\"), which is exactly the string a scheduled task's `model` field and a session's model selector expect, plus each model's display name.\n\n" +
-			"Call it before choosing a model with autere_schedule_task, or when asked which models are available. The list is what this user's settings enable — an empty list means no model is configured for them yet.",
+			"List the models this user can run: the `provider/id` pair (e.g. \"9router/glm-5.3-flash\"), which is exactly the string a scheduled task's `model` field and a session's model selector expect, plus each model's display name. An empty list means no model is configured for this user yet.",
 		parameters: Type.Object({}),
 		annotations: { readOnlyHint: true },
 		async execute(_toolCallId, _params, signal) {
@@ -354,9 +349,8 @@ export default function (pi: ExtensionAPI) {
 		label: "Send to session",
 		promptSnippet: "autere_send_to_session — deliver a message to another session as a user message",
 		description:
-			"Deliver a message to another session as a fresh user message: the target session's agent sees it exactly like something its own user typed and reacts to it. An idle session is woken up for it; a session that is mid-turn is left undisturbed and nothing is delivered.\n\n" +
-			"`sessionId` — an id from autere_find_sessions, an id a scheduled task's prompt footer names, or \"current\" for this session.\n\n" +
-			"Make `message` self-contained: the target agent cannot see this conversation. When the session no longer exists (it was deleted) the result says so instead of delivering — skip your report rather than retrying; a deleted conversation cannot be recreated.",
+			"Deliver a message to another session as a fresh user message — the target agent reacts to it as if its own user typed it. An idle session is woken up; a mid-turn session receives nothing.\n\n" +
+			"`sessionId` — an id from autere_find_sessions, an id a scheduled task's prompt footer names, or \"current\" for this session. Make `message` self-contained: the target agent cannot see this conversation. A deleted session gets no delivery (the result says so) — a deleted conversation cannot be recreated.",
 		parameters: Type.Object({
 			sessionId: Type.String({ description: "Target session id, or \"current\"" }),
 			message: Type.String({ description: "The message the target session's agent should act on" }),
@@ -400,9 +394,8 @@ export default function (pi: ExtensionAPI) {
 		label: "Send notification",
 		promptSnippet: "send_notification — OS-level notification on the user's devices",
 		description:
-			"Send an OS-level notification to the user's devices (phone/desktop) — for something that needs their attention outside this chat.\n\n" +
-			"`content` is the notification body: at most 256 characters. The call fails with an explanatory error when it is longer, so shorten it instead of trimming it yourself.\n\n" +
-			"The notification's subject is the session's name (its id when the session has no name) and tapping it opens that session. `sessionId` defaults to this session; pass an id from autere_find_sessions to notify about another one.\n\n" +
+			"Send an OS-level notification to the user's devices — for something that needs their attention outside this chat.\n\n" +
+			"`content` is the body, at most 256 characters. The notification's subject is the session's name (its id when the session has no name) and tapping it opens that session; `sessionId` defaults to this session.\n\n" +
 			"The user chooses in Settings → Notifications which notifications they receive. When explicit notifications are off, or no device is subscribed, the call still succeeds but reports `delivered: false` with a `reason` — relay that reason instead of retrying.",
 		parameters: Type.Object({
 			content: Type.String({ description: "Notification body, at most 256 characters" }),
