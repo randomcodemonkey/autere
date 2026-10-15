@@ -96,9 +96,8 @@ if [[ $release -eq 1 ]]; then
   [[ ! -f "$here/package-lock.json" ]] || git add "$here/package-lock.json"
   if ! git diff --cached --quiet; then
     git commit -m "version: $version"
-    git tag -f "v$version"
   else
-    echo "version files already committed — skipping commit/tag"
+    echo "version files already committed — skipping commit"
   fi
 fi
 
