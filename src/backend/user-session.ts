@@ -1288,6 +1288,7 @@ export class UserSession {
       (m: any) => m.streaming && m.role === rawRole
     );
 
+    let finalizedAssistant: any = null;
     if (streamingIdx >= 0) {
       buf[streamingIdx] = {
         ...buf[streamingIdx],
@@ -1296,6 +1297,7 @@ export class UserSession {
         timestamp: Date.now(),
         ...(msgImages.length > 0 ? { images: [...(buf[streamingIdx].images || []), ...msgImages] } : {}),
       };
+      finalizedAssistant = buf[streamingIdx];
       upserts.push(buf[streamingIdx]);
     } else if (text || msgImages.length > 0) {
       const entry = this.tagEntry({
@@ -1306,7 +1308,28 @@ export class UserSession {
         ...(msgImages.length > 0 ? { images: msgImages } : {}),
       });
       buf.push(entry);
+      finalizedAssistant = entry;
       upserts.push(entry);
+    }
+
+    // Some providers stream an assistant message's thinking block AFTER its
+    // text. Deltas append in arrival order, so the thinking entry lands after
+    // the assistant text — while a reload (rebuild) renders thinking-first.
+    // Reorder the buffer to the canonical order and tell clients via
+    // remove + re-upsert (upserts append when the id is gone).
+    if (rawRole === 'assistant' && finalizedAssistant) {
+      const aIdx = buf.indexOf(finalizedAssistant);
+      const movers = buf.slice(aIdx + 1).filter((m) => m.role === 'thinking');
+      if (movers.length > 0) {
+        for (const m of movers) buf.splice(buf.indexOf(m), 1);
+        buf.splice(aIdx, 0, ...movers);
+        this.broadcast({
+          type: 'history_remove',
+          sessionId: s.sessionState.sessionId,
+          data: movers.map((m) => ({ id: m.id, role: 'thinking', text: m.text })),
+        });
+        this.broadcastHistoryUpsert([...movers, finalizedAssistant]);
+      }
     }
 
     // Keep only the last historyLimit messages (clients are told which

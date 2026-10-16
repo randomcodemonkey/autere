@@ -54,7 +54,14 @@ function patchComboProvider(pi: any, modelRegistry: any): boolean {
 }
 
 export default function (pi: any) {
-	pi.on('session_start', async (_event: unknown, ctx: any) => {
+	const patch = (_event: unknown, ctx: any) => {
 		patchComboProvider(pi, ctx?.modelRegistry);
-	});
+	};
+	// session_start alone is not enough: after an idle respawn the listener can
+	// run before pi-9router-ext (npm) finishes registering the provider, so the
+	// patch finds nothing and the unpatched thinkingLevelMap (off -> "none")
+	// reaches upstream, which rejects with [1210] "cannot be disabled".
+	// before_agent_start re-applies the idempotent patch before every request.
+	pi.on('session_start', patch);
+	pi.on('before_agent_start', patch);
 }
