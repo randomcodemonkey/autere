@@ -874,9 +874,16 @@ export class UserSession {
             this.notifyTurnEnd();
             this.scheduleAllDoneCheck();
           }
-          // Turn is over — a deferred settings restart (queued while this
-          // turn was running) may now safely replace the pi process.
-          this.onTurnEnd?.();
+          // Deferred mid-turn work is safe once the agent is fully settled:
+          // a model change queued mid-turn confuses the next model (it
+          // inherits a half-written turn it did not author), and a settings
+          // restart must not kill a steered continuation.
+          if (event.type === 'agent_settled') {
+            this.applyPendingModel().finally(() => this.onTurnEnd?.());
+          } else if (!this.pendingModel) {
+            // agent_end without a queued model change — restart as before.
+            this.onTurnEnd?.();
+          }
           break;
         }
         case 'queue_update':
@@ -1484,6 +1491,57 @@ export class UserSession {
         this.trimHistory(buf);
       }
     }
+  }
+
+  /** Model change requested mid-turn — applied at agent_settled. */
+  private pendingModel: { provider: string; modelId: string } | null = null;
+
+  /**
+   * Change the session model. Mid-turn switches leave the new model with a
+   * half-written turn it did not author (it then re-reads history trying to
+   * reconstruct context), so a change requested while the agent is streaming
+   * or compacting is deferred to agent_settled and announced in chat.
+   * Returns true when applied immediately, false when deferred.
+   */
+  async setSessionModel(provider: string, modelId: string): Promise<boolean> {
+    const s = this.state;
+    if (s.sessionState.isStreaming || s.sessionState.compacting) {
+      this.pendingModel = { provider, modelId };
+      const name = s.availableModels.find((m: any) => m.provider === provider && m.id === modelId)?.name || modelId;
+      log.userSession.forSession(s.sessionState.sessionId).info(`set_model ${provider}/${modelId} deferred until the current turn settles`);
+      this.pushSystemNotice(`Model change to ${name} deferred until the current turn finishes.`);
+      return false;
+    }
+    await this.applySetModel(provider, modelId);
+    return true;
+  }
+
+  private async applySetModel(provider: string, modelId: string): Promise<void> {
+    const model = await this.rpc.setModel(provider, modelId);
+    if (model) {
+      this.state.sessionState.model = { provider: model.provider, id: model.id, name: model.name || model.id };
+      this.broadcast({ type: 'status', data: { ...this.state.sessionState } });
+    }
+  }
+
+  /** Apply the model change deferred mid-turn, if any (idempotent). */
+  private async applyPendingModel(): Promise<void> {
+    const pending = this.pendingModel;
+    if (!pending) return;
+    this.pendingModel = null;
+    try {
+      await this.applySetModel(pending.provider, pending.modelId);
+    } catch (err: any) {
+      log.userSession.forSession(this.state.sessionState.sessionId).error(`Deferred set_model failed: ${err?.message || err}`);
+      this.pushSystemNotice(`Deferred model change to ${pending.modelId} failed: ${err?.message || err}`);
+    }
+  }
+
+  /** Non-error system notice rendered as a dim chat line (all clients). */
+  private pushSystemNotice(text: string): void {
+    const entry = this.tagEntry({ role: 'system', text, streaming: false, timestamp: Date.now() });
+    this.history().push(entry);
+    this.broadcastHistoryUpsert([entry]);
   }
 
   private handleModelSelect(event: any): void {

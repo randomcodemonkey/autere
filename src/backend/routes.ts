@@ -1279,12 +1279,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         const { provider, modelId } = body;
         if (!provider || !modelId) { sendJSON(c.res, { success: false, error: 'provider and modelId are required' }, 400); return; }
         log.http.info(`set_model ${provider}/${modelId} for ${c.user} session=${t.state.sessionState?.sessionId ?? '?'}`);
-        const model = await t.rpc.setModel(provider, modelId);
-        if (model) {
-          t.state.sessionState.model = { provider: model.provider, id: model.id, name: model.name || model.id };
-          t.broadcast({ type: 'status', data: { ...t.state.sessionState } });
-        }
-        sendJSON(c.res, { success: true });
+        const deferred = !(await t.setSessionModel(provider, modelId));
+        sendJSON(c.res, deferred ? { success: true, deferred: true } : { success: true });
       } catch (err: any) {
         log.http.error(`set_model failed: ${err?.message || err}${err?.stack ? '\n' + err.stack : ''}`);
         sendJSON(c.res, { success: false, error: `Failed to set model: ${err.statusCode ? err.message : err}` }, err.statusCode || 500);
