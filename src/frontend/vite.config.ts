@@ -8,6 +8,18 @@ const APP_VERSION = JSON.parse(readFileSync(new URL('../../package.json', import
 
 export default defineConfig({
   plugins: [react()],
+  experimental: {
+    // Runtime base: the app runs behind a reverse proxy with a path prefix.
+    // The backend injects window.__AUTERE_BASE__ into index.html and rewrites
+    // absolute HTML asset refs; but Vite's dynamic-import preload helper bakes
+    // URLs into JS at build time, so they must resolve the prefix at runtime.
+    renderBuiltUrl(filename, host) {
+      if (host.hostType === 'js') {
+        return { runtime: `(window.__AUTERE_BASE__||'')+${JSON.stringify('/' + filename)}` };
+      }
+      return undefined; // HTML/CSS refs stay absolute; backend rewrites index.html
+    },
+  },
   define: {
     // Build timestamp, surfaced in the System card and console so a client
     // can verify which UI version it is running (stale-PWA debugging).
