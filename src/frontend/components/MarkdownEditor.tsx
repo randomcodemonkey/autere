@@ -127,7 +127,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
       view.dispatch({
         changes: { from: 0, to: doc.length, insert: props.value },
         selection: { anchor: props.value.length },
+        scrollIntoView: true,
       });
+      // Clearing the doc (e.g. send) leaves the stale scrollTop behind,
+      // which pushes the placeholder's first line off the top of an empty
+      // input. Reset to the natural top-anchored state.
+      if (props.value === '') view.scrollDOM.scrollTop = 0;
     }
   }, [props.value]);
 

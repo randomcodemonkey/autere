@@ -46,6 +46,27 @@ describe('MarkdownEditor (CodeMirror chat input)', () => {
     cy.get('.cm-content').should('have.text', 'from-parent tail');
   });
 
+  // Send clears the input while the scroller is scrolled down (multiline
+  // draft): the empty editor must be back at the top or the placeholder
+  // renders half cut off.
+  it('resets scroll to top when cleared externally', () => {
+    function Controlled() {
+      const [v, setV] = useState('a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl');
+      return (
+        <div>
+          <button onClick={() => setV('')}>clear</button>
+          <MarkdownEditor value={v} onChange={setV} onSend={() => {}} style={{ height: '6rem' }} />
+        </div>
+      );
+    }
+    cy.mount(<Controlled />);
+    cy.get('.cm-content').invoke('focus');
+    cy.get('.cm-content').type('{end}{ctrl+end}');
+    cy.get('.cm-scroller').should(($el) => expect($el[0].scrollTop).to.be.greaterThan(0));
+    cy.get('button').click();
+    cy.get('.cm-scroller').should(($el) => expect($el[0].scrollTop).to.equal(0));
+  });
+
   it('is read-only when disabled', () => {
     cy.mount(<MarkdownEditor value="" onChange={cy.stub()} onSend={cy.stub()} disabled={true} />);
     cy.get('.cm-content').should('have.attr', 'contenteditable', 'false');
