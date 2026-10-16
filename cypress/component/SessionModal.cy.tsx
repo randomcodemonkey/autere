@@ -209,10 +209,65 @@ describe('SessionModal', () => {
     cy.get('#session-persona-select').should('be.disabled').and('contain', 'Failed to load personas');
   });
 
-  it('delete button shows no armed/❗ state (confirm() is used instead)', () => {
+  it('delete button shows a text label, no armed/❗ state (confirm() is used instead)', () => {
     mountModal();
     cy.wait('@sessions');
     cy.get('.session-item').not('.active').find('.session-delete-btn')
-      .should('contain', '✕').and('not.contain', '❗');
+      .should('contain', 'delete').and('not.contain', '❗');
+  });
+
+  it('clear button: only on the current session, gated behind confirm()', () => {
+    let accept = false;
+    cy.window({ log: false }).then((win) => { (win as any).confirm = () => accept; });
+    mountModal();
+    cy.wait('@sessions');
+    cy.get('.session-item.active .session-clear-btn').should('exist');
+    cy.get('.session-item').not('.active').find('.session-clear-btn').should('not.exist');
+    // Dismissing the confirm dialog must NOT create a new session
+    cy.get('.session-item.active .session-clear-btn').click();
+    cy.get('@onNewSession').should('not.have.been.called');
+    // Accepting creates a fresh session with the same name/workdirs and
+    // passes the old session id so it gets deleted after the switch.
+    cy.wrap(null).then(() => { accept = true; });
+    cy.get('.session-item.active .session-clear-btn').click();
+    cy.get('@onNewSession').should('have.been.calledWith', null, 'First', undefined, undefined, 'aaaa1111-0000');
+  });
+
+  it('clone button: modal prefilled with the source name and workdirs', () => {
+    const withWd = [{ ...SESSIONS[2], workdirs: ['/home/autere/code'] }];
+    cy.intercept('GET', '**/api/v1/sessions', { success: true, data: withWd }).as('sessionsWd');
+    mountModal({ canSetWorkdir: true });
+    cy.wait('@sessionsWd');
+    cy.get('.session-item:contains("Idle one")').find('.session-clone-btn').click();
+    cy.get('.modal:visible .modal-header h3').should('contain', 'Clone session');
+    cy.get('#session-clone-name').should('have.value', 'Idle one');
+    cy.get('.modal-session .sortable-list .sortable-list-input').first().should('have.value', '/home/autere/code');
+  });
+
+  it('clone button: confirm issues the clone request with edited name/workdirs', () => {
+    const withWd = [{ ...SESSIONS[0], workdirs: ['/home/autere/code'] }];
+    cy.intercept('GET', '**/api/v1/sessions', { success: true, data: withWd }).as('sessionsWd');
+    cy.intercept('POST', '**/api/v1/sessions/*/clone', { success: true, data: { id: 'clone-id' } }).as('clone');
+    mountModal({ canSetWorkdir: true });
+    cy.wait('@sessionsWd');
+    cy.get('.session-item:contains("First")').find('.session-clone-btn').click();
+    cy.get('#session-clone-name').clear().type('Cloned name');
+    cy.get('.session-clone-confirm').click();
+    cy.wait('@clone').its('request.body').should('deep.include', {
+      sessionName: 'Cloned name',
+      workdirs: ['/home/autere/code'],
+    });
+    // The modal closes once the clone succeeds
+    cy.get('.session-clone-confirm').should('not.exist');
+  });
+
+  it('clone button: a failed clone keeps the modal open with the error', () => {
+    cy.intercept('POST', '**/api/v1/sessions/*/clone', { success: false, error: 'Session has no history to clone yet' }).as('cloneFail');
+    mountModal();
+    cy.wait('@sessions');
+    cy.get('.session-item').first().find('.session-clone-btn').click();
+    cy.get('.session-clone-confirm').click();
+    cy.wait('@cloneFail');
+    cy.get('.modal:visible').should('contain', 'Session has no history to clone yet');
   });
 });

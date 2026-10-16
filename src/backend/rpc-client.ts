@@ -528,6 +528,11 @@ export class MonitorRpcClient {
     await this.send({ type: 'set_session_name', name });
   }
 
+  async clone(): Promise<{ cancelled: boolean }> {
+    const response = await this.send({ type: 'clone' });
+    return this.getData(response) as { cancelled: boolean };
+  }
+
   async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
     const response = await this.send({ type: 'switch_session', sessionPath });
     return this.getData(response) as { cancelled: boolean };

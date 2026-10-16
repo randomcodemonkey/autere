@@ -198,6 +198,7 @@ const RE = {
   gitReposAction: new RegExp(`^${API_PREFIX}/git/repos/(clone|init)$`),
   sessionsItem: new RegExp(`^${API_PREFIX}/sessions/([\\w-]+)$`),
   sessionsActivate: new RegExp(`^${API_PREFIX}/sessions/([\\w-]+)/activate$`),
+  sessionsClone: new RegExp(`^${API_PREFIX}/sessions/([\\w-]+)/clone$`),
   sessionsHistory: new RegExp(`^${API_PREFIX}/sessions/([\\w-]+)/history$`),
   sessionsFileChanges: new RegExp(`^${API_PREFIX}/sessions/([\\w-]+)/file-changes$`),
   personasItem: new RegExp(`^${API_PREFIX}/personas/([\\w-]+)$`),
@@ -719,6 +720,38 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
   });
 
   // ── Sessions ──
+  /** Shared workdirs validation (new-session + clone): admin-only, absolute
+   *  paths that exist and sit inside the caller's allowed roots. Deduped,
+   *  order preserved; entry [0] doubles as the session cwd. */
+  const validateWorkdirs = (user: string, raw: unknown[]): { list?: string[]; error?: string; status?: number } => {
+    if (getUserRole(user) !== 'admin') return { error: 'workdirs require admin role', status: 403 };
+    const resolveWorkdir = (r: string): string => {
+      let wd = r.trim();
+      if (wd.startsWith('~/')) wd = join(homedir(), wd.slice(2));
+      if (!/^\//.test(wd)) wd = join(homedir(), wd);
+      return wd.replace(/\/+$/, '');
+    };
+    const dirs = isRegisteredUser(user) ? getUserAllowedDirs(user) : [];
+    const roots = dirs.length ? dirs.map((d) => d.path) : [homedir()];
+    const list: string[] = [];
+    for (const item of raw) {
+      const wd = typeof item === 'string' ? resolveWorkdir(item) : '';
+      if (!/^\//.test(wd) || wd.includes('\0')) return { error: 'workdirs must be absolute paths', status: 400 };
+      const inside = roots.some((root) => {
+        const r = root.replace(/\/+$/, '');
+        return wd === r || wd.startsWith(r + '/');
+      });
+      if (!inside) return { error: `workdir ${wd} is outside your allowed directories (${roots.join(', ')})`, status: 403 };
+      try {
+        if (!statSync(wd).isDirectory()) return { error: `workdir ${wd} is not a directory`, status: 400 };
+      } catch {
+        return { error: `workdir ${wd} does not exist`, status: 400 };
+      }
+      if (!list.includes(wd)) list.push(wd);
+    }
+    return { list };
+  };
+
   route({
     method: 'GET', path: API.sessions.list, template: `${API_PREFIX}/sessions`,
     role: 'chat', tag: 'Sessions', summary: 'List the caller sessions',
@@ -783,41 +816,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // deduped, order preserved; entry [0] doubles as the session cwd.
       let workdirs: string[] | undefined;
       if (Array.isArray(body?.workdirs)) {
-        if (getUserRole(c.user) !== 'admin') {
-          sendJSON(c.res, { success: false, error: 'workdirs require admin role' }, 403);
-          return;
-        }
-        const list: string[] = [];
-        for (const raw of body.workdirs) {
-          const wd = typeof raw === 'string' ? resolveWorkdir(raw) : '';
-          if (!/^\//.test(wd) || wd.includes('\0')) {
-            sendJSON(c.res, { success: false, error: 'workdirs must be absolute paths' }, 400);
-            return;
-          }
-          const roots = (() => {
-            const dirs = isRegisteredUser(c.user) ? getUserAllowedDirs(c.user) : [];
-            return dirs.length ? dirs.map((d) => d.path) : [homedir()];
-          })();
-          const inside = roots.some((r) => {
-            const root = r.replace(/\/+$/, '');
-            return wd === root || wd.startsWith(root + '/');
-          });
-          if (!inside) {
-            sendJSON(c.res, { success: false, error: `workdir ${wd} is outside your allowed directories (${roots.join(', ')})` }, 403);
-            return;
-          }
-          try {
-            if (!statSync(wd).isDirectory()) {
-              sendJSON(c.res, { success: false, error: `workdir ${wd} is not a directory` }, 400);
-              return;
-            }
-          } catch {
-            sendJSON(c.res, { success: false, error: `workdir ${wd} does not exist` }, 400);
-            return;
-          }
-          if (!list.includes(wd)) list.push(wd.replace(/\/+$/, ''));
-        }
-        if (list.length) workdirs = list;
+        const check = validateWorkdirs(c.user, body.workdirs);
+        if (check.error) { sendJSON(c.res, { success: false, error: check.error }, check.status!); return; }
+        if (check.list?.length) workdirs = check.list;
       }
 
       // Sandbox docker.sock opt-in (admin feature). Even when the form
@@ -897,6 +898,84 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // its badge immediately; the subsequent activation returns the full
       // bootstrap payload from the new process.
       sendJSON(c.res, { success: true, navigateUrl: `/session/${state.sessionId}`, sessionState: { ...state } }, 201);
+    },
+  });
+
+  route({
+    method: 'POST', path: RE.sessionsClone, template: `${API_PREFIX}/sessions/{id}/clone`,
+    role: 'chat', tag: 'Sessions', summary: 'Clone a session: pi duplicates the active branch into a NEW session (body: sessionName?, workdirs? — admin-only). The pi process stays on the source session.',
+    handler: async (c, m) => {
+      const sess = pm.findSession(c.user, m![1], c.viewed);
+      if (!sess) { sendJSON(c.res, { success: false, error: 'Session not found' }, 404); return; }
+      const body = await readBody(c.req).catch(() => ({}) as any);
+
+      // Workdirs: same rules as new-session creation (admin-only, validated).
+      let workdirs: string[] | undefined;
+      if (Array.isArray(body?.workdirs)) {
+        const check = validateWorkdirs(c.user, body.workdirs);
+        if (check.error) { sendJSON(c.res, { success: false, error: check.error }, check.status!); return; }
+        if (check.list?.length) workdirs = check.list;
+      }
+
+      // pi's clone copies the ACTIVE branch — nothing to copy when pi hasn't
+      // written the session file yet (fresh/empty session).
+      if (!sess.sessionFile || !existsSync(sess.sessionFile)) {
+        sendJSON(c.res, { success: false, error: 'Session has no history to clone yet' }, 400);
+        return;
+      }
+
+      // Clone runs inside the source session's pi process. Busy sessions are
+      // refused — pi's clone tears down the current session state.
+      const target = await pm.getOrCreate(c.user, sess.sessionFile);
+      if (target.state.sessionState.isStreaming || target.state.sessionState.compacting) {
+        sendJSON(c.res, { success: false, error: 'Session is busy — wait for the current turn to finish' }, 409);
+        return;
+      }
+      let cloned: { cancelled: boolean };
+      try {
+        cloned = await target.rpc.clone();
+      } catch (err: any) {
+        log.http.error(`clone failed for ${sess.id}: ${err?.message || err}`);
+        sendJSON(c.res, { success: false, error: `Failed to clone session: ${err?.message || err}` }, 500);
+        return;
+      }
+      if (cloned.cancelled) {
+        sendJSON(c.res, { success: false, error: 'Clone was cancelled' }, 400);
+        return;
+      }
+      const st = await target.rpc.getState();
+      if (!st.sessionFile || st.sessionFile === sess.sessionFile) {
+        sendJSON(c.res, { success: false, error: 'Clone produced no new session' }, 500);
+        return;
+      }
+
+      // Name the clone (the modal prefills the source name; empty clears).
+      const sessionName = typeof body?.sessionName === 'string' ? body.sessionName.trim() : (sess.sessionName || '');
+      try {
+        await target.rpc.setSessionName(sessionName);
+      } catch (err) {
+        log.http.error(`Failed to name cloned session: ${err}`);
+      }
+
+      // Spawn opts for the clone: requested workdirs (or the source's). The
+      // process is still keyed under the SOURCE file here — switching it
+      // back first keeps it serving the source with its original mounts.
+      const sourceOpts = pm.getSpawnOpts(c.user, sess.sessionFile);
+      pm.persistSpawnOpts(c.user, st.sessionFile, {
+        cwd: workdirs?.[0] ?? sourceOpts.cwd ?? sess.cwd ?? undefined,
+        workdirs: workdirs?.length ? workdirs : (sourceOpts.workdirs?.length ? [...sourceOpts.workdirs] : undefined),
+        mountDockerSocket: sourceOpts.mountDockerSocket,
+      });
+      try {
+        await target.rpc.switchSession(sess.sessionFile);
+      } catch (err) {
+        // The clone is written and named; worst case the process now serves
+        // the clone instead of the source — recoverable by session id.
+        log.http.error(`Failed to switch pi back to the source session after clone: ${err}`);
+      }
+
+      broadcastToUser(c.user, { type: 'sessions', data: pm.listSessions(c.user, c.viewed) });
+      sendJSON(c.res, { success: true, data: { id: st.sessionId, sessionFile: st.sessionFile, sessionName: sessionName || null } });
     },
   });
 

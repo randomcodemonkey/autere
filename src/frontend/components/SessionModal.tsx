@@ -87,8 +87,8 @@ interface SessionViewProps {
   isStreaming: boolean;
   /** Admin-only: show the sandbox workdir field in the new-session form */
   canSetWorkdir?: boolean;
-  /** Creates the session: chosen persona id (null = none) + form name + sandbox workdirs + docker.sock opt-in */
-  onNewSession: (personaId: string | null, sessionName: string, workdirs?: string[], mountDockerSocket?: boolean) => void;
+  /** Creates the session: chosen persona id (null = none) + form name + sandbox workdirs + docker.sock opt-in. clearSessionId deletes that session after the new one is bound ("clear" flow) */
+  onNewSession: (personaId: string | null, sessionName: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string) => void;
   onSwitchSession: (sessionId: string) => void;
   /** True while a switch request is in flight — blocks further actions */
   switching?: boolean;
@@ -155,6 +155,12 @@ export const SessionView: React.FC<SessionViewProps> = ({
   const [newMountDockerSocket, setNewMountDockerSocket] = useState(false);
   const [activeOnly, setActiveOnly] = useState(false);
   const searchSeq = useRef(0);
+  // Clone modal state — target session + prefilled name/workdirs
+  const [cloneTarget, setCloneTarget] = useState<SearchedSession | null>(null);
+  const [cloneName, setCloneName] = useState('');
+  const [cloneWorkdirs, setCloneWorkdirs] = useState<string[]>([]);
+  const [cloneBusy, setCloneBusy] = useState(false);
+  const [cloneError, setCloneError] = useState<string | null>(null);
 
   // Persona choices for the new-session form
   useEffect(() => {
@@ -213,6 +219,48 @@ export const SessionView: React.FC<SessionViewProps> = ({
       setResults((prev) => prev.filter((s) => s.id !== sid));
     } catch {}
   }, []);
+
+  // "Clear": replace the current session with a fresh one that keeps the
+  // same name and workdirs. handleNewSession creates + switches to the new
+  // session, then deletes the old one once the client is bound to it.
+  const handleClearSession = useCallback((session: SearchedSession) => {
+    if (!window.confirm(`Clear session "${session.sessionName || session.id}"? A fresh session with the same name and workdirs is created, and this session is deleted.`)) {
+      return;
+    }
+    onNewSession(null, session.sessionName || '', session.workdirs, undefined, session.id);
+  }, [onNewSession]);
+
+  // "Clone": modal prefilled with the source's name/workdirs; on confirm
+  // pi duplicates the active branch into a new session.
+  const openCloneForm = useCallback((session: SearchedSession) => {
+    setCloneTarget(session);
+    setCloneName(session.sessionName || '');
+    setCloneWorkdirs(session.workdirs ? [...session.workdirs] : []);
+    setCloneError(null);
+  }, []);
+
+  const handleCloneSession = useCallback(async () => {
+    if (!cloneTarget) return;
+    setCloneBusy(true);
+    setCloneError(null);
+    try {
+      const res = await fetch(url(API.sessions.clone(cloneTarget.id)), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionName: cloneName.trim(),
+          ...(canSetWorkdir && cloneWorkdirs.length ? { workdirs: cloneWorkdirs } : {}),
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body.success === false) throw new Error(body.error || `HTTP ${res.status}`);
+      setCloneTarget(null);
+    } catch (err: any) {
+      setCloneError(err.message);
+    } finally {
+      setCloneBusy(false);
+    }
+  }, [cloneTarget, cloneName, cloneWorkdirs, canSetWorkdir]);
 
   const openNewSessionForm = useCallback(() => {
     setNewNameInput(uiSessionName());
@@ -402,13 +450,29 @@ export const SessionView: React.FC<SessionViewProps> = ({
                   </div>
                   {!isCurrentSession && (
                     <button
-                      className="session-delete-btn"
+                      className="btn btn-danger btn-row session-delete-btn"
                       onClick={(e) => { e.stopPropagation(); handleDeleteSession(session.id); }}
                       title="Delete session"
                     >
-                      ✕
+                      delete
                     </button>
                   )}
+                  {isCurrentSession && (
+                    <button
+                      className="btn btn-warning btn-row session-clear-btn"
+                      onClick={(e) => { e.stopPropagation(); handleClearSession(session); }}
+                      title="Clear session: start fresh with the same name and workdirs"
+                    >
+                      clear
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-default btn-row session-clone-btn"
+                    onClick={(e) => { e.stopPropagation(); openCloneForm(session); }}
+                    title="Clone session: copy its history into a new session"
+                  >
+                    clone
+                  </button>
                 </div>
               );
             })}
@@ -431,6 +495,48 @@ export const SessionView: React.FC<SessionViewProps> = ({
             <button className="modal-close" onClick={() => setView('list')}>✕</button>
           </div>
           <div className="modal-body">{newSessionForm}</div>
+        </Modal>
+      )}
+      {cloneTarget && (
+        <Modal open onClose={() => { if (!cloneBusy) setCloneTarget(null); }} className="modal-session">
+          <div className="modal-header">
+            <h3>Clone session</h3>
+            <button className="modal-close" onClick={() => { if (!cloneBusy) setCloneTarget(null); }}>✕</button>
+          </div>
+          <div className="modal-body">
+            <div className="session-new-form">
+              <div className="settings-description">
+                Copies the history of “{cloneTarget.sessionName || cloneTarget.id}” into a new session.
+              </div>
+              <label className="settings-label" htmlFor="session-clone-name">Session name</label>
+              <input
+                id="session-clone-name"
+                className="settings-input"
+                type="text"
+                value={cloneName}
+                onChange={(e) => setCloneName(e.target.value)}
+                maxLength={128}
+              />
+              {canSetWorkdir && (
+                <div className="settings-field session-workdirs-row">
+                  <label className="settings-label">Workdirs</label>
+                  <SortableList
+                    items={cloneWorkdirs}
+                    onChange={setCloneWorkdirs}
+                    placeholder="/home/autere/code/… (or relative to $HOME)"
+                    addLabel="Add workdir"
+                  />
+                </div>
+              )}
+              {cloneError && <div className="settings-description" style={{ color: 'var(--c-danger-strong)' }}>{cloneError}</div>}
+              <div className="btn-group">
+                <button className="btn btn-primary session-clone-confirm" onClick={handleCloneSession} disabled={cloneBusy}>
+                  {cloneBusy ? '⏳ Cloning…' : 'Clone'}
+                </button>
+                <button className="btn" onClick={() => setCloneTarget(null)} disabled={cloneBusy}>Cancel</button>
+              </div>
+            </div>
+          </div>
         </Modal>
       )}
     </div>

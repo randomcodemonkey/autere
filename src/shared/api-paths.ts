@@ -58,6 +58,7 @@ export const API = {
     history: (id: string) => `${P}/sessions/${encodeURIComponent(id)}/history`,
     fileChanges: (id: string) => `${P}/sessions/${encodeURIComponent(id)}/file-changes`,
     activate: (id: string) => `${P}/sessions/${encodeURIComponent(id)}/activate`,
+    clone: (id: string) => `${P}/sessions/${encodeURIComponent(id)}/clone`,
     item: (id: string) => `${P}/sessions/${encodeURIComponent(id)}`,
   },
 

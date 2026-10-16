@@ -256,7 +256,7 @@ export function AppPage({
     } catch { setSessionError(`Failed to set persona to ${name}`); }
   }, [sessionState.sessionId, setSessionError, setSessionState]);
 
-  const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[], mountDockerSocket?: boolean) => {
+  const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string) => {
     // Relative (or ~) workdir paths are allowed: the backend resolves them
     // against the autere backend container's $HOME before spawning.
     setCreatingSession(true);
@@ -291,6 +291,11 @@ export function AppPage({
           else if (newId) setSessionState((prev: any) => ({ ...prev, sessionId: newId }));
           resetSessionUI();
           navigate(data.navigateUrl, { replace: true });
+          // "Clear" flow: the old session is deleted once the client is bound
+          // to the new one (the backend refuses deleting the viewed session).
+          if (clearSessionId && newId !== clearSessionId) {
+            fetch(url(API.sessions.item(clearSessionId)), { method: 'DELETE' }).catch(() => {});
+          }
         } else if (!data.success) {
           setCreatingSession(false);
           setSessionError(data.error || 'Failed to create session');

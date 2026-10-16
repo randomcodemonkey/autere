@@ -322,6 +322,11 @@ export class ProcessManager {
     return spawnOpts(user, sessionFile);
   }
 
+  /** Persist spawn opts for a session file without touching running processes */
+  persistSpawnOpts(user: string, sessionFile: string, opts: SpawnOpts): void {
+    saveSpawnOpts(user, sessionFile, opts);
+  }
+
   /**
    * Replace a session's workdirs (admin action from the Sessions view):
    * re-persist spawn opts, terminate the (idle!) pi process and respawn it

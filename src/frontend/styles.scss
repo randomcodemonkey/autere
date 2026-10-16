@@ -4029,6 +4029,17 @@ body {
   }
 }
 
+.btn-warning {
+  background: var(--c-warning-bg);
+  border-color: var(--c-warning);
+  color: var(--c-warning);
+
+  &:hover:not(:disabled) {
+    background: var(--c-warning);
+    color: var(--c-warning-bg);
+  }
+}
+
 .btn.hidden {
   display: none;
 }
@@ -4236,24 +4247,6 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin-top: 0.15rem;
-}
-
-.session-delete-btn {
-  flex-shrink: 0;
-  background: var(--c-danger-bg);
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-  font-size: 0.65rem;
-  padding: 0.25rem 0.4rem;
-  line-height: 1;
-  color: var(--c-danger);
-  opacity: 1;
-  transition: background 0.15s;
-}
-
-.session-delete-btn:hover {
-  background: var(--c-danger-border);
 }
 
 // -- Main App -------------------------------------------------------------------
