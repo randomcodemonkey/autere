@@ -97,4 +97,11 @@ RUN npm ci --omit=dev --no-audit --no-fund \
 USER autere
 WORKDIR /home/autere
 
+# Preinstall pi npm extensions as the autere user so entrypoint.sh never
+# installs at container start (rerunning it would fetch fresh versions).
+# Enabled/disabled per deployment in entrypoint.sh by filtering settings.json
+# "packages". Bump NPM_CACHE_COUNTER when updating versions.
+RUN set -e; for pkg in pi-9router-ext pi-web-search pi-memory copilot-credit-usage; do pi install "npm:$pkg"; done \
+    && npm cache clean --force
+
 ENTRYPOINT ["/entrypoint.sh"]

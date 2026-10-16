@@ -13,22 +13,20 @@ for dir in /home/autere/pi-ext-extra/*; do
   ln -sfn "$dir" "$piExtensions/$name"
 done
 
-# npm packages: pi-9router-ext only when 9router is actually the provider.
-if [ "$AUTERE_PROVIDER" ] && [ "$AUTERE_PROVIDER" != "9router" ]; then
-  echo "AUTERE_PROVIDER=$AUTERE_PROVIDER — skipping 9router extension install"
-  echo "Installing pi-web-search (provider-native web search)"
-  pi install npm:pi-web-search
-else
-  echo "Installing pi extensions"
-  pi install npm:pi-9router-ext
-fi
-pi install npm:pi-memory
+# npm extensions are preinstalled in the image; drop the packages this
+# deployment does not use. Idempotent: safe on every entrypoint rerun.
+piSettings="$HOME/.pi/agent/settings.json"
+jq --arg p "${AUTERE_PROVIDER:-}" '
+  def keep($src):
+    $src == "npm:pi-memory"
+    or ($src == "npm:pi-9router-ext" and ($p == "" or $p == "9router"))
+    or ($src == "npm:pi-web-search" and ($p != "" and $p != "9router"))
+    or ($src == "npm:copilot-credit-usage" and $p == "github-copilot");
+  .packages |= [ .[]
+    | if (type == "string") then {source: .} else . end
+    | select(.source | keep(.)) ]' "$piSettings" > "$piSettings.tmp" && mv "$piSettings.tmp" "$piSettings"
 
-# GitHub Copilot usage/credit tracking — only meaningful with that provider.
-if [ "$AUTERE_PROVIDER" = "github-copilot" ]; then
-  echo "Installing copilot-credit-usage extension (github-copilot provider)"
-  pi install npm:copilot-credit-usage
-fi
+echo "AUTERE_PROVIDER=${AUTERE_PROVIDER:-9router} — pi extensions configured"
 
 echo "Initializing admin pi-env"
 mkdir -p ~/.autere/pi-envs/admin
