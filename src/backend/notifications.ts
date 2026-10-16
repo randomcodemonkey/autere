@@ -131,15 +131,18 @@ export function deleteSubscription(user: string, endpoint: string): boolean {
 /** SMTP transport for a notification email; input already validated. */
 function smtpTransport(cfg: { host: string; port: number; tls: string; user?: string; pass?: string }) {
   return createTransport({
+    // EHLO as a hostname, not an address literal: exim reverse-DNSes
+    // address-literal HELOs and eats the resolver timeout (~5s).
+    name: 'autere',
     host: cfg.host,
     port: cfg.port,
     secure: cfg.tls === 'implicit', // TLS from the first byte (port 465)
     requireTLS: cfg.tls === 'starttls', // start plaintext, then STARTTLS
     ignoreTLS: cfg.tls === 'none',
     auth: cfg.user ? { user: cfg.user, pass: cfg.pass ?? '' } : undefined,
-    connectionTimeout: 15_000,
+    connectionTimeout: 10_000,
     greetingTimeout: 10_000,
-    socketTimeout: 30_000,
+    socketTimeout: 20_000,
   });
 }
 
@@ -156,13 +159,15 @@ async function sendEmail(
   try {
     const transport = smtpTransport(cfg);
     try {
-      await transport.sendMail({
+      const accepted = await transport.sendMail({
         from: cfg.address,
         to: cfg.address,
         subject: clipNotification(payload.title),
         text: payload.body,
       });
-      log.notifications.info(`Email notification to "${user}" delivered in ${Date.now() - t0}ms`);
+      // Relay id in the log: an accepted-but-lost mail is traceable to the
+      // upstream MTA's queue via this id.
+      log.notifications.info(`Email notification to "${user}" delivered in ${Date.now() - t0}ms (relay: ${accepted.response})`);
       return { sent: 1 };
     } finally {
       transport.close();
