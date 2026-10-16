@@ -1174,12 +1174,18 @@ export class UserSession {
         s.currentStreamText = '';
         cur = this.tagEntry({ role: 'assistant', text: '', streaming: true, timestamp: Date.now() });
         buf.push(cur);
-        this.broadcastHistoryUpsert([cur]);
         s.activeAssistantId = cur.id;
       }
+      const wasRevealed = s.currentStreamText.trim() !== '';
       s.currentStreamText += delta || '';
       cur.text = s.currentStreamText;
-      this.broadcast({ type: 'stream_delta', sessionId, data: { role: 'assistant', text: s.currentStreamText } });
+      // Whitespace-only assistant text (e.g. GLM streams a leading ' ') must
+      // never reach clients — it renders an empty bubble. The entry is
+      // withheld until real content arrives, then revealed in one shot.
+      if (s.currentStreamText.trim() !== '') {
+        if (!wasRevealed) this.broadcastHistoryUpsert([cur]);
+        this.broadcast({ type: 'stream_delta', sessionId, data: { role: 'assistant', text: s.currentStreamText } });
+      }
     }
 
     // Update usage if present
@@ -1288,18 +1294,25 @@ export class UserSession {
       (m: any) => m.streaming && m.role === rawRole
     );
 
+    // Whitespace-only assistant text with no images is never worth
+    // broadcasting (empty bubble) and must not linger in the buffer either —
+    // drop the entry.
     let finalizedAssistant: any = null;
     if (streamingIdx >= 0) {
-      buf[streamingIdx] = {
-        ...buf[streamingIdx],
-        text,
-        streaming: false,
-        timestamp: Date.now(),
-        ...(msgImages.length > 0 ? { images: [...(buf[streamingIdx].images || []), ...msgImages] } : {}),
-      };
-      finalizedAssistant = buf[streamingIdx];
-      upserts.push(buf[streamingIdx]);
-    } else if (text || msgImages.length > 0) {
+      if (text.trim() === '' && msgImages.length === 0 && (buf[streamingIdx].text || '').trim() === '') {
+        buf.splice(streamingIdx, 1);
+      } else {
+        buf[streamingIdx] = {
+          ...buf[streamingIdx],
+          text,
+          streaming: false,
+          timestamp: Date.now(),
+          ...(msgImages.length > 0 ? { images: [...(buf[streamingIdx].images || []), ...msgImages] } : {}),
+        };
+        finalizedAssistant = buf[streamingIdx];
+        upserts.push(buf[streamingIdx]);
+      }
+    } else if (text.trim() || msgImages.length > 0) {
       const entry = this.tagEntry({
         role: rawRole,
         text,

@@ -312,7 +312,8 @@ function buildOneEntry(
           .map((c: any) => c.text)
           .join('');
         const images = extractImages(msg.content);
-        if (text || images.length > 0) {
+        // Whitespace-only text renders an empty bubble — filter it out.
+        if (text.trim() || images.length > 0) {
           out.push({
             role,
             text,
@@ -331,7 +332,7 @@ function buildOneEntry(
       if (role === 'custom') return [];
       const text = msgText(msg.content);
       const images = extractImages(msg.content);
-      if (text || images.length > 0) {
+      if (text.trim() || images.length > 0) {
         // Task deliveries arrive as user-role messages carrying the autere
         // marker — project them to their own stream role so chat styles them
         // with a distinct "task" sender.
