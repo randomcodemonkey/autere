@@ -108,6 +108,50 @@ describe('autere — scheduled tasks', () => {
     });
   });
 
+  it('reuses one session for every run when reuse session is on', function() {
+    this.timeout(300000);
+    const taskRow = () => cy.get('.scheduled-task').contains(TASK_NAME).parents('.scheduled-task');
+    const taskSessionCount = () => cy.request('/api/v1/sessions').then((res) =>
+      (res.body.data || []).filter((s: any) => String(s.sessionName || '').includes('[task]')).length);
+
+    // Flip from saveSession (left on by the previous test) to reuseSession
+    openTasks();
+    cy.get('.scheduled-task').contains(TASK_NAME).parents('.scheduled-task')
+      .find('.scheduled-edit-btn').click();
+    cy.get('.scheduled-input-savesession').uncheck({ force: true });
+    cy.get('.scheduled-input-reuse').check({ force: true });
+    cy.get('.scheduled-save-btn').click();
+    cy.get('.scheduled-task', { timeout: 5000 }).should('contain', TASK_NAME);
+
+    // Run twice: the first run establishes the task session, the second
+    // switches into it (log line) instead of spawning a replacement.
+    taskRow().find('.scheduled-run-btn').click();
+    cy.get('.sched-run-status.sched-run-success', { timeout: 150000 }).should('have.length', 3);
+    const afterFirstReuse = taskSessionCount();
+    taskRow().find('.scheduled-run-btn').click();
+    cy.get('.sched-run-status.sched-run-success', { timeout: 150000 }).should('have.length', 4);
+
+    // Session count is unchanged: the second run reused the first's session
+    taskSessionCount().then((n) => {
+      afterFirstReuse.then((before) => {
+        expect(n, 'reused run does not add sessions').to.equal(before);
+      });
+    });
+
+    // The newest run's log shows the switch, not a disposable session.
+    // Run now auto-expands the runs table — only expand when collapsed.
+    cy.get('body').then(($body) => {
+      if (!$body.find('.scheduled-runs').length) {
+        taskRow().find('.scheduled-toggle-runs-btn').click();
+      }
+    });
+    cy.get('.sched-run-log-btn', { timeout: 30000 }).first().click();
+    cy.get('.modal-sched-log', { timeout: 5000 }).should('be.visible');
+    cy.get('.sched-log-lines').should('contain', 'Switching into the task session');
+    cy.get('.sched-log-lines').should('not.contain', 'Run session removed');
+    cy.get('.modal-sched-log .modal-close').click();
+  });
+
   it('edits an existing task', () => {
     openTasks();
     cy.get('.scheduled-task').contains(TASK_NAME).parents('.scheduled-task')

@@ -8,6 +8,7 @@ import { findSession, type SessionRef } from '../../src/shared/find-session';
 import { isRmCommand, extractRmPaths, accumulateUsage, sanitizeUserName, filterModelsByPatterns, matchModelMap, sessionLocaleStamp, autoSessionName } from '../../src/shared/format';
 import { pathIsIgnored } from '../../src/shared/edit-ignore';
 import { TASK_REPORT_MARKER, streamRoleForUserText } from '../../src/shared/format';
+import { validateTaskInput } from '../../src/shared/tasks';
 
 describe('Backend Utilities (real implementations)', () => {
   describe('streamRoleForUserText (task-report projection)', () => {
@@ -435,6 +436,34 @@ describe('Session auto-naming helpers', () => {
 
     it('tolerates trailing slashes and empty entries', () => {
       expect(pathIsIgnored('/tmp/f.txt', ['/tmp/', ''])).to.eq(true);
+    });
+  });
+
+  describe('validateTaskInput (session/workdir policy)', () => {
+    const base = { name: 'T', prompt: 'P', schedule: '*/15 * * * *' };
+
+    it('accepts the new session flags together when consistent', () => {
+      expect(validateTaskInput({ ...base, reuseSession: true, clearSession: true })).to.eq(null);
+      expect(validateTaskInput({ ...base, saveLastSession: true })).to.eq(null);
+      expect(validateTaskInput({ ...base, workdirs: ['/home/autere/code'] })).to.eq(null);
+    });
+
+    it('rejects saveLastSession combined with saveSession or reuseSession', () => {
+      expect(validateTaskInput({ ...base, saveLastSession: true, saveSession: true }))
+        .to.match(/saveLastSession cannot be combined with saveSession/);
+      expect(validateTaskInput({ ...base, saveLastSession: true, reuseSession: true }))
+        .to.match(/saveLastSession cannot be combined with reuseSession/);
+    });
+
+    it('requires clearSession to come with reuseSession', () => {
+      expect(validateTaskInput({ ...base, clearSession: true }))
+        .to.match(/clearSession requires reuseSession/);
+    });
+
+    it('type-checks the new fields', () => {
+      expect(validateTaskInput({ ...base, reuseSession: 'yes' })).to.match(/reuseSession must be a boolean/);
+      expect(validateTaskInput({ ...base, workdirs: 'x' })).to.match(/workdirs must be an array/);
+      expect(validateTaskInput({ ...base, workdirs: [''] })).to.match(/non-empty path strings/);
     });
   });
 });

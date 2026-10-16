@@ -26,6 +26,10 @@ interface TaskFormState {
   enabled: boolean;
   model: string; // '' = user's pi default
   saveSession: boolean;
+  workdirs: string; // one path per line; '' = inherit / none
+  reuseSession: boolean;
+  clearSession: boolean;
+  saveLastSession: boolean;
 }
 
 const EMPTY_FORM: TaskFormState = {
@@ -38,6 +42,10 @@ const EMPTY_FORM: TaskFormState = {
   enabled: true,
   model: '',
   saveSession: false,
+  workdirs: '',
+  reuseSession: false,
+  clearSession: false,
+  saveLastSession: false,
 };
 
 function formatTime(ts?: number): string {
@@ -124,6 +132,10 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
       enabled: task.enabled,
       model: task.model || '',
       saveSession: task.saveSession === true,
+      workdirs: (task.workdirs || []).join('\n'),
+      reuseSession: task.reuseSession === true,
+      clearSession: task.clearSession === true,
+      saveLastSession: task.saveLastSession === true,
     });
   }, []);
 
@@ -145,6 +157,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
     }
     setSaving(true);
     setError(null);
+    const workdirs = form.workdirs.split('\n').map((w) => w.trim()).filter(Boolean);
     try {
       const endpoint = form.id
         ? url(API.scheduler.task(form.id))
@@ -161,6 +174,10 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
           resultScript: form.resultScript,
           enabled: form.enabled,
           saveSession: form.saveSession,
+          workdirs,
+          reuseSession: form.reuseSession,
+          clearSession: form.reuseSession && form.clearSession,
+          saveLastSession: form.saveLastSession,
         }),
       });
       const data = await res.json();
@@ -225,6 +242,19 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
 
   const runsFor = useCallback((taskId: string) =>
     runs.filter(r => r.taskId === taskId).slice(0, 10), [runs]);
+
+  const handleCleanupOneOffs = useCallback(async () => {
+    if (!confirm('Delete all one-off tasks older than 1 day?')) return;
+    setError(null);
+    try {
+      const res = await fetch(url(API.scheduler.purgeOneOff), { method: 'DELETE' });
+      const data = await res.json();
+      if (!data.success) setError(data.error || 'Failed to delete old one-off tasks');
+      await refresh();
+    } catch (err) {
+      setError(`Failed to delete old one-off tasks: ${err}`);
+    }
+  }, [refresh]);
 
   const cronErrFor = form ? validateCron(form.schedule.trim()) : null;
 
@@ -337,6 +367,20 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
             </div>
           </div>
           <div className="settings-field">
+            <label className="settings-label">Workdirs (optional)</label>
+            <textarea
+              className="settings-input scheduled-input-workdirs"
+              rows={2}
+              value={form.workdirs}
+              placeholder={'One absolute path per line - the first is the cwd\n~/code/my-project'}
+              onChange={(e) => setForm({ ...form, workdirs: e.target.value })}
+            />
+            <div className="settings-description">
+              When set, runs are sandboxed (even if sandboxing is off) with these
+              directories mounted. Empty: runs inherit the creating session's environment.
+            </div>
+          </div>
+          <div className="settings-field">
             <div className="settings-field-header">
               <label className="settings-label">Save task sessions</label>
               <label className="settings-toggle">
@@ -344,6 +388,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
                   type="checkbox"
                   className="scheduled-input-savesession"
                   checked={form.saveSession}
+                  disabled={form.saveLastSession}
                   onChange={(e) => setForm({ ...form, saveSession: e.target.checked })}
                 />
                 <span className="settings-toggle-slider" />
@@ -353,6 +398,62 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
               Keep a run's session after the run finishes. Off (default): the session is
               deleted for good once the run completes — the run log stays under Runs.
             </div>
+          </div>
+          <div className="settings-field">
+            <div className="settings-field-header">
+              <label className="settings-label">Save last task session</label>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  className="scheduled-input-savelast"
+                  checked={form.saveLastSession}
+                  disabled={form.saveSession}
+                  onChange={(e) => setForm({ ...form, saveLastSession: e.target.checked })}
+                />
+                <span className="settings-toggle-slider" />
+              </label>
+            </div>
+            <div className="settings-description">
+              Keep only the most recent run's session: when a run starts, older run
+              sessions of this task are deleted; the running one is kept until the next
+              run replaces it. Not available with Save task sessions.
+            </div>
+          </div>
+          <div className="settings-field">
+            <div className="settings-field-header">
+              <label className="settings-label">Reuse session</label>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  className="scheduled-input-reuse"
+                  checked={form.reuseSession}
+                  onChange={(e) => setForm({ ...form, reuseSession: e.target.checked, clearSession: e.target.checked ? form.clearSession : false })}
+                />
+                <span className="settings-toggle-slider" />
+              </label>
+            </div>
+            <div className="settings-description">
+              Run on the same session every time instead of a fresh one per run.
+            </div>
+            {form.reuseSession && (
+              <div className="settings-field-header scheduled-clear-row">
+                <label className="settings-label">Clear session before each run</label>
+                <label className="settings-toggle">
+                  <input
+                    type="checkbox"
+                    className="scheduled-input-clear"
+                    checked={form.clearSession}
+                    onChange={(e) => setForm({ ...form, clearSession: e.target.checked })}
+                  />
+                  <span className="settings-toggle-slider" />
+                </label>
+              </div>
+            )}
+            {form.reuseSession && form.clearSession && (
+              <div className="settings-description">
+                The session id and name stay, but previous context is wiped before every run.
+              </div>
+            )}
           </div>
           <div className="scheduled-form-actions">
             <button className="btn btn-primary scheduled-save-btn" onClick={handleSave} disabled={saving || !!cronErrFor}>
@@ -392,6 +493,9 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
           <option value="name">Sort: name</option>
           <option value="created">Sort: created</option>
         </select>
+        <button className="btn scheduled-cleanup-btn" title="Delete all one-off tasks older than 1 day" onClick={handleCleanupOneOffs}>
+          Delete old one-offs
+        </button>
       </div>
 
       {/* Hide during the initial load — SSE isn't up yet but the fetch works */}
@@ -424,6 +528,9 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
               task.seedScript && `Seed script: ${task.seedScript.slice(0, 80)}`,
               task.resultScript && `Result script: ${task.resultScript.slice(0, 80)}`,
               task.saveSession && 'Saves task sessions',
+              task.saveLastSession && 'Keeps only the last run session',
+              task.reuseSession && (task.clearSession ? 'Reuses one session (cleared each run)' : 'Reuses one session'),
+              Array.isArray(task.workdirs) && task.workdirs.length > 0 && `Workdirs: ${task.workdirs.join(', ')}`,
               task.once && 'One-off (runs once)',
             ].filter(Boolean) as string[];
             return (

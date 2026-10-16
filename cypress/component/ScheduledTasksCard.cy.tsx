@@ -385,6 +385,52 @@ describe('ScheduledTasksCard', () => {
       cy.get('.scheduled-error').should('contain', 'Invalid schedule');
       cy.get('.card-title').should('contain', 'New Scheduled Task');
     });
+
+    it('sends workdirs as a path array and reveals clear-session with reuse on', () => {
+      const getPosted = captureSchedulerPost();
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.get('.scheduled-new-btn').click();
+      cy.get('.scheduled-input-workdirs').type('/home/autere/code\n/home/autere/tmp');
+      cy.get('.scheduled-input-clear').should('not.exist');
+      cy.get('.scheduled-input-reuse').check();
+      cy.get('.scheduled-input-clear').should('exist').check();
+      cy.get('.scheduled-input-name').type('Sandboxed');
+      cy.get('.scheduled-input-prompt').type('Do things');
+      cy.get('.scheduled-save-btn').click();
+      cy.wrap(null).should(() => {
+        expect(getPosted()).to.not.be.null;
+        expect(getPosted().workdirs).to.deep.equal(['/home/autere/code', '/home/autere/tmp']);
+        expect(getPosted().reuseSession).to.equal(true);
+        expect(getPosted().clearSession).to.equal(true);
+      });
+    });
+
+    it('mutually disables saveSession and saveLastSession', () => {
+      stubFetch();
+      responseData = { tasks: [{ ...TASK, saveSession: true }], runs: [] };
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.get('.scheduled-edit-btn').click();
+      cy.get('.scheduled-input-savesession').should('be.checked');
+      cy.get('.scheduled-input-savelast').should('be.disabled');
+      cy.get('.scheduled-input-savesession').uncheck();
+      cy.get('.scheduled-input-savelast').should('be.enabled').check();
+      cy.get('.scheduled-input-savesession').should('be.disabled');
+    });
+
+    it('prefills workdirs and reuse settings when editing', () => {
+      stubFetch();
+      responseData = { tasks: [{
+        ...TASK,
+        workdirs: ['/home/autere/code'],
+        reuseSession: true,
+        clearSession: true,
+      }], runs: [] };
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.get('.scheduled-edit-btn').click();
+      cy.get('.scheduled-input-workdirs').should('have.value', '/home/autere/code');
+      cy.get('.scheduled-input-reuse').should('be.checked');
+      cy.get('.scheduled-input-clear').should('be.checked');
+    });
   });
 
   describe('search & sort', () => {
@@ -483,6 +529,67 @@ describe('ScheduledTasksCard', () => {
       cy.mount(<ScheduledTasksCard sseConnected={true} />);
       cy.get('.scheduled-delete-btn').click();
       cy.get('.scheduled-task').should('have.length', 1); // refresh stub still returns the task
+    });
+  });
+
+  describe('one-off cleanup', () => {
+    it('shows details for a reuse/save-last task', () => {
+      stubFetch();
+      responseData = { tasks: [{
+        ...TASK,
+        reuseSession: true,
+        clearSession: true,
+        saveLastSession: false,
+        workdirs: ['/home/autere/code'],
+      }, { ...TASK, id: 'task-3', name: 'Last only', saveLastSession: true }], runs: [] };
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.get('.scheduled-task-detail').should('contain', 'Reuses one session (cleared each run)');
+      cy.get('.scheduled-task-detail').should('contain', 'Workdirs: /home/autere/code');
+      cy.get('.scheduled-task-detail').should('contain', 'Keeps only the last run session');
+    });
+
+    it('sends DELETE to the one-off endpoint after confirmation', () => {
+      let purged = false;
+      cy.window({ log: false }).then((win) => {
+        (win as any).confirm = () => true;
+        installFetchStub(win, (u, init) => {
+          if (String(u).includes('/api/v1/scheduler/one-off-tasks') && init?.method === 'DELETE') {
+            purged = true;
+            return { success: true, data: { deleted: 2 } };
+          }
+          if (String(u).includes('/api/v1/scheduler/tasks') && !String(u).includes('/runs/')) {
+            return { success: true, data: { tasks: [TASK], runs: [] } };
+          }
+          return { success: true };
+        });
+      });
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.get('.scheduled-cleanup-btn').click();
+      cy.wrap(null).should(() => {
+        expect(purged).to.be.true;
+      });
+    });
+
+    it('does nothing when confirmation is dismissed', () => {
+      let purged = false;
+      cy.window({ log: false }).then((win) => {
+        (win as any).confirm = () => false;
+        installFetchStub(win, (u, init) => {
+          if (String(u).includes('/api/v1/scheduler/one-off-tasks') && init?.method === 'DELETE') {
+            purged = true;
+            return { success: true, data: { deleted: 0 } };
+          }
+          if (String(u).includes('/api/v1/scheduler/tasks') && !String(u).includes('/runs/')) {
+            return { success: true, data: { tasks: [TASK], runs: [] } };
+          }
+          return { success: true };
+        });
+      });
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.get('.scheduled-cleanup-btn').click();
+      cy.wrap(null).should(() => {
+        expect(purged).to.be.false;
+      });
     });
   });
 });

@@ -110,6 +110,7 @@ export const API = {
     taskRun: (id: string) => `${P}/scheduler/tasks/${encodeURIComponent(id)}/run`,
     runs: `${P}/scheduler/runs`,
     runLog: (taskId: string, runId: string) => `${P}/scheduler/runs/${encodeURIComponent(taskId)}/${encodeURIComponent(runId)}`,
+    purgeOneOff: `${P}/scheduler/one-off-tasks`,
   },
 
   backend: {

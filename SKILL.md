@@ -103,13 +103,22 @@ src/backend/
   personas.ts           # Persona library + per-session bindings (JSON files)
   scheduler.ts          # Scheduled tasks (cron-style pi prompts). Each run gets
                         # its own pi session, deleted for good when the run ends
-                        # unless the task has saveSession: true (Settings card
-                        # "Save task sessions" toggle). once: true = one-off,
+                        # unless the task saves it — saveSession: true
+                        # (Settings card "Save task sessions" toggle),
+                        # reuseSession: true (same session every run;
+                        # clearSession wipes its context but keeps the
+                        # id/name), or saveLastSession: true (older run
+                        # sessions are deleted when a new run starts; the
+                        # running one is kept until the next). once: true = one-off,
                         # at most one run ever (auto-disabled after it; both a
                         # task run inherits the creating session's cwd and
                         # workdirs (stored on the task at creation from the
                         # `session` id the agent's schedule_task tool passes;
-                        # backend-resolved, never client paths)
+                        # backend-resolved, never client paths) or set
+                        # explicitly via the task form / API (workdirs force
+                        # sandboxing even when user/global sandboxing is
+                        # off); DELETE /scheduler/one-off-tasks removes
+                        # one-off tasks older than 24h (Tasks view button)
                         # scheduled tick and a manual trigger are refused
                         # afterwards) — CLI `task-run <id> --wait` blocks on
                         # those and prints the run record. Deliveries a run

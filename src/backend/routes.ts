@@ -2192,6 +2192,14 @@ ${text.trim()}`).catch((err) => settle(err as Error));
             workdirs = wds.length ? [...wds] : undefined;
           }
         }
+        // Explicit workdirs win over session inheritance; entry [0] doubles
+        // as the cwd (same rule the New-Session spawn uses). Validated like
+        // the sessions API — admin-only, inside the caller's allowed roots.
+        if (Array.isArray(input.workdirs) && input.workdirs.length) {
+          const check = validateWorkdirs(c.user, input.workdirs);
+          if (check.error) { sendJSON(c.res, { success: false, error: check.error }, check.status || 400); return; }
+          if (check.list?.length) { workdirs = check.list; cwd = check.list[0]; }
+        }
         const task: ScheduledTask = {
           id: randomUUID(),
           name: input.name.trim(),
@@ -2203,6 +2211,9 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           enabled: input.enabled !== false,
           saveSession: input.saveSession === true,
           once: input.once === true,
+          reuseSession: input.reuseSession === true,
+          clearSession: input.clearSession === true,
+          saveLastSession: input.saveLastSession === true,
           cwd,
           workdirs,
           createdAt: now,
@@ -2239,8 +2250,26 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           // from callers such as the agent's set_task_enabled round-trip).
           saveSession: input.saveSession === undefined ? existing.saveSession : input.saveSession === true,
           once: input.once === undefined ? existing.once : input.once === true,
+          reuseSession: input.reuseSession === undefined ? existing.reuseSession : input.reuseSession === true,
+          clearSession: input.clearSession === undefined ? existing.clearSession : input.clearSession === true,
+          saveLastSession: input.saveLastSession === undefined ? existing.saveLastSession : input.saveLastSession === true,
           updatedAt: Date.now(),
         };
+        // Explicit workdirs: only reapplied when the client actually sends
+        // them — the agent's PUT round-trip spreads the stored task back
+        // verbatim, and unchanged workdirs must not re-trigger validation.
+        if (Array.isArray(input.workdirs)) {
+          if (input.workdirs.length === 0) {
+            updated.workdirs = undefined;
+          } else if (JSON.stringify(input.workdirs) !== JSON.stringify(existing.workdirs ?? [])) {
+            const check = validateWorkdirs(c.user, input.workdirs);
+            if (check.error) { sendJSON(c.res, { success: false, error: check.error }, check.status || 400); return; }
+            if (check.list?.length) {
+              updated.workdirs = check.list;
+              updated.cwd = check.list[0];
+            }
+          }
+        }
         saveTask(c.user, updated);
         sendJSON(c.res, { success: true, data: updated });
       } catch (err: any) {
@@ -2260,6 +2289,21 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       } catch (err: any) {
         sendJSON(c.res, { success: false, error: `Failed to delete task: ${err.statusCode ? err.message : err}` }, err.statusCode || 500);
       }
+    },
+  });
+
+  route({
+    method: 'DELETE', path: API.scheduler.purgeOneOff, template: `${API_PREFIX}/scheduler/one-off-tasks`,
+    role: 'control', tag: 'Scheduler', summary: 'Delete all one-off tasks created more than 24h ago (skips running ones; returns the count)',
+    handler: async (c) => {
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      let deleted = 0;
+      for (const t of listTasks(c.user)) {
+        if (!t.once || t.createdAt > cutoff) continue;
+        if (scheduler?.isRunning(c.user, t.id)) continue;
+        if (deleteTask(c.user, t.id)) deleted++;
+      }
+      sendJSON(c.res, { success: true, data: { deleted } });
     },
   });
 

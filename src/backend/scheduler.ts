@@ -28,7 +28,7 @@ import { ensurePiEnv } from './pi-env.js';
 import { sandboxSpawnOptions } from './user-session.js';
 import { getEditIgnorePaths, getSendImagesToChatModel, getImagePreviewQuality, getImageStreamFix } from './user-settings.js';
 import { MonitorRpcClient } from './rpc-client.js';
-import { cronMatches, validateCron } from '../shared/cron.js';
+import { cronMatches } from '../shared/cron.js';
 import { sanitizeUserName } from '../shared/format.js';
 import { log } from './logger.js';
 import { autoSessionName } from './utils.js';
@@ -43,6 +43,8 @@ import type {
 } from '../shared/tasks.js';
 
 export type { ScheduledTask, TaskRunStatus, TaskRunRecord, TaskRunLog };
+// Task payload validation is pure and shared with the frontend tests.
+export { validateTaskInput } from '../shared/tasks.js';
 
 export interface SchedulerOptions {
   model?: string;
@@ -134,33 +136,6 @@ export function deleteTask(user: string, taskId: string): boolean {
   return true;
 }
 
-export function validateTaskInput(input: any): string | null {
-  if (!input || typeof input !== 'object') return 'Task must be an object';
-  if (typeof input.name !== 'string' || !input.name.trim()) return 'name is required';
-  if (typeof input.prompt !== 'string' || !input.prompt.trim()) return 'prompt is required';
-  if (typeof input.schedule !== 'string' || !input.schedule.trim()) return 'schedule is required';
-  const cronErr = validateCron(input.schedule);
-  if (cronErr) return `Invalid schedule: ${cronErr}`;
-  if (input.model !== undefined && input.model !== null && input.model !== '' && typeof input.model !== 'string') {
-    return 'model must be a string';
-  }
-  for (const key of ['seedScript', 'resultScript'] as const) {
-    if (input[key] !== undefined && input[key] !== null && input[key] !== '' && typeof input[key] !== 'string') {
-      return `${key} must be a string`;
-    }
-  }
-  if (typeof input.enabled !== 'undefined' && typeof input.enabled !== 'boolean') {
-    return 'enabled must be a boolean';
-  }
-  if (typeof input.saveSession !== 'undefined' && typeof input.saveSession !== 'boolean') {
-    return 'saveSession must be a boolean';
-  }
-  if (typeof input.once !== 'undefined' && typeof input.once !== 'boolean') {
-    return 'once must be a boolean';
-  }
-  return null;
-}
-
 // ── Run records ──
 
 /** List run records for a user (optionally for one task), newest first */
@@ -201,6 +176,20 @@ export function readRunLog(user: string, taskId: string, runId: string): TaskRun
     log.scheduler.error(`Failed to read run log ${taskId}/${runId}:`, err);
     return null;
   }
+}
+
+// ── Session reuse helpers ──
+
+/** Drop a session file's context but keep its identity: the header (id,
+ *  cwd, version) and session_info entries (display name) stay, so the next
+ *  run switches into a session with the same id and no prior messages. */
+function clearSessionFile(file: string): void {
+  const lines = readFileSync(file, 'utf-8').split('\n').filter((l) => l.trim());
+  const kept = lines.filter((l) => {
+    try { const t = JSON.parse(l).type; return t === 'session' || t === 'session_info'; }
+    catch { return false; }
+  });
+  writeFileSync(file, kept.length ? `${kept.join('\n')}\n` : '', 'utf-8');
 }
 
 // ── Shell script helper ──
@@ -444,6 +433,27 @@ export class Scheduler {
     // reports state, removed at the end unless the task saves its sessions.
     let runSessionFile = '';
 
+    // saveLastSession: the previous run's saved session dies now — only the
+    // session of the run that is starting survives it.
+    if (task.saveLastSession && task.savedSessionFile) {
+      try {
+        rmSync(task.savedSessionFile, { force: true });
+        addLog('Previous run session removed');
+      } catch (err) {
+        log.scheduler.error(`Failed to remove previous session ${task.savedSessionFile}:`, err);
+      }
+    }
+    // clearSession: wipe the reused session's context but keep its id/name
+    // — done on disk BEFORE the spawn so pi loads the cleared file.
+    if (task.reuseSession && task.clearSession && task.reusedSessionFile && existsSync(task.reusedSessionFile)) {
+      try {
+        clearSessionFile(task.reusedSessionFile);
+        addLog('Reused session context cleared');
+      } catch (err) {
+        log.scheduler.error(`Failed to clear reused session ${task.reusedSessionFile}:`, err);
+      }
+    }
+
     // The run proceeds in the background — the caller gets the runId back
     // immediately and polls the run record for status/log.
     const runPromise = (async () => {
@@ -452,6 +462,14 @@ export class Scheduler {
         addLog('Starting pi agent for scheduled run');
         await rpc.start();
         if (aborted) throw new Error('Run aborted');
+
+        // Reuse: switch into the task's persistent session before naming or
+        // notifying, so the run's session id/file ARE the reused ones. A
+        // missing file (deleted externally) self-heals into a fresh session.
+        if (task.reuseSession && task.reusedSessionFile && existsSync(task.reusedSessionFile)) {
+          addLog('Switching into the task session');
+          await rpc.switchSession(task.reusedSessionFile);
+        }
 
         // Auto-name task-run sessions: "[task] - <user locale + timezone date+time>".
         // Uses the user's persisted locale/IANA timezone so the name matches
@@ -544,16 +562,35 @@ export class Scheduler {
         try { await rpc.stop(); } catch {}
         addLog('pi agent stopped');
         // 6. The run's session is disposable unless the task opted in — with
-        //    saveSession off the file is removed for good (the run record
-        //    above is what survives). pi has exited by now, so nothing
-        //    rewrites the file.
-        if (runSessionFile && !task.saveSession) {
+        //    saveSession/reuseSession/saveLastSession off the file is removed
+        //    for good (the run record above is what survives). pi has exited
+        //    by now, so nothing rewrites the file.
+        if (runSessionFile && !task.saveSession && !task.reuseSession && !task.saveLastSession) {
           try {
             rmSync(runSessionFile, { force: true });
             addLog('Run session removed (save task sessions is off)');
           } catch (err) {
             log.scheduler.error(`Failed to remove run session ${runSessionFile}:`, err);
           }
+        }
+        // 6b. Persist scheduler-internal session bookkeeping on the CURRENT
+        //     task — an edit made while the run was in flight must survive.
+        try {
+          const current = getTask(user, task.id);
+          if (current && runSessionFile) {
+            let changed = false;
+            if (current.reuseSession && current.reusedSessionFile !== runSessionFile) {
+              current.reusedSessionFile = runSessionFile;
+              changed = true;
+            }
+            if (current.saveLastSession && current.savedSessionFile !== runSessionFile) {
+              current.savedSessionFile = runSessionFile;
+              changed = true;
+            }
+            if (changed) saveTask(user, current);
+          }
+        } catch (err) {
+          log.scheduler.error(`Failed to update session bookkeeping for task ${task.id}:`, err);
         }
         // 7. One-off tasks stop here whatever the outcome — re-read first so
         //    an edit made while the run was in flight isn't clobbered.
