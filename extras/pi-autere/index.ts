@@ -423,7 +423,7 @@ export default function (pi: ExtensionAPI) {
 					delivered: false, sessionId, reason: res?.reason ?? "delivery failed",
 				});
 			}
-			return ok(`Notification sent to the subscribed devices (subject: session ${sessionId}).`, { delivered: true, sessionId });
+			return ok(`Notification sent to the subscribed devices (subject: ${res.subject ?? sessionId}).`, { delivered: true, subject: res.subject ?? sessionId });
 		},
 	});
 }
