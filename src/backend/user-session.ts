@@ -846,7 +846,7 @@ export class UserSession {
           this.broadcast({ type: 'status', data: { ...s.sessionState } });
           break;
         case 'agent_end':
-        case 'agent_settled':
+        case 'agent_settled': {
           s.sessionState.isStreaming = false;
           this.broadcast({ type: 'status', data: { ...s.sessionState } });
           // Turn finished — send a full history snapshot as a safety resync.
@@ -855,9 +855,14 @@ export class UserSession {
           // (heals any drift from missed/dropped targeted events).
           // Clear any stale streaming flags first: entries left streaming by
           // an abort/error path would otherwise blink forever in every
-          // snapshot (they are only finalized on the happy path).
-          for (const e of this.history()) {
-            if (e.streaming) e.streaming = false;
+          // snapshot (they are only finalized on the happy path). Unrevealed
+          // (whitespace-only) assistant entries are dropped outright — they
+          // were never broadcast and would become permanent empty bubbles.
+          const buf = this.history();
+          const stale = buf.filter((e) => e.streaming);
+          for (const e of stale) e.streaming = false;
+          for (let k = buf.length - 1; k >= 0; k--) {
+            if (buf[k].role === 'assistant' && !(buf[k].text || '').trim() && !(buf[k].images?.length)) buf.splice(k, 1);
           }
           this.broadcast({ type: 'stream_history', sessionId: s.sessionState.sessionId, data: this.history().slice(-this.historyLimit) });
           // The turn is over — notify (once: agent_end and agent_settled both
@@ -871,6 +876,7 @@ export class UserSession {
           // turn was running) may now safely replace the pi process.
           this.onTurnEnd?.();
           break;
+        }
         case 'queue_update':
           // pi reports its actual steering/follow-up queues — the
           // authoritative pending counts for the chat buttons.
@@ -1341,7 +1347,13 @@ export class UserSession {
           sessionId: s.sessionState.sessionId,
           data: movers.map((m) => ({ id: m.id, role: 'thinking', text: m.text })),
         });
-        this.broadcastHistoryUpsert([...movers, finalizedAssistant]);
+        // Clients that just removed these ids must re-insert at the canonical
+        // position, not append — a missing-id upsert would land at the end.
+        const withIndex = [...movers, finalizedAssistant].map((e, i) => ({
+          ...e,
+          index: aIdx + i,
+        }));
+        this.broadcastHistoryUpsert(withIndex);
       }
     }
 

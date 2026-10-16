@@ -31,8 +31,29 @@ describe('autere — chat', () => {
       cy.get('.chat-send-btn').should('not.be.disabled');
     });
 
+    it('does not render whitespace-only assistant messages, but shows late content', function() {
+      this.timeout(15000);
+
+      // Mock protocol: a whitespace-only text block first, then thinking,
+      // then real text — the empty-bubble bug pattern.
+      cy.get('.chat-input').clear().type('stream whitespace test');
+      cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
+
+      // The late content is revealed: the assistant entry the mock streamed
+      // as whitespace-only first ('   ') later receives real text and must
+      // render fully — never as an empty bubble.
+      cy.get('.stream-text', { timeout: 10000 })
+        .contains('LATE-CONTENT arrived after whitespace')
+        .should('exist');
+
+      // No assistant bubble may render with whitespace-only text
+      cy.get('.stream-text:not(.stream-non-text)').each(($el) => {
+        expect($el.text().trim(), 'assistant entry not empty').to.not.equal('');
+      });
+    });
+
     it('can send a message and receive response', function() {
-      this.timeout(120000); // Longer timeout for AI response
+      this.timeout(30000);
 
       // Type a simple question
       cy.get('.chat-input').type('What is 2 + 2? Answer with just the number.');
@@ -40,10 +61,10 @@ describe('autere — chat', () => {
       cy.get('.stream-role-user', { timeout: 5000 }).should('contain', 'user');
 
       // Wait for the agent to start working
-      cy.get('.status-badge', { timeout: 30000 }).should('have.class', 'status-streaming');
+      cy.get('.status-badge', { timeout: 10000 }).should('have.class', 'status-streaming');
 
       // Wait for the agent to finish and show response
-      cy.get('.stream-role-assistant', { timeout: 60000 }).should('exist');
+      cy.get('.stream-role-assistant', { timeout: 15000 }).should('exist');
 
       // Verify the response contains the answer
       cy.get('.stream-text').contains('4').should('exist');
@@ -53,7 +74,7 @@ describe('autere — chat', () => {
       this.timeout(60000);
 
       // Wait for agent to be idle
-      cy.get('.status-badge', { timeout: 60000 }).should('not.have.class', 'status-streaming');
+      cy.get('.status-badge', { timeout: 30000 }).should('not.have.class', 'status-streaming');
 
       // Clear any leftover value, type message, and force-click send
       // (button may be disabled from prior test's sending/compacting state)

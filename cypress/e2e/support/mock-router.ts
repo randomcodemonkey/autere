@@ -47,6 +47,23 @@ function streamText(res: ServerResponse, model: string, text: string, wordChunks
     emit();
 }
 
+// GLM-style protocol: a whitespace-only text block FIRST, then thinking,
+// then the real text — reproduces the empty-assistant-bubble bug pattern.
+function streamWhitespace(res: ServerResponse): void {
+    chunk(res, { choices: [{ index: 0, delta: { role: 'assistant' } }] });
+    chunk(res, { choices: [{ index: 0, delta: { content: '   ' } }] });
+    for (const w of ['Briefly ', 'pondering ', 'the ', 'question. ']) {
+        chunk(res, { choices: [{ index: 0, delta: { reasoning_content: w } }] });
+    }
+    chunk(res, { choices: [{ index: 0, delta: {} }] });
+    for (const w of ['LATE-CONTENT', ' ', 'arrived', ' ', 'after', ' ', 'whitespace', '.']) {
+        chunk(res, { choices: [{ index: 0, delta: { content: w } }] });
+    }
+    chunk(res, { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 25, completion_tokens: 12, total_tokens: 37 } });
+    res.write('data: [DONE]\n\n');
+    res.end();
+}
+
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     res.setHeader('Content-Type', 'application/json');
     if (req.url === '/v1/models') {
@@ -92,6 +109,10 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
             }
             if (/2 \+ 2/i.test(lastUserText)) {
                 streamText(res, parsed.model, '4');
+                return;
+            }
+            if (/whitespace/i.test(lastUserText) && lastRole !== 'tool') {
+                streamWhitespace(res);
                 return;
             }
             const toolCalls: { id: string; name: string; arguments: unknown }[] = [];

@@ -62,6 +62,9 @@ export interface StreamMessage {
   /** Optimistic frontend-only message — shown with a pending indicator until
    * the backend broadcast with the same text arrives. */
   pending?: boolean;
+  /** Reorder payloads only: canonical buffer position to insert at when the
+   * entry's id is missing client-side (it was just removed by history_remove). */
+  index?: number;
   /** Stable backend-assigned id — never changes across broadcasts, so React
    * keys (and thus expansion state, scroll anchoring) survive updates. */
   id?: string;

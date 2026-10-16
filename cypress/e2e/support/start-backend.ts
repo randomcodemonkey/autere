@@ -376,8 +376,8 @@ export async function startBackend(): Promise<void> {
     }
   });
 
-    proc.on('exit', (code) => {
-    console.log(`[e2e] Backend exited with code ${code}`);
+    proc.on('exit', (code, signal) => {
+    console.log(`[e2e] Backend exited with code ${code} signal ${signal}`);
     backendProcess = null;
     if (!started) {
       clearTimeout(timeout);

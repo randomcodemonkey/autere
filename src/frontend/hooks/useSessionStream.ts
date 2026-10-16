@@ -274,7 +274,12 @@ export function useSessionStream(opts: {
               }
             }
             if (i >= 0) next[i] = e;
-            else next.push(e);
+            else if (e.index != null) {
+              // Reorder payloads carry their canonical buffer position —
+              // the entry was just removed, so it must be re-inserted there.
+              const at = Math.min(e.index, next.length);
+              next.splice(at, 0, e);
+            } else next.push(e);
             // Invariant: at most one active stream per role. An authoritative
             // finalized entry retires any OTHER streaming entries of the same
             // role (ghosts from race windows would otherwise blink forever).
