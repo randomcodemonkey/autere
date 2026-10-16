@@ -17,6 +17,8 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.commit.outputs.version }}
     steps:
       - uses: actions/checkout@v5
 
@@ -70,3 +72,28 @@ jobs:
             ${{ env.IMAGE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  smoke-test:
+    needs: release
+    if: needs.release.outputs.version != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up QEMU (arm64 emulation)
+        if: matrix.platform == 'linux/arm64'
+        uses: docker/setup-qemu-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run smoke test on ${{ matrix.platform }}
+        run: docker/smoke-test.sh ${{ env.IMAGE }}:${{ needs.release.outputs.version }} ${{ matrix.platform }}
