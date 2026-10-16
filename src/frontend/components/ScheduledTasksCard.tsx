@@ -394,7 +394,8 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
         </select>
       </div>
 
-      {!sseConnected && <div className="settings-error">Not connected to the backend.</div>}
+      {/* Hide during the initial load — SSE isn't up yet but the fetch works */}
+      {!sseConnected && !loading && <div className="settings-error">Not connected to the backend.</div>}
       {error && <div className="scheduled-error">{error}</div>}
 
       {loading ? (

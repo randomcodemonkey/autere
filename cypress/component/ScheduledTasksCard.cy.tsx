@@ -426,6 +426,14 @@ describe('ScheduledTasksCard', () => {
       cy.get('.scheduled-sort').select('created');
       order().should('deep.equal', ['Gamma', 'Beta', 'Alpha']);
     });
+
+    it('hides the not-connected banner while tasks are loading', () => {
+      // Fetch never resolves → stay in the loading state
+      cy.stub(window, 'fetch').returns(new Promise(() => { /* never */ }));
+      cy.mount(<ScheduledTasksCard sseConnected={false} />);
+      cy.get('.scheduled-loading').should('exist');
+      cy.get('.settings-error').should('not.exist');
+    });
   });
 
   describe('delete', () => {
