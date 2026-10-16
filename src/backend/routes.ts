@@ -2058,12 +2058,13 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       if (!sessionId) { sendJSON(c.res, { success: false, error: 'sessionId is required' }, 400); return; }
       const sess = pm.findSession(c.user, sessionId, c.viewed);
       if (!sess) { sendJSON(c.res, { success: false, error: `Session "${sessionId}" not found` }, 404); return; }
+      const subject = sess.sessionName || sess.id;
       const result = await sendNotification(c.user, 'explicit', {
-        title: sess.sessionName || sess.id,
+        title: subject,
         body: String(body.content).trim(),
         path: `session/${sess.id}`,
       });
-      sendJSON(c.res, { success: true, data: { delivered: result.sent > 0, ...result } });
+      sendJSON(c.res, { success: true, data: { delivered: result.sent > 0, subject, ...result } });
     },
   });
 

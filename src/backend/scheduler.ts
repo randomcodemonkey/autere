@@ -471,11 +471,13 @@ export class Scheduler {
 
         // Task-start notification (Settings → Notifications): the run's
         // session exists now, so the notification can name and open it.
+        // Fire-and-forget: SMTP/push can take seconds (timeouts on a dead
+        // server) — the task's prompt must not wait for a notification.
         try {
           const state = await rpc.getState();
           runSessionFile = state.sessionFile || '';
           active.piSessionId = state.sessionId || '';
-          await sendNotification(user, 'taskStart', {
+          void sendNotification(user, 'taskStart', {
             title: runName || state.sessionName || task.name,
             body: `Scheduled task "${task.name}" started`,
             path: state.sessionId ? `session/${state.sessionId}` : null,
