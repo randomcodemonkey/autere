@@ -158,6 +158,28 @@ export default defineConfig({
           return true;
         },
 
+        /** Simulate a backend session clone (copies a seeded session file) */
+        cloneSession({ sourceId, cloneId, name }: { sourceId: string; cloneId: string; name?: string }): boolean {
+          const envsDir = process.env.AUTERE_E2E_ENVS_DIR;
+          if (!envsDir) return false;
+          const dir = join(envsDir, 'admin', 'sessions', '--tmp-e2e--');
+          const src = join(dir, `${sourceId}.jsonl`);
+          const dst = join(dir, `${cloneId}.jsonl`);
+          if (!existsSync(src)) return false;
+          const content = readFileSync(src, 'utf-8')
+            .split('\n')
+            .filter(Boolean)
+            .map((l) => {
+              const e = JSON.parse(l);
+              if (e.type === 'session') e.id = cloneId;
+              if (e.type === 'session_info' && name) e.name = name;
+              return JSON.stringify(e);
+            })
+            .join('\n') + '\n';
+          writeFileSync(dst, content);
+          return true;
+        },
+
         /** Create the agent scratch dir; returns its absolute path */
         makeScratchDir(): string {
           rmSync(scratchDir, { recursive: true, force: true });

@@ -13,7 +13,7 @@ import { autoSessionName, readSessionUsage, scopeModelsForSession } from './util
 import { log, userLog } from './logger.js';
 import { ensurePiEnv, ensureSandboxHomeVolume, ensureSandboxGitconfig, ensureVolumeSubpaths, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage, sandboxSharedEnv, DEFAULT_SANDBOX_IMAGE } from './pi-env.js';
 import { getUserMountDockerSocket } from './users.js';
-import { getEditIgnorePaths, getHistoryLimit, getTurnEndNotifyMinMinutes, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getShowReadImages, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost, writeReserveTokensConfig, annotateContextUsage } from './user-settings.js';
+import { getEditIgnorePaths, getHistoryLimit, getTurnEndNotifyMinMinutes, getImagePreviewQuality, getImageStreamFix, getSendImagesToChatModel, getShowReadImages, getUserSetting, getTokenPricing, getRatesForModel, computeTokenCost, writeReserveTokensConfig, writeSummaryPromptConfig, annotateContextUsage } from './user-settings.js';
 import { deliverToSession } from './client-hub.js';
 import { getActivePersona } from './personas.js';
 import {
@@ -212,6 +212,8 @@ export class UserSession {
     // Reserve-context policy file for the pi-token-reserve extension — kept
     // current on every spawn so the extension always matches the setting.
     writeReserveTokensConfig(user);
+    // Same for the pi-compaction-prompt config (summary prompt + overrun guard).
+    writeSummaryPromptConfig(user);
     // Bind the process to its session: --session <file> when resuming, or a
     // brand-new session when sessionFile is null (auto-named in start()).
     const args = [...(rpcOptions.args || [])];

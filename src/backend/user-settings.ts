@@ -14,7 +14,8 @@
  */
 
 import { getUserRole } from './users.js';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, readdirSync, symlinkSync, rmSync, lstatSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, readdirSync, symlinkSync, rmSync, lstatSync, realpathSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { randomUUID } from 'crypto';
 import { USER_SETTINGS_DIR, PI_DIR } from './constants.js';
@@ -299,6 +300,10 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
     if ('reserveTokensPercent' in settings || 'reserveTokensPercentByModel' in settings) {
       writeReserveTokensConfig(user);
     }
+    // Summary prompt policy file for the pi-compaction-prompt extension (live-read)
+    if ('summaryPromptExtra' in settings || 'summaryPromptGuardTokens' in settings) {
+      writeSummaryPromptConfig(user);
+    }
     // Sweep policy file for the pi-janitor extension (live-read, no restart)
     if ('janitorMinIdleSec' in settings || 'janitorKeepRecentTurns' in settings || 'janitorWarmGapMultiplier' in settings) {
       writeJanitorConfig(user);
@@ -534,6 +539,83 @@ export function writeReserveTokensConfig(user: string): void {
   } catch (err) {
     log.settings.error(`Failed to write pi-token-reserve-config.json for user "${user}":`, err);
   }
+}
+
+// ── Custom compaction summary prompt (appended to pi's default summary prompt
+//    by extras/pi-compaction-prompt — same live-config pattern as pi-token-reserve:
+//    settings save materializes a config file into the user's env) ──
+
+export function getSummaryPromptExtra(user: string): string {
+  const raw = getUserSetting(user, 'summaryPromptExtra', '');
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+/** Mid-run force-compaction token cutover. 0 = off. */
+export function getSummaryPromptGuardTokens(user: string): number {
+  const raw = getUserSetting(user, 'summaryPromptGuardTokens', 0);
+  const n = typeof raw === 'number' ? raw : parseInt(raw, 10);
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+
+export function writeSummaryPromptConfig(user: string): void {
+  try {
+    const envDir = ensurePiEnv(user);
+    const tmp = join(envDir, `.pi-compaction-prompt-config-tmp-${randomUUID()}`);
+    writeFileSync(tmp, JSON.stringify({
+      summaryPromptExtra: getSummaryPromptExtra(user),
+      compactAtTokens: getSummaryPromptGuardTokens(user),
+    }), 'utf-8');
+    renameSync(tmp, join(envDir, 'pi-compaction-prompt-config.json'));
+  } catch (err) {
+    log.settings.error(`Failed to write pi-compaction-prompt-config.json for user "${user}":`, err);
+  }
+}
+
+interface SummaryBasePrompts { fresh: string; update: string }
+
+let summaryBaseCache: SummaryBasePrompts | null | undefined;
+
+/**
+ * pi's default compaction summary base prompts, extracted from the installed
+ * pi package (the exact texts compaction composes "Additional focus:" onto)
+ * so the settings UI can preview the effective prompt without duplicating
+ * the text here. Null when the source layout changed / pi is not locatable.
+ */
+export function getSummaryBasePrompts(): SummaryBasePrompts | null {
+  if (summaryBaseCache !== undefined) return summaryBaseCache;
+  summaryBaseCache = null;
+  try {
+    // pi spawns off PATH; the global npm install path is derivable from the
+    // binary symlink (/usr/local/bin/pi -> <pkgroot>/dist/cli.js).
+    const which = execFileSync('which', ['pi'], { encoding: 'utf-8' }).trim();
+    const real = realpathSync(which);
+    const pkgRoot = dirname(dirname(dirname(real))); // dist/cli.js -> package
+    const src = readFileSync(join(pkgRoot, 'dist', 'core', 'compaction', 'compaction.js'), 'utf-8');
+    const grab = (name: string) => src.match(new RegExp(`const ${name} = \`([\\s\\S]*?)\`;`))?.[1];
+    const fresh = grab('SUMMARIZATION_PROMPT');
+    const updateHead = grab('UPDATE_SUMMARIZATION_PROMPT');
+    const updateBody = grab('UPDATE_SUMMARIZATION_INSTRUCTIONS');
+    if (fresh && updateHead && updateBody) {
+      summaryBaseCache = { fresh, update: `${updateHead}\n\n${updateBody}` };
+    } else {
+      log.settings.error('Could not extract compaction prompt constants from the installed pi package');
+    }
+  } catch (err) {
+    log.settings.error('Failed to locate the installed pi package for summary prompt extraction:', err);
+  }
+  return summaryBaseCache;
+}
+
+/** Final effective summary prompts: base + "Additional focus: <extra>".
+ *  Both compaction variants (fresh / update of a previous summary). Null when
+ *  the base prompts could not be extracted (extension itself keeps working). */
+export function getSummaryPromptComposition(user: string): { fresh: string; update: string } | null {
+  const base = getSummaryBasePrompts();
+  if (!base) return null;
+  // Mirrors generateSummaryWithUsage: basePrompt + "\n\nAdditional focus: " + custom
+  const extra = getSummaryPromptExtra(user);
+  const focus = extra ? `\n\nAdditional focus: ${extra}` : '';
+  return { fresh: base.fresh + focus, update: base.update + focus };
 }
 
 // ── Janitor sweep policy (consumed live by extras/pi-janitor — same pattern
@@ -837,6 +919,8 @@ function getUserSettingsDefaults(user: string): UserSettings {
 
   defaults.reserveTokensPercent = 0;
   defaults.reserveTokensPercentByModel = {};
+  defaults.summaryPromptExtra = '';
+  defaults.summaryPromptGuardTokens = 0;
   defaults.modelThinkingLevels = {};
 
   // Notifications (Settings → Notifications) — per-kind toggles, read live
@@ -1016,6 +1100,18 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
         label: 'Reserved context — default (%)',
         type: 'number',
         description: "Fallback reserve for models without a per-model value (see Models). This percentage of the model's context window cannot be used (0-90; 0 = pi default of 16384 tokens) — usable context shrinks accordingly, so automatic compaction triggers earlier. Applies to the running session without a pi restart.",
+      },
+      {
+        key: 'summaryPromptExtra',
+        label: 'Compaction summary instructions',
+        type: 'textarea',
+        description: 'Extra instructions appended to pi\'s default compaction summary prompt (as "Additional focus: ..."). Sent to every compaction the session runs - the summarizer, not the chat model, is the audience. Empty = pi default prompt only. Applies to the running session without a pi restart.',
+      },
+      {
+        key: 'summaryPromptGuardTokens',
+        label: 'Force compaction above (tokens)',
+        type: 'number',
+        description: 'Compaction trigger fallback: when context reaches this many tokens mid-run with queued work, the session compacts at that turn boundary and continues - even when pi\'s own threshold (reserved context %) never fires because the model reports the wrong context window or usage. 0 = off; needs compaction summary instructions to matter (it exists to apply that prompt mid-run). Applies without a pi restart.',
       },
       {
         key: 'sendImagesToChatModel',

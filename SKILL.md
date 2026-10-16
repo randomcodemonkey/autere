@@ -127,7 +127,8 @@ src/backend/
                         # chat renders them with a distinct "task" sender
   user-settings.ts      # Per-user settings (schema-driven, admin UI; per-model
                         # thinking levels → pi's modelThinkingLevels, per-model
-                        # reserve % → pi-token-reserve config)
+                        # reserve % → pi-token-reserve config, compaction
+                        # summary prompt → pi-compaction-prompt config)
   notifications.ts      # Web Push: one-time VAPID keys (~/.autere/vapid-keys.json),
                         # per-user push-subscriptions.json, sendNotification(user,
                         # kind, {title, body, path}) for the three kinds
@@ -176,6 +177,12 @@ extras/pi-token-reserve/ # pi extension: compaction reserveTokens as % of the mo
                        # enabledModels entries; `percent` fallback), applied live
                        # (symlinked into ~/.pi/agent/extensions/pi-token-reserve;
                        # config written per user env as pi-token-reserve-config.json)
+extras/pi-compaction-prompt/ # pi extension: custom compaction summary prompt — user text
+                       # appended to pi's default summary prompt ("Additional
+                       # focus"), applied live to every compaction; optional
+                       # mid-run force-compaction guard at a token cutoff
+                       # (symlinked into ~/.pi/agent/extensions/pi-compaction-prompt;
+                       # config written per user env as pi-compaction-prompt-config.json)
 extras/pi-personas/    # pi extension: puts the session's bound persona into the SYSTEM
                        # PROMPT every turn (before_agent_start) — no fake user
                        # messages, immune to process restarts; emits a visible

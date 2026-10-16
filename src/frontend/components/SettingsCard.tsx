@@ -396,6 +396,18 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<true | 'deferred' | null>(null);
   const [availablePackages, setAvailablePackages] = useState<string[]>([]);
+  // Final compaction summary prompts (pi default + stored extension text),
+  // shown under the summaryPromptExtra field and refreshed after each save.
+  interface SummaryPromptPreview { extra: string; guardTokens: number; fresh: string | null; update: string | null }
+  const [summaryPrompt, setSummaryPrompt] = useState<SummaryPromptPreview | null>(null);
+  const [showSummaryPrompt, setShowSummaryPrompt] = useState(false);
+  const fetchSummaryPrompt = async () => {
+    try {
+      const res = await fetch(url(API.settings.summaryPrompt));
+      const json = await res.json();
+      if (json.success) setSummaryPrompt(json.data);
+    } catch { /* preview is best-effort */ }
+  };
   const prevSseConnectedRef = useRef(sseConnected);
   // Settings as loaded / last saved — the baseline the floating Save button
   // compares against (shown only while something actually differs).
@@ -426,7 +438,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       fetch(url(API.settings.schema)).then(r => r.json()),
       fetch(url(API.settings.root)).then(r => r.json()),
       fetch(url(API.extensions.packages)).then(r => r.json()).catch(() => null),
-    ]).then(([schemaRes, settingsRes, pkgsRes]) => {
+    ]).then(async ([schemaRes, settingsRes, pkgsRes]) => {
       if (pkgsRes?.success) setAvailablePackages(pkgsRes.data.available || []);
       if (schemaRes.success) {
         // Sort once here, before render: menu + validation effect + default
@@ -437,6 +449,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
         setSettings(settingsRes.data);
         baselineRef.current = JSON.stringify(settingsRes.data);
       }
+      fetchSummaryPrompt();
       setLoading(false);
     }).catch(() => {
       setError('Failed to load settings');
@@ -473,6 +486,11 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       if (data.success) {
         baselineRef.current = JSON.stringify(settings);
         setSaved(data.deferred ? 'deferred' : true);
+        // Show the refreshed effective prompt when the save touched it.
+        if ('summaryPromptExtra' in settings || 'summaryPromptGuardTokens' in settings) {
+          await fetchSummaryPrompt();
+          setShowSummaryPrompt(true);
+        }
         // Banner is transient — the SSE-reconnect reset below only covers
         // backend restarts; a non-deferred save would otherwise stick forever.
         setTimeout(() => setSaved(null), data.deferred ? 8000 : 4000);
@@ -626,6 +644,34 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
             spellCheck={false}
             onChange={(e) => handleChange(field.key, e.target.value)}
           />
+          {field.key === 'summaryPromptExtra' && (
+            <div className="settings-summary-prompt">
+              <button
+                type="button"
+                className="btn btn-default settings-summary-toggle"
+                onClick={() => setShowSummaryPrompt(v => !v)}
+              >
+                {showSummaryPrompt ? 'Hide final prompt' : 'Show final prompt'}
+              </button>
+              {showSummaryPrompt && summaryPrompt && (
+                <div className="settings-summary-preview">
+                  {summaryPrompt.fresh === null ? (
+                    <div className="settings-description">Preview unavailable: pi's default compaction prompt could not be read on this server.</div>
+                  ) : (
+                    <>
+                      <div className="settings-description">Effective compaction summary prompt (pi default + your instructions):</div>
+                      {[["Fresh compaction", summaryPrompt.fresh], ['Update of a previous summary', summaryPrompt.update]].map(([label, text]) => (
+                        <div key={label as string} className="settings-summary-block">
+                          <div className="settings-summary-label">{label}</div>
+                          <pre className="settings-summary-text">{text}</pre>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </FieldShell>
       );
     }

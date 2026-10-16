@@ -75,7 +75,7 @@ import { TASK_REPORT_MARKER } from '../shared/format.js';
 import { buildOpenApiSpec, type RouteDoc } from './openapi.js';
 import type { SessionInfo } from './types.js';
 
-import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths, getFolderIgnores } from './user-settings.js';
+import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths, getFolderIgnores, getSummaryPromptComposition, getSummaryPromptGuardTokens, getSummaryPromptExtra } from './user-settings.js';
 
 const startsWithLocal = (p: unknown): boolean => String(typeof p === 'string' ? p : (p as { source?: string })?.source || '').startsWith('local:');
 
@@ -957,22 +957,30 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         log.http.error(`Failed to name cloned session: ${err}`);
       }
 
-      // Spawn opts for the clone: requested workdirs (or the source's). The
-      // process is still keyed under the SOURCE file here — switching it
-      // back first keeps it serving the source with its original mounts.
+      // Spawn opts for the clone: requested workdirs (or the source's).
       const sourceOpts = pm.getSpawnOpts(c.user, sess.sessionFile);
       pm.persistSpawnOpts(c.user, st.sessionFile, {
         cwd: workdirs?.[0] ?? sourceOpts.cwd ?? sess.cwd ?? undefined,
         workdirs: workdirs?.length ? workdirs : (sourceOpts.workdirs?.length ? [...sourceOpts.workdirs] : undefined),
         mountDockerSocket: sourceOpts.mountDockerSocket,
       });
-      try {
-        await target.rpc.switchSession(sess.sessionFile);
-      } catch (err) {
-        // The clone is written and named; worst case the process now serves
-        // the clone instead of the source — recoverable by session id.
-        log.http.error(`Failed to switch pi back to the source session after clone: ${err}`);
+
+      // Inherit the source session's persona (bindings are per session file,
+      // so pi's clone starts persona-less until we copy the binding over).
+      const sourcePersona = getActivePersona(c.user, sess.sessionFile);
+      if (sourcePersona) {
+        setActivePersona(c.user, st.sessionFile, sourcePersona);
+        log.http.info(`Clone inherits persona "${sourcePersona.name}" (${sess.id} -> ${st.sessionId})`);
       }
+
+      // pi's clone REBUILDS the process's in-memory session around the clone
+      // file. Switching it back to the source leaves a process whose memory
+      // may not match its file (split-brain: the model works on stale context
+      // while appending to the source). Terminate it instead — the next
+      // getOrCreate for the source spawns a fresh, correctly-bound process.
+      pm.terminate(c.user, sess.sessionFile)
+        .then(() => log.http.info(`Source process terminated after clone (${sess.id})`))
+        .catch((err) => log.http.error(`Failed to terminate source process after clone (${sess.id}): ${err?.message || err}`));
 
       broadcastToUser(c.user, { type: 'sessions', data: pm.listSessions(c.user, c.viewed) });
       sendJSON(c.res, { success: true, data: { id: st.sessionId, sessionFile: st.sessionFile, sessionName: sessionName || null } });
@@ -1990,6 +1998,25 @@ ${text.trim()}`).catch((err) => settle(err as Error));
     },
   });
 
+  // Composed summary prompts for the Settings card preview: pi's default base
+  // prompts plus the user's stored extension text, per compaction variant.
+  route({
+    method: 'GET', path: API.settings.summaryPrompt, template: `${API_PREFIX}/settings/summary-prompt`,
+    role: 'chat', tag: 'Settings', summary: 'Final compaction summary prompts (pi default + stored Additional focus text)',
+    handler: async (c) => {
+      const composition = getSummaryPromptComposition(c.user);
+      sendJSON(c.res, {
+        success: true,
+        data: {
+          extra: getSummaryPromptExtra(c.user),
+          guardTokens: getSummaryPromptGuardTokens(c.user),
+          fresh: composition?.fresh ?? null,
+          update: composition?.update ?? null,
+        },
+      });
+    },
+  });
+
   // ── MCP servers (pi mcp.json in the user's pi env) ──
 
   route({
@@ -2071,7 +2098,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         // backend when a notification fires — skip the restart when only
         // those change, so the running session is not interrupted.
         const onlyLiveApplyKeys = Object.keys(settings).every(
-          (k) => k === 'reserveTokensPercent' || k === 'reserveTokensPercentByModel' || k.startsWith('janitor') || k.startsWith('notify') || prev[k] === (settings as any)[k]
+          (k) => k === 'reserveTokensPercent' || k === 'reserveTokensPercentByModel' || k === 'summaryPromptExtra' || k === 'summaryPromptGuardTokens' || k.startsWith('janitor') || k.startsWith('notify') || prev[k] === (settings as any)[k]
         );
         if (onlyLiveApplyKeys) {
           sendJSON(c.res, { success: true });

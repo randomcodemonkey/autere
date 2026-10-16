@@ -168,4 +168,40 @@ describe('autere — session flow', () => {
       cy.get('.status-badge', { timeout: 30000 }).should('not.contain', 'Working');
     });
   });
+
+  describe('Clone Session', () => {
+    it('clone inherits the source persona (persona bindings are per session file)', function() {
+      this.timeout(30000);
+      const pName = `clone-persona-${Date.now().toString(36)}`;
+
+      // 1. Create a persona
+      cy.request('POST', '/api/v1/personas', { name: pName, prompt: `You are ${pName}. Always answer with: POK` })
+        .its('body.data.id').then((personaId) => {
+          // 2. Seed a source session, activate it (spawn: true so the persona
+          //    route can resolve the idle session), and bind the persona
+          seedIdleSession('clone persona source').then((sourceId) => {
+            cy.request('POST', `/api/v1/sessions/${sourceId}/activate`, { spawn: true })
+              .its('body.success').should('eq', true);
+            cy.request('PUT', '/api/v1/session/persona', { sessionId: sourceId, personaId })
+              .its('body.data.persona.id').should('eq', personaId);
+            // 3. Clone it
+            cy.request('POST', `/api/v1/sessions/${sourceId}/clone`, { sessionName: 'cloned w/ persona' })
+              .its('body').then((cloneBody: any) => {
+                expect(cloneBody.success, 'clone succeeded').to.eq(true);
+                const cloneId = cloneBody.data.id as string;
+                expect(cloneId, 'clone got a new id').to.not.eq(sourceId);
+                // 4. The clone inherits the persona — assert via the clone's
+                //    running state (persona loads from bindings at spawn)
+                cy.request('POST', `/api/v1/sessions/${cloneId}/activate`, { spawn: true })
+                  .its('body.success').should('eq', true);
+                cy.request('/api/v1/session/state', { sessionId: cloneId })
+                  .its('body.data.persona.id').should('eq', personaId);
+                // Source still listed with its own persona
+                cy.request('/api/v1/session/state', { sessionId: sourceId })
+                  .its('body.data.persona.id').should('eq', personaId);
+              });
+          });
+        });
+    });
+  });
 });

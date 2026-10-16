@@ -84,6 +84,7 @@ export const API = {
   settings: {
     root: `${P}/settings`,
     schema: `${P}/settings/schema`,
+    summaryPrompt: `${P}/settings/summary-prompt`,
     mcp: `${P}/settings/mcp`,
     mcpServer: (name: string) => `${P}/settings/mcp/${encodeURIComponent(name)}`,
   },
