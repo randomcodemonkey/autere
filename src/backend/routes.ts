@@ -2169,13 +2169,27 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         // agent's schedule_task tool) passes its own session id, resolve
         // cwd/workdirs from backend state — client-supplied paths are never
         // trusted. Unresolvable/omitted = spawn like any new session.
+        //
+        // Spawn state (host paths) is the authoritative source, NOT the
+        // listed session: its cwd is a session-header round trip through
+        // the sandbox path translation — fresh sessions have none yet, and
+        // workdirs nested under an allowed root fail its basename lookup
+        // (such sessions can drop out of the listing entirely).
         let cwd: string | undefined;
         let workdirs: string[] | undefined;
         if (typeof input.session === 'string' && input.session.trim()) {
-          const origin = pm.findSession(c.user, input.session.trim(), new Set());
-          if (origin) {
-            cwd = origin.cwd ?? undefined;
-            workdirs = origin.workdirs?.length ? [...origin.workdirs] : undefined;
+          const sent = input.session.trim();
+          const origin = pm.findSession(c.user, sent, new Set());
+          const file = origin?.sessionFile ?? pm.findSessionFile(c.user, sent);
+          if (file) {
+            const live = pm.get(c.user, file);
+            const saved = live ? undefined : pm.getSpawnOpts(c.user, file);
+            const wds = live ? live.rpc.getWorkdirs() : (saved?.workdirs ?? origin?.workdirs ?? []);
+            cwd = (live ? live.rpc.getCwd() : saved?.cwd) ?? origin?.cwd ?? undefined;
+            // workdirs entry [0] doubles as the session cwd (same rule the
+            // New-Session spawn uses) — covers fresh sessions with no cwd yet.
+            if (!cwd && wds.length) cwd = wds[0];
+            workdirs = wds.length ? [...wds] : undefined;
           }
         }
         const task: ScheduledTask = {

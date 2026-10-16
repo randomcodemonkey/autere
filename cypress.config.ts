@@ -1,5 +1,6 @@
 import { defineConfig } from 'cypress';
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'fs';
+import { execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -62,8 +63,58 @@ export default defineConfig({
     pageLoadTimeout: 30000,
     video: false,
     screenshotOnRunFailure: true,
+    env: {
+      // Sandbox-enabled runs (tasks-sandbox spec) — empty = sandbox off.
+      e2eSandboxImage: process.env.AUTERE_E2E_SANDBOX_IMAGE || '',
+    },
     setupNodeEvents(on) {
       on('task', {
+        /** Poll until the session file exists and its header cwd is inside
+         *  the sandbox work area ($HOME/work/...) — pi flushes async. */
+        async awaitSandboxHeaderCwd(sessionId: string): Promise<string | null> {
+          const deadline = Date.now() + 30000;
+          while (Date.now() < deadline) {
+            const f = findSessionFile(sessionId);
+            if (f) {
+              try {
+                const cwd = (JSON.parse(readFileSync(f, 'utf-8').split('\n', 1)[0]) as { cwd?: string }).cwd;
+                if (cwd && cwd.startsWith('/home/autere/work/')) return cwd;
+              } catch { /* retry */ }
+            }
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          return null;
+        },
+
+        /** Sandbox containers started after the given ids (run probe):
+         *  WorkingDir + work-area mounts of each new container. */
+        sandboxProbe(beforeIds: string[]): { workdir: string; workMounts: string[] }[] {
+          const image = process.env.AUTERE_E2E_SANDBOX_IMAGE || '';
+          if (!image) return [];
+          const run = (cmd: string) => execSync(cmd, { encoding: 'utf-8' }).trim();
+          const ids = run(`docker ps -q --filter ancestor=${image}`).split('\n').filter(Boolean);
+          const out: { workdir: string; workMounts: string[] }[] = [];
+          for (const id of ids.filter((id) => !beforeIds.includes(id))) {
+            const insp = run(`docker inspect ${id} --format '{{.Config.WorkingDir}}|{{json .Mounts}}'`);
+            const [workdir, mj] = insp.split('|');
+            const mounts = JSON.parse(mj) as { Destination: string }[];
+            out.push({ workdir, workMounts: mounts.filter((m) => m.Destination.includes('/work')).map((m) => m.Destination) });
+          }
+          return out;
+        },
+
+        /** Header cwd of a session file (null when missing/unreadable) */
+        sessionHeaderCwd(sessionId: string): string | null {
+          const f = findSessionFile(sessionId);
+          if (!f) return null;
+          try {
+            const first = readFileSync(f, 'utf-8').split('\n', 1)[0];
+            return (JSON.parse(first) as { cwd?: string }).cwd || null;
+          } catch {
+            return null;
+          }
+        },
+
         /** Session id for the current (or given) session — null if none */
         findSessionId(sessionId?: string): string | null {
           const f = findSessionFile(sessionId);

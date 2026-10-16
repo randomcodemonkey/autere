@@ -253,6 +253,35 @@ export function appendSessionInfo(sessionPath: string, name: string | null): voi
  * sessions" hack was removed — the global dir belongs to the operator's
  * own CLI pi, not to any autere user.
  */
+/** Find a session file by session id — raw scan that IGNORES the listing
+ *  filters (cwd existence/translation): sandboxed sessions whose header cwd
+ *  can't be translated back to the host drop out of readSessions, but their
+ *  spawn state is still resolvable from the file (scheduler task creation
+ *  resolves workdirs from it). Matches filename first (pi keeps the original
+ *  id in the name), then the header id. */
+export function findSessionFileBySessionId(user: string, sessionId: string): string | null {
+  if (!sessionId) return null;
+  const root = join(getPiEnvDir(user), 'sessions');
+  const walk = (dir: string): string[] => {
+    try {
+      return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const p = join(dir, e.name);
+        return e.isDirectory() ? walk(p) : e.name.endsWith('.jsonl') ? [p] : [];
+      });
+    } catch { return []; }
+  };
+  const files = walk(root);
+  const byName = files.find((f) => (f.split('/').pop() || '').includes(sessionId));
+  if (byName) return byName;
+  for (const f of files) {
+    try {
+      const header = JSON.parse(readFileSync(f, 'utf-8').split('\n', 1)[0]) as { id?: string };
+      if (header.id === sessionId) return f;
+    } catch { /* skip unreadable */ }
+  }
+  return null;
+}
+
 export function readSessions(user: string): SessionInfo[] {
   try {
     const sessions: SessionInfo[] = [];

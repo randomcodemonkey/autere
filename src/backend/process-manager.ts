@@ -8,7 +8,7 @@
 
 import { UserSession } from './user-session.js';
 import { findSession } from '../shared/find-session.js';
-import { readSessions } from './sessions.js';
+import { readSessions, findSessionFileBySessionId } from './sessions.js';
 import { getPiEnvDir } from './pi-env.js';
 import { log } from './logger.js';
 import type { SessionInfo } from './types.js';
@@ -367,6 +367,11 @@ export class ProcessManager {
   /** Resolve a session (by id or alias) from the user's list */
   findSession(user: string, sessionId: string, viewed: Set<string | null>) {
     return findSession(sessionId, this.listSessions(user, viewed));
+  }
+
+  /** Session file by id, even when the listing hides it (see sessions.ts) */
+  findSessionFile(user: string, sessionId: string): string | null {
+    return findSessionFileBySessionId(user, sessionId);
   }
 
 

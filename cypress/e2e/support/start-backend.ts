@@ -44,6 +44,18 @@ let testModels: string[] = [];
 /** Mock router (CI/none-live path) — stopped with the backend. */
 let mockRouterStop: (() => Promise<void>) | null = null;
 
+/** Host a sandboxed pi (--network host on the docker host) can reach: this
+ *  container's bridge IP, not 127.0.0.1 (the mock runs inside the backend
+ *  container; only its published IP is routable from host-net containers). */
+function routerHost(): string {
+  if (!process.env.AUTERE_E2E_SANDBOX_IMAGE?.trim()) return '127.0.0.1';
+  try {
+    const ip = execSync('hostname -I', { encoding: 'utf-8' }).trim().split(/\s+/)[0];
+    if (ip) return ip;
+  } catch { /* fall through */ }
+  return '127.0.0.1';
+}
+
 /** Working model list probed before spawn (may be empty if no 9router). */
 export function getTestModels(): string[] { return testModels; }
 
@@ -244,7 +256,7 @@ export async function startBackend(): Promise<void> {
     stopMock = mock.stop;
     console.log(`[e2e] Using mock router on port ${mock.port}`);
   }
-  const routerUrl = `http://127.0.0.1:${routerPort}`;
+  const routerUrl = `http://${routerHost()}:${routerPort}`;
   mockRouterStop = stopMock;
 
   const probed = await probeTestModels(routerUrl, !stopMock);
@@ -259,7 +271,11 @@ export async function startBackend(): Promise<void> {
   // Isolated pi envs dir: tests must not read/write real user sessions
   // (the default ~/.autere/pi-envs/admin is shared with the real
   // dashboard instance for the admin user).
-  testEnvsDir = mkdtempSync(join(tmpdir(), 'autere-e2e-envs-'));
+  // Sandbox spawns require the pi env dir to live inside a docker volume
+  // (planSandboxMounts refuses otherwise) — use the repo checkout's volume.
+  testEnvsDir = process.env.AUTERE_E2E_SANDBOX_IMAGE?.trim()
+    ? mkdtempSync(join('/home/autere/code/autere', '.e2e-envs-'))
+    : mkdtempSync(join(tmpdir(), 'autere-e2e-envs-'));
   // pi resolves an extension's npm deps by walking up the env dir — a bare
   // mkdtemp under /tmp has no node_modules above it (upstream node on CI has
   // no Debian /usr/share/nodejs fallback → 'Cannot find module diff' → pi
@@ -299,8 +315,10 @@ export async function startBackend(): Promise<void> {
     NINE_ROUTER_BASE_URL: routerUrl,
     ...(stopMock ? { NINE_ROUTER_API_KEY: MOCK_ROUTER_API_KEY } : {}),
     AUTERE_DIR: join(testEnvsDir, 'autere-state'),
-    // sandbox points at docker + the real home volume — off for tests
-    AUTERE_SANDBOX_IMAGE: 'off',
+    // sandbox points at docker + the real home volume — off for tests.
+    // AUTERE_E2E_SANDBOX_IMAGE opts ONE run into a real sandbox (workdirs
+    // inheritance spec); the image must exist locally (docker images).
+    AUTERE_SANDBOX_IMAGE: process.env.AUTERE_E2E_SANDBOX_IMAGE?.trim() || 'off',
     // Orphan record sharing: pi processes spawned by this backend
     // append their pids to the run record (rpc-client reads it), so a
     // SIGKILLed runner's detached pi is reaped by the next run.

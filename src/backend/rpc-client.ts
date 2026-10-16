@@ -137,6 +137,7 @@ export class MonitorRpcClient {
   private options: RpcClientOptions;
   /** Spawn opts (cwd/workdirs) — Sessions view reads them for editing. */
   getWorkdirs(): string[] { return [...(this.options.workdirs || [])]; }
+  getCwd(): string | undefined { return this.options.cwd || undefined; }
   private _state: RpcSessionState | null = null;
   /** Logger bound to pi process PID — available after start() */
   private piLog: Logger | null = null;
