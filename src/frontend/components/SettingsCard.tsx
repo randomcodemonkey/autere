@@ -4,6 +4,7 @@ import { SortableList } from './SortableList';
 import { PersonasSettingsSection } from './Personas';
 import { ApiTokensSection } from './ApiTokensSection';
 import { NotificationsSection } from './NotificationsSection';
+import { Modal } from './Modal';
 import { url } from '../base-path';
 import { API } from '../api-paths';
 import type { SettingSection, SettingField } from '../types';
@@ -397,10 +398,10 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   const [saved, setSaved] = useState<true | 'deferred' | null>(null);
   const [availablePackages, setAvailablePackages] = useState<string[]>([]);
   // Final compaction summary prompts (pi default + stored extension text),
-  // shown under the summaryPromptExtra field and refreshed after each save.
+  // shown in a modal on demand and refreshed after each save.
   interface SummaryPromptPreview { extra: string; guardTokens: number; fresh: string | null; update: string | null }
   const [summaryPrompt, setSummaryPrompt] = useState<SummaryPromptPreview | null>(null);
-  const [showSummaryPrompt, setShowSummaryPrompt] = useState(false);
+  const [showSummaryPromptModal, setShowSummaryPromptModal] = useState(false);
   const fetchSummaryPrompt = async () => {
     try {
       const res = await fetch(url(API.settings.summaryPrompt));
@@ -486,10 +487,9 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       if (data.success) {
         baselineRef.current = JSON.stringify(settings);
         setSaved(data.deferred ? 'deferred' : true);
-        // Show the refreshed effective prompt when the save touched it.
+        // Refresh the effective prompt after saving, but only show it on request.
         if ('summaryPromptExtra' in settings || 'summaryPromptGuardTokens' in settings) {
           await fetchSummaryPrompt();
-          setShowSummaryPrompt(true);
         }
         // Banner is transient — the SSE-reconnect reset below only covers
         // backend restarts; a non-deferred save would otherwise stick forever.
@@ -649,17 +649,24 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
               <button
                 type="button"
                 className="btn btn-default settings-summary-toggle"
-                onClick={() => setShowSummaryPrompt(v => !v)}
+                onClick={() => setShowSummaryPromptModal(true)}
               >
-                {showSummaryPrompt ? 'Hide final prompt' : 'Show final prompt'}
+                Show final prompt
               </button>
-              {showSummaryPrompt && summaryPrompt && (
-                <div className="settings-summary-preview">
-                  {summaryPrompt.fresh === null ? (
+              {showSummaryPromptModal && (
+                <Modal open onClose={() => setShowSummaryPromptModal(false)} className="modal-compaction-prompt">
+                  <div className="modal-header">
+                    <h3>Final compaction prompts</h3>
+                    <button className="modal-close" onClick={() => setShowSummaryPromptModal(false)}>✕</button>
+                  </div>
+                  <div className="modal-body">
+                    {!summaryPrompt ? (
+                      <div className="settings-description">Loading final prompt…</div>
+                    ) : summaryPrompt.fresh === null ? (
                     <div className="settings-description">Preview unavailable: pi's default compaction prompt could not be read on this server.</div>
                   ) : (
                     <>
-                      <div className="settings-description">Effective compaction summary prompt (pi default + your instructions):</div>
+                      <div className="settings-description">Effective prompt: pi's default plus your custom instructions (if any):</div>
                       {[["Fresh compaction", summaryPrompt.fresh], ['Update of a previous summary', summaryPrompt.update]].map(([label, text]) => (
                         <div key={label as string} className="settings-summary-block">
                           <div className="settings-summary-label">{label}</div>
@@ -667,8 +674,9 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
                         </div>
                       ))}
                     </>
-                  )}
-                </div>
+                    )}
+                  </div>
+                </Modal>
               )}
             </div>
           )}

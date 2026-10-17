@@ -3315,7 +3315,7 @@ body {
   font-size: 0.85rem;
 }
 
-// Final compaction summary prompt preview (Settings > Chat)
+// Final compaction prompt preview (Settings > Chat)
 .settings-summary-prompt {
   margin-top: 0.5rem;
 }
@@ -3324,8 +3324,9 @@ body {
   margin: 0;
 }
 
-.settings-summary-preview {
-  margin-top: 0.5rem;
+.modal-compaction-prompt {
+  width: 90%;
+  max-width: 900px;
 }
 
 .settings-summary-label {
@@ -3333,6 +3334,10 @@ body {
   font-weight: 600;
   color: var(--c-text-muted);
   margin: 0.5rem 0 0.25rem;
+}
+
+.modal-compaction-prompt .modal-body {
+  overflow-y: auto;
 }
 
 .settings-summary-text {

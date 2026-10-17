@@ -68,20 +68,24 @@ describe('autere — settings', () => {
     openSettingsSection('Chat');
     // Fill the two new fields (textarea + number) and save — selected by
     // label since the Chat section has other number/text fields too
-    cy.contains('.settings-field', 'Compaction summary instructions').as('field')
-      .find('textarea.settings-input').clear().type('Preserve exact file paths');
-    cy.get('@field').find('input.settings-input').clear().type('180000');
+    cy.contains('.settings-field', 'Compaction summary instructions').as('promptField')
+      .find('textarea.settings-input').should('have.value', '').type('Preserve exact file paths');
+    cy.contains('.settings-field', 'Force compaction above (tokens)').as('guardField')
+      .find('input.settings-input').clear().type('180000');
     cy.get('.settings-save-btn', { timeout: 5000 }).should('be.visible').click();
-    // After a save that touched these fields the preview opens automatically
-    cy.get('.settings-summary-preview', { timeout: 10000 }).should('exist');
+    // Saving does not open the final prompt; it appears only on button click.
+    cy.get('.modal-compaction-prompt').should('not.exist');
+    cy.get('.settings-summary-toggle').click();
+    cy.get('.modal-compaction-prompt').should('be.visible');
     cy.get('.settings-summary-text').should('contain', 'Preserve exact file paths');
     cy.get('.settings-summary-text').should('contain', 'Additional focus:');
-    // Reset the fields so the mutation nets out
-    cy.get('.settings-summary-toggle').click(); // collapse preview
-    cy.get('@field').find('textarea.settings-input').clear();
-    cy.get('@field').find('input.settings-input').clear();
+    cy.get('.modal-compaction-prompt .modal-close').click();
+    cy.get('.modal-compaction-prompt').should('not.exist');
+    // Reset the fields so the mutation nets out.
+    cy.get('@promptField').find('textarea.settings-input').clear();
+    cy.get('@guardField').find('input.settings-input').clear();
     cy.get('.settings-save-btn', { timeout: 5000 }).should('be.visible').click();
-    cy.get('.settings-summary-preview', { timeout: 10000 }).should('not.exist');
+    cy.get('.modal-compaction-prompt').should('not.exist');
   });
 
   it('Sessions view button opens the sessions page', () => {

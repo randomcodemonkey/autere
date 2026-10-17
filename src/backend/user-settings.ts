@@ -991,8 +991,7 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
   });
 
   // Always include 9router settings if the extension is enabled
-  const packages = getUserSetting(user, 'packages', []) as string[];
-  const has9Router = packages.some((p: string) => p.includes('9router'));
+  const has9Router = getEnabledPackages(user).some((pkg) => pkg.includes('9router'));
 
   if (has9Router) {
     sections.push({
