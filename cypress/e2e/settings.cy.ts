@@ -69,15 +69,23 @@ describe('autere — settings', () => {
     // Fill the two new fields (textarea + number) and save — selected by
     // label since the Chat section has other number/text fields too
     cy.contains('.settings-field', 'Compaction summary instructions').as('promptField')
-      .find('textarea.settings-input').should('have.value', '').type('Preserve exact file paths');
+      .find('textarea.settings-input').should('have.value', '').type('Settings preview marker 6f2a');
     cy.contains('.settings-field', 'Force compaction above (tokens)').as('guardField')
       .find('input.settings-input').clear().type('180000');
     cy.get('.settings-save-btn', { timeout: 5000 }).should('be.visible').click();
+    // The save button disappears only after the server accepts the save and
+    // updates the baseline. The prompt preview refresh is awaited by its text
+    // assertion below (the base pi prompt contains other common phrases).
+    cy.get('body').should(($body) => {
+      const error = $body.find('.settings-error').text().trim();
+      if (error) throw new Error(`Settings save failed: ${error}`);
+      expect($body.find('.settings-save-btn')).to.have.length(0);
+    });
     // Saving does not open the final prompt; it appears only on button click.
     cy.get('.modal-compaction-prompt').should('not.exist');
     cy.get('.settings-summary-toggle').click();
     cy.get('.modal-compaction-prompt').should('be.visible');
-    cy.get('.settings-summary-text').should('contain', 'Preserve exact file paths');
+    cy.get('.settings-summary-text').should('contain', 'Settings preview marker 6f2a');
     cy.get('.settings-summary-text').should('contain', 'Additional focus:');
     cy.get('.modal-compaction-prompt .modal-close').click();
     cy.get('.modal-compaction-prompt').should('not.exist');
@@ -85,6 +93,7 @@ describe('autere — settings', () => {
     cy.get('@promptField').find('textarea.settings-input').clear();
     cy.get('@guardField').find('input.settings-input').clear();
     cy.get('.settings-save-btn', { timeout: 5000 }).should('be.visible').click();
+    cy.get('.settings-save-btn').should('not.exist');
     cy.get('.modal-compaction-prompt').should('not.exist');
   });
 

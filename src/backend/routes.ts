@@ -22,6 +22,7 @@ import { readFileSync, writeFileSync, existsSync, renameSync, mkdirSync, openSyn
 import { join, dirname, basename } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
+import { isDeepStrictEqual } from 'node:util';
 import { ProcessManager } from './process-manager.js';
 import { getUser, getUserRole, hasRole, verifyCredentials, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, removeUserTokens, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, getLastSession, isRegisteredUser, userMustChangePassword, listApiTokens, createApiToken, deleteApiToken } from './auth.js';
 import { getClientSession, setClientSession, registerClient, broadcastToUser, viewedSessions, hubUsers } from './client-hub.js';
@@ -2147,7 +2148,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         // backend when a notification fires — skip the restart when only
         // those change, so the running session is not interrupted.
         const onlyLiveApplyKeys = Object.keys(settings).every(
-          (k) => k === 'reserveTokensPercent' || k === 'reserveTokensPercentByModel' || k === 'summaryPromptExtra' || k === 'summaryPromptGuardTokens' || k.startsWith('janitor') || k.startsWith('notify') || prev[k] === (settings as any)[k]
+          (k) => k === 'reserveTokensPercent' || k === 'reserveTokensPercentByModel' || k === 'summaryPromptExtra' || k === 'summaryPromptGuardTokens' || k.startsWith('janitor') || k.startsWith('notify') || isDeepStrictEqual(prev[k], (settings as any)[k])
         );
         if (onlyLiveApplyKeys) {
           sendJSON(c.res, { success: true });

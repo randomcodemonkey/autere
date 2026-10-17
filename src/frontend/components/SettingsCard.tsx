@@ -403,11 +403,15 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
   const [summaryPrompt, setSummaryPrompt] = useState<SummaryPromptPreview | null>(null);
   const [showSummaryPromptModal, setShowSummaryPromptModal] = useState(false);
   const fetchSummaryPrompt = async () => {
+    setSummaryPrompt(null);
     try {
       const res = await fetch(url(API.settings.summaryPrompt));
       const json = await res.json();
       if (json.success) setSummaryPrompt(json.data);
-    } catch { /* preview is best-effort */ }
+      else setSummaryPrompt({ extra: '', guardTokens: 0, fresh: null, update: null });
+    } catch {
+      setSummaryPrompt({ extra: '', guardTokens: 0, fresh: null, update: null });
+    }
   };
   const prevSseConnectedRef = useRef(sseConnected);
   // Settings as loaded / last saved — the baseline the floating Save button
@@ -663,7 +667,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
                     {!summaryPrompt ? (
                       <div className="settings-description">Loading final prompt…</div>
                     ) : summaryPrompt.fresh === null ? (
-                    <div className="settings-description">Preview unavailable: pi's default compaction prompt could not be read on this server.</div>
+                    <div className="settings-description">Final prompt preview is unavailable on this server.</div>
                   ) : (
                     <>
                       <div className="settings-description">Effective prompt: pi's default plus your custom instructions (if any):</div>
