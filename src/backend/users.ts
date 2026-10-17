@@ -13,12 +13,12 @@
  * (delete the file to re-seed).
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
-import { dirname, join } from 'path';
-import { randomUUID, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import { readFileSync, existsSync } from 'fs';
+import { randomBytes, scrypt, scryptSync, timingSafeEqual } from 'crypto';
 import { USERS_FILE } from './constants.js';
 import { log } from './logger.js';
 import { sanitizeUserName } from '../shared/format.js';
+import { writePrivateFile } from './private-file.js';
 
 export type Role = 'chat' | 'control' | 'admin';
 export const ROLES: Role[] = ['chat', 'control', 'admin'];
@@ -60,24 +60,23 @@ function hashPassword(password: string): string {
   return `s2:${salt}:${hash}`;
 }
 
-function verifyPassword(password: string, stored: string): boolean {
+function derivePassword(password: string, salt: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => scrypt(password, salt, 32, (err, key) => err ? reject(err) : resolve(key)));
+}
+
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const parts = stored.split(':');
-  if (parts.length !== 3 || parts[0] !== 's2') return false;
-  const [, salt, hash] = parts;
-  const candidate = scryptSync(password, salt, 32);
-  const expected = Buffer.from(hash, 'hex');
-  return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+  if (parts.length !== 3 || parts[0] !== 's2' || !/^[a-f0-9]{32}$/.test(parts[1]) || !/^[a-f0-9]{64}$/.test(parts[2])) return false;
+  const candidate = await derivePassword(password, parts[1]);
+  const expected = Buffer.from(parts[2], 'hex');
+  return timingSafeEqual(candidate, expected);
 }
 
 // ── Persistence ──
 
 function saveRegistry() {
   try {
-    const dir = dirname(USERS_FILE);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const tmp = join(dir, `.users-tmp-${randomUUID()}`);
-    writeFileSync(tmp, JSON.stringify(registry, null, 2), 'utf-8');
-    renameSync(tmp, USERS_FILE);
+    writePrivateFile(USERS_FILE, JSON.stringify(registry, null, 2));
   } catch (err) {
     log.auth.error('Failed to save users registry:', err);
   }
@@ -136,7 +135,7 @@ export function getUserMountDockerSocket(user: string): boolean {
   return !!registry[user]?.mountDockerSocket;
 }
 
-export function verifyUser(user: string, password: string): boolean {
+export async function verifyUser(user: string, password: string): Promise<boolean> {
   const entry = registry[user];
   return !!entry && verifyPassword(password, entry.passwordHash);
 }
@@ -263,10 +262,10 @@ export function createUser(input: {
  * Update a user (role / allowedDirs / optional new password). The actor
  * (requesting admin) enables self-protection rules. Returns error or null.
  */
-export function updateUser(actor: string, username: string, patch: {
+export async function updateUser(actor: string, username: string, patch: {
   role?: unknown; allowedDirs?: unknown; password?: unknown; mustChangePassword?: unknown;
   mountDockerSocket?: unknown;
-}): string | null {
+}): Promise<string | null> {
   const entry = registry[username];
   if (!entry) return 'User not found';
 
@@ -323,10 +322,10 @@ export function deleteUser(actor: string, username: string): string | null {
 }
 
 /** Change own password (also satisfies the forced-change-on-first-login flag). */
-export function changeOwnPassword(username: string, oldPassword: string, newPassword: string): string | null {
+export async function changeOwnPassword(username: string, oldPassword: string, newPassword: string): Promise<string | null> {
   const entry = registry[username];
   if (!entry) return 'User not found';
-  if (!verifyUser(username, oldPassword)) return 'Current password is incorrect';
+  if (!await verifyUser(username, oldPassword)) return 'Current password is incorrect';
   const pwErr = validatePassword(newPassword);
   if (pwErr) return pwErr;
   entry.passwordHash = hashPassword(newPassword);

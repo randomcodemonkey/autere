@@ -424,7 +424,7 @@ export function AppPage({
           )}
           {activeView === 'tasks' && (
             <ErrorBoundary key="v-tasks" name="Scheduled tasks">
-              <ScheduledTasksCard sseConnected={sseConnected} />
+              <ScheduledTasksCard sseConnected={sseConnected} userRole={userRole} />
             </ErrorBoundary>
           )}
           {activeView === 'edits' && (

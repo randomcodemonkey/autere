@@ -8,7 +8,7 @@ import { findSession, type SessionRef } from '../../src/shared/find-session';
 import { isRmCommand, extractRmPaths, accumulateUsage, sanitizeUserName, filterModelsByPatterns, matchModelMap, sessionLocaleStamp, autoSessionName } from '../../src/shared/format';
 import { pathIsIgnored } from '../../src/shared/edit-ignore';
 import { TASK_REPORT_MARKER, streamRoleForUserText } from '../../src/shared/format';
-import { validateTaskInput } from '../../src/shared/tasks';
+import { canRunTaskScripts, validateTaskInput } from '../../src/shared/tasks';
 
 describe('Backend Utilities (real implementations)', () => {
   describe('streamRoleForUserText (task-report projection)', () => {
@@ -436,6 +436,21 @@ describe('Session auto-naming helpers', () => {
 
     it('tolerates trailing slashes and empty entries', () => {
       expect(pathIsIgnored('/tmp/f.txt', ['/tmp/', ''])).to.eq(true);
+    });
+  });
+
+  describe('scheduled task script policy', () => {
+    it('allows script execution only for admins', () => {
+      expect(canRunTaskScripts('admin')).to.eq(true);
+      expect(canRunTaskScripts('control')).to.eq(false);
+      expect(canRunTaskScripts('chat')).to.eq(false);
+      expect(canRunTaskScripts(null)).to.eq(false);
+    });
+
+    it('bounds optional scripts', () => {
+      const base = { name: 'task', schedule: '0 0 * * *', prompt: 'hello' };
+      expect(validateTaskInput({ ...base, seedScript: 'x'.repeat(32768) })).to.eq(null);
+      expect(validateTaskInput({ ...base, resultScript: 'x'.repeat(32769) })).to.match(/at most 32768/);
     });
   });
 

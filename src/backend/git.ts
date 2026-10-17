@@ -10,8 +10,7 @@ import { execFileSync } from 'child_process';
 import { existsSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { resolve } from 'path';
-import type { DirEntry } from './files.js';
-import { resolveInRoots, type FileRoot, type BrowseResult } from './files.js';
+import { resolveInRoots, listDirectoryEntries, type FileRoot, type DirEntry, type BrowseResult } from './files.js';
 import { getGitRepos } from './user-settings.js';
 
 export interface RepoEntry extends FileRoot { isRepo: boolean }
@@ -33,6 +32,17 @@ export function resolvedGitRepos(user: string): string[] {
 
 const isDir = (p: string) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
+function validateRepoRoot(user: string, path: string): BrowseResult<{ root: string; access: 'read' | 'rw' }> {
+  const target = resolveInRoots(user, path);
+  if ('error' in target) return target;
+  const root = repoRootFor(target.abs);
+  if (!root) return { error: 'Not inside a configured repository', status: 400 };
+  const allowed = resolveInRoots(user, root);
+  if ('error' in allowed) return allowed;
+  if (allowed.access !== target.access) return { error: 'Repository root has different file permissions', status: 403 };
+  return { data: { root: allowed.abs, access: allowed.access } };
+}
+
 /** `.git` may be a dir (repo), a file (worktree/submodule) — both count */
 export function isGitRepo(p: string): boolean {
   return existsSync(resolve(p, '.git'));
@@ -42,8 +52,9 @@ export function isGitRepo(p: string): boolean {
 export function fileDiff(user: string, path: string): BrowseResult<{ diff: string }> {
   const t = resolveInRepos(user, path);
   if ('error' in t) return t;
-  const root = repoRootFor(t.abs);
-  if (!root) return { error: 'Not inside a git repository', status: 400 };
+  const checked = validateRepoRoot(user, t.abs);
+  if ('error' in checked) return checked;
+  const root = checked.data.root;
   try {
     let out: string;
     try {
@@ -79,22 +90,20 @@ const SEP = '   |   ';
 
 /** Configured repo folders for the Repositories view — as-is, no searching/filtering */
 export function listRepos(user: string): BrowseResult<RepoEntry[]> {
-  return { data: resolvedGitRepos(user).map((path) => ({ path, isRepo: isGitRepo(path), access: 'rw' })) };
+  return {
+    data: resolvedGitRepos(user).flatMap((path) => {
+      const root = resolveInRoots(user, path);
+      return 'error' in root ? [] : [{ path: root.abs, isRepo: isGitRepo(root.abs), access: root.access }];
+    }),
+  };
 }
 
 /**
- * Resolve within the user's file roots OR within one of their configured
- * repository folders (a configured repo is the user's explicit grant — it
- * does not have to be inside allowedDirs as well).
+ * Resolve within the user's file roots. Configured repository folders do
+ * not grant access beyond the user's allowed roots.
  */
 export function resolveInRepos(user: string, path: string): { abs: string; access: 'read' | 'rw' } | { error: string; status: number } {
-  const t = resolveInRoots(user, path);
-  if (!('error' in t)) return t;
-  const abs = resolve(path);
-  for (const repo of resolvedGitRepos(user)) {
-    if (abs === repo || abs.startsWith(repo.endsWith('/') ? repo : repo + '/')) return { abs, access: 'rw' };
-  }
-  return t;
+  return resolveInRoots(user, path);
 }
 
 function parseLog(out: string): Commit[] {
@@ -106,11 +115,12 @@ function parseLog(out: string): Commit[] {
 
 /** Full repository detail: status, remotes, last N commits. */
 export function repoDetail(user: string, path: string, commitCount: number): BrowseResult<RepoDetail> {
-  const t = resolveInRepos(user, path);
+  const t = resolveInRoots(user, path);
   if ('error' in t) return t;
-  const p = t.abs;
-  if (!isDir(p)) return { error: 'Not a directory', status: 400 };
-  if (!isGitRepo(p)) return { error: 'Not a git repository', status: 400 };
+  if (!isDir(t.abs)) return { error: 'Not a directory', status: 400 };
+  const checked = validateRepoRoot(user, t.abs);
+  if ('error' in checked) return checked;
+  const p = checked.data.root;
   const detail: RepoDetail = { root: p, isRepo: true, branch: '', changed: [], remotes: [], commits: [], hasMore: false };
   try {
     const status = sync(p, ['status', '--porcelain=v1', '-b']);
@@ -159,8 +169,9 @@ const LOG_FMT = `--pretty=format:%H${SEP}%h${SEP}%aN${SEP}%at${SEP}%s`;
 export function fileLog(user: string, path: string): BrowseResult<Commit[]> {
   const t = resolveInRepos(user, path);
   if ('error' in t) return t;
-  const root = repoRootFor(t.abs);
-  if (!root) return { error: 'Not inside a git repository', status: 400 };
+  const checked = validateRepoRoot(user, t.abs);
+  if ('error' in checked) return checked;
+  const root = checked.data.root;
   try {
     const out = sync(root, ['log', '--follow', '-n', '100', LOG_FMT, '--', t.abs]);
     return { data: parseLog(out) };
@@ -171,12 +182,15 @@ export function fileLog(user: string, path: string): BrowseResult<Commit[]> {
 }
 
 export function initRepo(user: string, path: string, remote: unknown): BrowseResult<{ initialized: true }> {
-  const t = resolveInRepos(user, path);
+  const t = resolveInRoots(user, path);
   if ('error' in t) return t;
   if (t.access !== 'rw') return { error: 'Directory is read-only', status: 403 };
+  // Recheck after recursive mkdir, which may follow a changed symlink target.
   if (isGitRepo(t.abs)) return { error: 'Already a git repository', status: 409 };
   try {
     mkdirSync(t.abs, { recursive: true }); // also covers a configured but not-yet-existing folder
+    const checked = resolveInRoots(user, t.abs);
+    if ('error' in checked || checked.access !== 'rw' || checked.abs !== t.abs) return { error: 'Path changed or escaped its file root', status: 403 };
     sync(t.abs, ['init', '-b', 'main']);
     if (typeof remote === 'string' && remote.trim()) sync(t.abs, ['remote', 'add', 'origin', remote.trim()]);
     return { data: { initialized: true } };
@@ -188,19 +202,12 @@ export function initRepo(user: string, path: string, remote: unknown): BrowseRes
 export function gitList(user: string, path: string): BrowseResult<DirEntry[]> {
   const t = resolveInRepos(user, path);
   if ('error' in t) return t;
+  const checked = validateRepoRoot(user, t.abs);
+  if ('error' in checked) return checked;
   const abs = t.abs;
   try {
     if (!isDir(abs)) return { error: 'Not a directory', status: 400 };
-    const st = (p: string) => { try { return statSync(p); } catch { return null; } };
-    const out: DirEntry[] = [];
-    for (const e of readdirSync(abs, { withFileTypes: true })) {
-      if (out.length >= 500) break;
-      const s2 = st(abs + '/' + e.name);
-      if (!s2) continue;
-      out.push({ name: e.name, type: e.isDirectory() ? 'dir' : 'file', size: s2.size, mtime: s2.mtimeMs });
-    }
-    out.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1));
-    return { data: out };
+    return { data: listDirectoryEntries(abs, 500) };
   } catch (err: any) {
     if (err.code === 'ENOENT') return { error: 'Not found', status: 404 };
     return { error: `Listing failed: ${err.message}`, status: 500 };
@@ -212,15 +219,19 @@ export function cloneRepo(user: string, path: string, remote: unknown): BrowseRe
   const url = remote.trim();
   // Trust-boundary validation: shell-safe charset, no option injection
   if (!/^[a-zA-Z0-9~._/:@+-]+$/.test(url) || url.startsWith('-')) return { error: 'Invalid remote URL', status: 400 };
-  const t = resolveInRepos(user, path);
+  const t = resolveInRoots(user, path);
   if ('error' in t) return t;
   if (t.access !== 'rw') return { error: 'Directory is read-only', status: 403 };
   if (isGitRepo(t.abs)) return { error: 'Already a git repository', status: 409 };
   try {
     if (readdirSync(t.abs).length > 0) return { error: 'Target folder is not empty', status: 400 };
   } catch { /* clones into a fresh dir */ }
+  const targetCheck = resolveInRoots(user, t.abs);
+  if ('error' in targetCheck || targetCheck.access !== 'rw' || targetCheck.abs !== t.abs) return { error: 'Clone target is outside your writable file roots', status: 403 };
+  const parent = t.abs.slice(0, t.abs.lastIndexOf('/')) || '/';
+  const checked = resolveInRoots(user, parent);
+  if ('error' in checked || checked.access !== 'rw' || checked.abs !== parent) return { error: 'Clone parent is outside your writable file roots', status: 403 };
   try {
-    const parent = t.abs.slice(0, t.abs.lastIndexOf('/')) || '/';
     sync(parent, ['clone', url, t.abs]);
     return { data: { cloned: true } };
   } catch (err: any) {

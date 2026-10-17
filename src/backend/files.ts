@@ -7,9 +7,8 @@
  * the fs helpers directly from routes.
  */
 
-import { openSync, readSync, closeSync, readdirSync, statSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
-import { resolve, dirname, basename } from 'path';
-import { realpathSync } from 'fs';
+import { constants as fsConstants, openSync, readSync, closeSync, readdirSync, statSync, mkdirSync, unlinkSync, realpathSync, writeFileSync } from 'fs';
+import { resolve, dirname, join } from 'path';
 import { homedir } from 'os';
 import { getUserAllowedDirs } from './users.js';
 import { log } from './logger.js';
@@ -36,15 +35,17 @@ function under(root: string, abs: string): boolean {
   return abs === r || abs.startsWith(r.endsWith('/') ? r : r + '/');
 }
 
-/** Realpath, falling back to the nearest existing ancestor (new files) */
+/** Resolve existing path components without following missing suffixes. */
 function safeReal(p: string): string {
-  try { return realpathSync(p); } catch {}
-  try { return joinSafe(realpathSync(dirname(p)), basename(p)); } catch {}
-  return p;
+  const abs = resolve(p);
+  try { return realpathSync(abs); } catch {}
+  const parent = dirname(abs);
+  if (parent === abs) return abs;
+  return join(safeReal(parent), abs.slice(parent.length).replace(/^\/+/, ''));
 }
 
-function joinSafe(a: string, b: string): string {
-  return a.endsWith('/') ? a + b : a + '/' + b;
+function withinConfiguredRoot(root: string, abs: string): boolean {
+  return under(safeReal(resolve(root)), abs);
 }
 
 /**
@@ -57,7 +58,7 @@ export function resolveInRoots(user: string, path: string): { abs: string; acces
   if (typeof path !== 'string' || !path.startsWith('/') || path.includes('\0')) {
     return { error: 'Invalid path', status: 400 };
   }
-  const abs = safeReal(resolve(path));
+  const abs = safeReal(path);
   let best: { abs: string; access: 'read' | 'rw'; len: number } | null = null;
   for (const r of rootsFor(user)) {
     const root = safeReal(resolve(r.path));
@@ -73,20 +74,24 @@ export function userFileRoots(user: string): FileRoot[] {
   return rootsFor(user).map((r) => ({ ...r }));
 }
 
+export function listDirectoryEntries(path: string, limit = MAX_LIST_ENTRIES): DirEntry[] {
+  const entries: DirEntry[] = [];
+  for (const e of readdirSync(path, { withFileTypes: true })) {
+    if (entries.length >= limit) break;
+    try {
+      const stat = statSync(join(path, e.name));
+      entries.push({ name: e.name, type: e.isDirectory() ? 'dir' : 'file', size: stat.size, mtime: stat.mtimeMs });
+    } catch { /* entry was removed or became inaccessible */ }
+  }
+  return entries.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1);
+}
+
 export function browseList(user: string, path: string): BrowseResult<DirEntry[]> {
   const t = resolveInRoots(user, path);
   if ('error' in t) return t;
   try {
     if (!statSync(t.abs).isDirectory()) return { error: 'Not a directory', status: 400 };
-    const entries: DirEntry[] = [];
-    for (const e of readdirSync(t.abs, { withFileTypes: true })) {
-      if (entries.length >= MAX_LIST_ENTRIES) break;
-      let st: ReturnType<typeof statSync> | null = null;
-      try { st = statSync(t.abs + '/' + e.name); } catch { continue; }
-      entries.push({ name: e.name, type: e.isDirectory() ? 'dir' : 'file', size: st!.size, mtime: st!.mtimeMs });
-    }
-    entries.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1));
-    return { data: entries };
+    return { data: listDirectoryEntries(t.abs) };
   } catch (err: any) {
     if (err.code === 'ENOENT') return { error: 'Not found', status: 404 };
     return { error: `Listing failed: ${err.message}`, status: 500 };
@@ -120,8 +125,15 @@ export function browseWrite(user: string, path: string, content: unknown): Brows
   if ('error' in t) return t;
   if (t.access !== 'rw') return { error: 'Directory is read-only', status: 403 };
   try {
-    mkdirSync(dirname(t.abs), { recursive: true });
-    writeFileSync(t.abs, content);
+    const parent = dirname(t.abs);
+    mkdirSync(parent, { recursive: true });
+    // Re-resolve after directory creation to close symlink/missing-path escapes.
+    const checked = resolveInRoots(user, t.abs);
+    if ('error' in checked || checked.access !== 'rw' || checked.abs !== t.abs) {
+      return { error: 'Path changed or escaped its file root', status: 403 };
+    }
+    const fd = openSync(t.abs, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW, 0o666);
+    try { writeFileSync(fd, content); } finally { closeSync(fd); }
     log.http.info(`file write ${t.abs} (${content.length} bytes) by ${user}`);
     return { data: { saved: true } };
   } catch (err: any) {
@@ -133,7 +145,7 @@ export function browseDelete(user: string, path: string): BrowseResult<{ deleted
   const t = resolveInRoots(user, path);
   if ('error' in t) return t;
   if (t.access !== 'rw') return { error: 'Directory is read-only', status: 403 };
-  if (rootsFor(user).some((r) => resolve(r.path) === t.abs)) {
+  if (rootsFor(user).some((r) => withinConfiguredRoot(r.path, t.abs) && safeReal(resolve(r.path)) === t.abs)) {
     return { error: 'Cannot delete a file root', status: 403 };
   }
   try {

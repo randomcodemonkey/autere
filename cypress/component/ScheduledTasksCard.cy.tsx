@@ -125,12 +125,21 @@ describe('ScheduledTasksCard', () => {
       cy.get('.scheduled-enabled-dot.off').should('exist');
     });
 
-    it('shows seed and result script summaries', () => {
+    it('shows seed and result script summaries only to admins', () => {
       stubFetch();
       responseData = { tasks: [TASK], runs: [] };
-      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.mount(<ScheduledTasksCard sseConnected={true} userRole="admin" />);
       cy.get('.scheduled-task-detail').should('contain', 'echo seed-data');
       cy.get('.scheduled-task-detail').should('contain', 'tee /tmp/out.txt');
+    });
+
+    it('hides task scripts from non-admin users', () => {
+      stubFetch();
+      responseData = { tasks: [TASK], runs: [] };
+      cy.mount(<ScheduledTasksCard sseConnected={true} userRole="control" />);
+      cy.get('.scheduled-task-detail').should('not.exist');
+      cy.get('.scheduled-edit-btn').click();
+      cy.get('.scheduled-input-seed, .scheduled-input-result').should('not.exist');
     });
 
     it('form shows model selector with default and saved task persists the chosen model', () => {

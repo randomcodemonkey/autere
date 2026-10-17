@@ -10,9 +10,8 @@
  * VAPID keys are generated once and persisted under AUTERE_DIR.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
-import { randomUUID } from 'crypto';
 import { createTransport } from 'nodemailer';
 import webpush from 'web-push';
 import { AUTERE_DIR, USER_SETTINGS_DIR } from './constants.js';
@@ -20,6 +19,7 @@ import { getUserSetting } from './user-settings.js';
 import { sanitizeUserName } from '../shared/format.js';
 import { clipNotification } from '../shared/notifications.js';
 import { log } from './logger.js';
+import { writePrivateFile } from './private-file.js';
 
 export type NotificationKind = 'explicit' | 'taskStart' | 'turnEnd' | 'allDone';
 
@@ -61,9 +61,7 @@ function loadVapid(): Vapid {
   } else {
     keys = webpush.generateVAPIDKeys();
     mkdirSync(dirname(VAPID_FILE), { recursive: true });
-    const tmp = join(dirname(VAPID_FILE), `.vapid-tmp-${randomUUID()}`);
-    writeFileSync(tmp, JSON.stringify(keys, null, 2), 'utf-8');
-    renameSync(tmp, VAPID_FILE);
+    writePrivateFile(VAPID_FILE, JSON.stringify(keys, null, 2));
     log.notifications.info('Generated VAPID keys');
   }
   vapidDetails = { publicKey: keys.publicKey, privateKey: keys.privateKey, subject: VAPID_SUBJECT };
@@ -92,10 +90,7 @@ export function listSubscriptions(user: string): StoredSubscription[] {
 
 function writeSubscriptions(user: string, subs: StoredSubscription[]): void {
   const file = subsFile(user);
-  mkdirSync(dirname(file), { recursive: true });
-  const tmp = join(dirname(file), `.push-subscriptions-tmp-${randomUUID()}`);
-  writeFileSync(tmp, JSON.stringify(subs, null, 2), 'utf-8');
-  renameSync(tmp, file);
+  writePrivateFile(file, JSON.stringify(subs, null, 2));
 }
 
 /** Shape check for a browser PushSubscription — an error message or null. */

@@ -5,6 +5,7 @@ import { url } from '../base-path';
 import { API } from '../api-paths';
 import { validateCron, describeCron } from '../../shared/cron';
 import type { ScheduledTask, TaskRunRecord, TaskRunLog } from '../types';
+import { canRunTaskScripts } from '../../shared/tasks';
 
 interface TaskModelOption {
   provider: string;
@@ -14,6 +15,7 @@ interface TaskModelOption {
 
 interface ScheduledTasksCardProps {
   sseConnected: boolean;
+  userRole: string | null;
 }
 
 interface TaskFormState {
@@ -60,7 +62,8 @@ function formatDuration(rec: TaskRunRecord): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConnected }) => {
+export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConnected, userRole = 'admin' }) => {
+  const canUseScripts = canRunTaskScripts(userRole);
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [runs, setRuns] = useState<TaskRunRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -170,8 +173,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
           schedule: form.schedule,
           prompt: form.prompt,
           model: form.model || undefined,
-          seedScript: form.seedScript,
-          resultScript: form.resultScript,
+          ...(canUseScripts ? { seedScript: form.seedScript, resultScript: form.resultScript } : {}),
           enabled: form.enabled,
           saveSession: form.saveSession,
           workdirs,
@@ -192,7 +194,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
     } finally {
       setSaving(false);
     }
-  }, [form, refresh]);
+  }, [form, refresh, canUseScripts]);
 
   const handleDelete = useCallback(async (task: ScheduledTask) => {
     if (!confirm(`Delete scheduled task "${task.name}"? Its run logs are removed too.`)) return;
@@ -333,26 +335,28 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
               ))}
             </select>
           </div>
-          <div className="settings-field">
-            <label className="settings-label">Seed script (optional)</label>
-            <textarea
-              className="settings-input scheduled-input-seed"
-              rows={3}
-              value={form.seedScript}
-              placeholder={'Shell script — stdout is appended to the prompt\ne.g. cat ~/notes/today.md'}
-              onChange={(e) => setForm({ ...form, seedScript: e.target.value })}
-            />
-          </div>
-          <div className="settings-field">
-            <label className="settings-label">Result script (optional)</label>
-            <textarea
-              className="settings-input scheduled-input-result"
-              rows={3}
-              value={form.resultScript}
-              placeholder={'Shell script — receives the agent result on stdin\ne.g. tee ~/reports/last-result.txt'}
-              onChange={(e) => setForm({ ...form, resultScript: e.target.value })}
-            />
-          </div>
+          {canUseScripts && <>
+            <div className="settings-field">
+              <label className="settings-label">Seed script (optional)</label>
+              <textarea
+                className="settings-input scheduled-input-seed"
+                rows={3}
+                value={form.seedScript}
+                placeholder={'Shell script — stdout is appended to the prompt\ne.g. cat ~/notes/today.md'}
+                onChange={(e) => setForm({ ...form, seedScript: e.target.value })}
+              />
+            </div>
+            <div className="settings-field">
+              <label className="settings-label">Result script (optional)</label>
+              <textarea
+                className="settings-input scheduled-input-result"
+                rows={3}
+                value={form.resultScript}
+                placeholder={'Shell script — receives the agent result on stdin\ne.g. tee ~/reports/last-result.txt'}
+                onChange={(e) => setForm({ ...form, resultScript: e.target.value })}
+              />
+            </div>
+          </>}
           <div className="settings-field">
             <div className="settings-field-header">
               <label className="settings-label">Enabled</label>
@@ -525,8 +529,8 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
             const expanded = expandedTaskId === task.id;
             const details = [
               task.model && `Model: ${task.model}`,
-              task.seedScript && `Seed script: ${task.seedScript.slice(0, 80)}`,
-              task.resultScript && `Result script: ${task.resultScript.slice(0, 80)}`,
+              canUseScripts && task.seedScript && `Seed script: ${task.seedScript.slice(0, 80)}`,
+              canUseScripts && task.resultScript && `Result script: ${task.resultScript.slice(0, 80)}`,
               task.saveSession && 'Saves task sessions',
               task.saveLastSession && 'Keeps only the last run session',
               task.reuseSession && (task.clearSession ? 'Reuses one session (cleared each run)' : 'Reuses one session'),
@@ -639,7 +643,13 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
                   <pre className="sched-log-pre">{viewLog.agentResult}</pre>
                 </div>
               )}
-              {viewLog.resultScriptOutput !== undefined && (
+              {canUseScripts && viewLog.seedOutput !== undefined && (
+                <div className="sched-log-section">
+                  <div className="sched-log-label">Seed output</div>
+                  <pre className="sched-log-pre">{viewLog.seedOutput}</pre>
+                </div>
+              )}
+              {canUseScripts && viewLog.resultScriptOutput !== undefined && (
                 <div className="sched-log-section">
                   <div className="sched-log-label">Result script output</div>
                   <pre className="sched-log-pre">{viewLog.resultScriptOutput}</pre>

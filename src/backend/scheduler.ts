@@ -19,7 +19,7 @@
  * replayed).
  */
 
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { randomUUID } from 'crypto';
@@ -34,6 +34,8 @@ import { log } from './logger.js';
 import { autoSessionName } from './utils.js';
 import { getUserSetting } from './user-settings.js';
 import { sendNotification } from './notifications.js';
+import { getUserRole } from './users.js';
+import { canRunTaskScripts } from '../shared/tasks.js';
 
 import type {
   ScheduledTask,
@@ -201,38 +203,38 @@ interface ScriptResult {
   failed: boolean;
 }
 
-/** Run a shell script via /bin/bash. stdinData (when not null) is written to the script's stdin. */
+/** Run a shell script via /bin/bash with bounded output and process-group cleanup. */
 function runShellScript(script: string, stdinData: string | null, timeoutMs: number): Promise<ScriptResult> {
   return new Promise((resolve) => {
-    if (stdinData === null) {
-      execFile('/bin/bash', ['-c', script], {
-        encoding: 'utf-8',
-        timeout: timeoutMs,
-        maxBuffer: 10 * 1024 * 1024,
-      }, (err, stdout, stderr) => {
-        resolve({
-          code: err && typeof (err as any).code === 'number' ? (err as any).code : err ? 1 : 0,
-          stdout: stdout || '',
-          stderr: stderr || '',
-          failed: !!err,
-        });
-      });
-      return;
-    }
-    const child = spawn('/bin/bash', ['-c', script], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('/bin/bash', ['-c', script], { stdio: ['pipe', 'pipe', 'pipe'], detached: true });
     let stdout = '', stderr = '';
     let settled = false;
+    let overflow = false;
+    const append = (current: string, chunk: Buffer): string => {
+      const remaining = 10 * 1024 * 1024 - Buffer.byteLength(current);
+      if (chunk.length > remaining) overflow = true;
+      return current + chunk.subarray(0, Math.max(0, remaining)).toString();
+    };
     const done = (r: ScriptResult) => { if (!settled) { settled = true; clearTimeout(timer); resolve(r); } };
+    const killGroup = (signal: NodeJS.Signals) => {
+      try { if (child.pid) process.kill(-child.pid, signal); else child.kill(signal); } catch {}
+    };
     const timer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch {}
+      killGroup('SIGKILL');
       done({ code: 124, stdout, stderr: stderr || 'Script timed out', failed: true });
     }, timeoutMs);
-    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.stdout?.on('data', (d: Buffer) => {
+      stdout = append(stdout, d);
+      if (overflow) { killGroup('SIGKILL'); done({ code: 1, stdout, stderr: 'Script output exceeded 10 MB', failed: true }); }
+    });
+    child.stderr?.on('data', (d: Buffer) => {
+      stderr = append(stderr, d);
+      if (overflow) { killGroup('SIGKILL'); done({ code: 1, stdout, stderr: 'Script output exceeded 10 MB', failed: true }); }
+    });
     child.on('error', (e: Error) => done({ code: 1, stdout, stderr: stderr + String(e), failed: true }));
-    child.on('close', (code: number | null) => done({ code: code ?? 1, stdout, stderr, failed: code !== 0 }));
+    child.on('close', (code: number | null) => done({ code: code ?? 1, stdout, stderr, failed: code !== 0 || overflow }));
     child.stdin?.on('error', () => {});
-    child.stdin?.end(stdinData);
+    child.stdin?.end(stdinData ?? undefined);
   });
 }
 
@@ -504,9 +506,15 @@ export class Scheduler {
           log.scheduler.error(`Task-start notification for "${task.name}" failed:`, err);
         }
 
+        // Scripts are legacy task fields; never execute them for non-admin owners.
+        const runScripts = canRunTaskScripts(getUserRole(user));
+        if (!runScripts && (task.seedScript || task.resultScript)) {
+          addLog('Task scripts skipped: admin role required');
+        }
+
         // 2. Seed data into the prompt (optional script)
         let prompt = task.prompt;
-        if (task.seedScript?.trim()) {
+        if (runScripts && task.seedScript?.trim()) {
           addLog('Running seed script');
           const seeded = await runShellScript(task.seedScript, null, 60_000);
           record.seedOutput = seeded.stdout;
@@ -539,7 +547,7 @@ export class Scheduler {
         addLog(`Agent finished (${agentResult.length} chars)`);
 
         // 4. Run the result script against the agent output (optional)
-        if (task.resultScript?.trim()) {
+        if (runScripts && task.resultScript?.trim()) {
           addLog('Running result script');
           const res = await runShellScript(task.resultScript, agentResult, 120_000);
           record.resultScriptOutput = res.stdout;

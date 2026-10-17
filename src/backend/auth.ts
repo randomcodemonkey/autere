@@ -12,12 +12,13 @@
  */
 
 import { IncomingMessage, ServerResponse } from 'http';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'fs';
-import { join, dirname } from 'path';
-import { randomUUID } from 'crypto';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { randomBytes, randomUUID } from 'crypto';
 import { AUTH_TOKENS_FILE, AUTH_TOKEN_EXPIRY_MS } from './constants.js';
 import { log } from './logger.js';
 import { getPiEnvDir } from './pi-env.js';
+import { writePrivateFile } from './private-file.js';
 import { parseCookies } from '../shared/format.js';
 import {
   initUserRegistry,
@@ -56,13 +57,7 @@ let tokensLoaded = false;
 // ── Token management ──
 
 export function generateToken(): string {
-  const bytes = new Uint8Array(32);
-  if (typeof globalThis.crypto !== 'undefined') {
-    globalThis.crypto.getRandomValues(bytes);
-  } else {
-    for (let i = 0; i < 32; i++) bytes[i] = Math.floor(Math.random() * 256);
-  }
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return randomBytes(32).toString('hex');
 }
 
 export function loadAuthTokens() {
@@ -124,9 +119,7 @@ export function writeAgentAccess(user: string): void {
     const baseUrl = process.env.AUTERE_BACKEND_URL
       || `http://127.0.0.1:${parseInt(process.env.AUTERE_PORT || '', 10) || 3456}`;
     const payload = { baseUrl, user, token: ensureAgentToken(user) };
-    const tmp = join(dirname(file), `.autere-agent-tmp-${randomUUID()}`);
-    writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf-8');
-    renameSync(tmp, file);
+    writePrivateFile(file, JSON.stringify(payload, null, 2));
   } catch (err) {
     log.auth.error('Failed to write agent access file:', err);
   }
@@ -134,14 +127,10 @@ export function writeAgentAccess(user: string): void {
 
 export function saveAuthTokens() {
   try {
-    const dir = dirname(AUTH_TOKENS_FILE);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const data = Object.fromEntries(
       [...authTokens.entries()].map(([token, entry]) => [token, { expiry: entry.expiry, user: entry.user, name: entry.name, id: entry.id, createdAt: entry.createdAt }])
     );
-    const tmp = join(dir, `.auth-tmp-${randomUUID()}`);
-    writeFileSync(tmp, JSON.stringify(data), 'utf-8');
-    renameSync(tmp, AUTH_TOKENS_FILE);
+    writePrivateFile(AUTH_TOKENS_FILE, JSON.stringify(data));
   } catch (err) {
     log.auth.error('Failed to save auth tokens:', err);
   }
@@ -214,7 +203,7 @@ export function hasRole(user: string, role: Role): boolean {
 }
 
 /** Verify a login attempt against the user registry */
-export function verifyCredentials(user: string, password: string): boolean {
+export function verifyCredentials(user: string, password: string): Promise<boolean> {
   return verifyUser(user, password);
 }
 
@@ -353,11 +342,7 @@ export function setLastSession(user: string, token: string, sessionFile: string)
       data = JSON.parse(readFileSync(file, 'utf-8'));
     }
     data[token] = sessionFile;
-    const dir = dirname(file);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const tmp = join(dir, `.last-session-tmp-${randomUUID()}`);
-    writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
-    renameSync(tmp, file);
+    writePrivateFile(file, JSON.stringify(data, null, 2));
   } catch (err) {
     log.auth.error('Failed to save last session:', err);
   }

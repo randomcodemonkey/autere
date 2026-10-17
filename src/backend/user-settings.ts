@@ -13,10 +13,11 @@
  * 6. Default value
  */
 
-import { getUserRole } from './users.js';
+import { getUserRole, getUserAllowedDirs } from './users.js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, readdirSync, symlinkSync, rmSync, lstatSync, realpathSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
+import { homedir } from 'os';
 import { randomUUID } from 'crypto';
 import { USER_SETTINGS_DIR, PI_DIR } from './constants.js';
 import { getPiEnvDir, ensurePiEnv, materializeEnvExtensions } from './pi-env.js';
@@ -24,6 +25,7 @@ import { replaceMcpServers } from './mcp-config.js';
 import { isPiImagesInstalled } from './image-models.js';
 import { matchModelMap } from '../shared/format.js';
 import { log } from './logger.js';
+import { writePrivateFile } from './private-file.js';
 
 interface UserSettings {
   [key: string]: any;
@@ -91,11 +93,7 @@ function readUserSettingsFile(user: string): UserSettings {
 
 function writeUserSettingsFile(user: string, settings: UserSettings): void {
   const filePath = getUserSettingsPath(user);
-  const dir = dirname(filePath);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const tmp = join(dir, `.settings-tmp-${randomUUID()}`);
-  writeFileSync(tmp, JSON.stringify(settings, null, 2), 'utf-8');
-  renameSync(tmp, filePath);
+  writePrivateFile(filePath, JSON.stringify(settings, null, 2));
   invalidateCache(filePath);
 }
 
@@ -433,9 +431,15 @@ export function getGitRepos(user: string): string[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
   const out: string[] = [];
+  const allowed = getUserAllowedDirs(user);
+  const roots = (allowed.length ? allowed.map((r) => r.path) : [homedir()]).map((path) => resolve(path));
   for (const p of raw) {
     const path = typeof p === 'string' ? p.trim().replace(/\/+$/, '') : '';
-    if (path && !seen.has(path)) { seen.add(path); out.push(path); }
+    if (!path || seen.has(path)) continue;
+    const abs = resolve(path.startsWith('/') ? path : join(homedir(), path));
+    if (!roots.some((root) => abs === root || abs.startsWith(root.endsWith('/') ? root : root + '/'))) continue;
+    seen.add(path);
+    out.push(path);
   }
   return out;
 }

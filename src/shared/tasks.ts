@@ -58,6 +58,10 @@ export interface ScheduledTask {
 /** Validate a task create/update payload. Pure and shared so the frontend
  *  tests exercise the real rules. Path-level workdirs validation (allowed
  *  roots, existence) lives in the backend routes — this is shape + policy. */
+export function canRunTaskScripts(role: string | null | undefined): boolean {
+  return role === 'admin';
+}
+
 export function validateTaskInput(input: any): string | null {
   if (!input || typeof input !== 'object') return 'Task must be an object';
   if (typeof input.name !== 'string' || !input.name.trim()) return 'name is required';
@@ -72,6 +76,7 @@ export function validateTaskInput(input: any): string | null {
     if (input[key] !== undefined && input[key] !== null && input[key] !== '' && typeof input[key] !== 'string') {
       return `${key} must be a string`;
     }
+    if (typeof input[key] === 'string' && input[key].length > 32_768) return `${key} must be at most 32768 characters`;
   }
   if (typeof input.enabled !== 'undefined' && typeof input.enabled !== 'boolean') {
     return 'enabled must be a boolean';

@@ -41,6 +41,28 @@ import { appendSessionInfo } from './sessions.js';
 // pi --version, resolved once per backend process (cached — the binary does
 // not change mid-process). Empty string on failure so the UI shows '—'.
 let piVersionCache: string | null = null;
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const LOGIN_WINDOW_MS = 60_000;
+const LOGIN_MAX_ATTEMPTS = 10;
+const LOGIN_MAX_TRACKED_ADDRESSES = 10_000;
+
+function loginRateLimited(key: string): boolean {
+  const now = Date.now();
+  for (const [address, attempt] of loginAttempts) if (attempt.resetAt <= now) loginAttempts.delete(address);
+  const attempt = loginAttempts.get(key);
+  return !!attempt && attempt.resetAt > now && attempt.count >= LOGIN_MAX_ATTEMPTS;
+}
+
+function recordLoginAttempt(key: string, success: boolean): void {
+  if (success) { loginAttempts.delete(key); return; }
+  const now = Date.now();
+  const current = loginAttempts.get(key);
+  loginAttempts.set(key, current && current.resetAt > now
+    ? { count: current.count + 1, resetAt: current.resetAt }
+    : { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+  if (loginAttempts.size > LOGIN_MAX_TRACKED_ADDRESSES) loginAttempts.delete(loginAttempts.keys().next().value!);
+}
+
 function piVersion(): string {
   if (piVersionCache === null) {
     try {
@@ -57,7 +79,7 @@ import { getMcpServers, setMcpServer, deleteMcpServer } from './mcp-config.js';
 import { extensionsState } from './state.js';
 import { enabledExtensionsFor } from './extensions.js';
 import { pathIsIgnored } from '../shared/edit-ignore.js';
-import { userFileRoots, browseList, browseRead, browseWrite, browseDelete, type BrowseResult } from './files.js';
+import { userFileRoots, resolveInRoots, browseList, browseRead, browseWrite, browseDelete, type BrowseResult } from './files.js';
 import { listRepos, repoDetail, fileLog, initRepo, cloneRepo, fileDiff, gitList } from './git.js';
 import { log } from './logger.js';
 import type { UserSession } from './user-session.js';
@@ -72,6 +94,7 @@ import { vapidPublicKey, saveSubscription, deleteSubscription, validateSubscript
 import { validateNotificationContent } from '../shared/notifications.js';
 import { API, API_PREFIX } from '../shared/api-paths.js';
 import { TASK_REPORT_MARKER } from '../shared/format.js';
+import { canRunTaskScripts } from '../shared/tasks.js';
 import { buildOpenApiSpec, type RouteDoc } from './openapi.js';
 import type { SessionInfo } from './types.js';
 
@@ -433,10 +456,24 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     role: 'chat', tag: 'Auth', summary: 'Log in; sets the session cookie and returns a bearer token',
     handler: async (c) => {
       const { user, password } = await readBody(c.req);
+      const ip = c.req.socket.remoteAddress || 'unknown';
+      if (loginRateLimited(ip)) {
+        sendJSON(c.res, { success: false, error: 'Too many login attempts; try again later' }, 429);
+        return;
+      }
       if (!getAuthEnabled()) { sendJSON(c.res, { success: true, message: 'Authentication disabled' }); return; }
       if (!user || typeof user !== 'string') { sendJSON(c.res, { success: false, error: 'User is required' }, 400); return; }
-      if (!isRegisteredUser(user)) { sendJSON(c.res, { success: false, error: 'Invalid user' }, 401); return; }
-      if (!verifyCredentials(user, password)) { sendJSON(c.res, { success: false, error: 'Invalid password' }, 401); return; }
+      if (!isRegisteredUser(user)) {
+        recordLoginAttempt(ip, false);
+        sendJSON(c.res, { success: false, error: 'Invalid user' }, 401);
+        return;
+      }
+      if (!await verifyCredentials(user, password)) {
+        recordLoginAttempt(ip, false);
+        sendJSON(c.res, { success: false, error: 'Invalid password' }, 401);
+        return;
+      }
+      recordLoginAttempt(ip, true);
       const token = generateToken();
       addAuthToken(token, user);
       saveAuthTokens();
@@ -516,7 +553,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     role: 'chat', tag: 'Auth', summary: 'Change the caller password',
     handler: async (c) => {
       const { oldPassword, newPassword } = await readBody(c.req);
-      const err = changeOwnPassword(c.user, String(oldPassword ?? ''), String(newPassword ?? ''));
+      const err = await changeOwnPassword(c.user, String(oldPassword ?? ''), String(newPassword ?? ''));
       if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
       sendJSON(c.res, { success: true });
     },
@@ -574,7 +611,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     role: 'admin', tag: 'Users', summary: 'Update a user (role, password reset, allowed directories)',
     handler: async (c, m) => {
       const patch = await readBody(c.req);
-      const err = updateUser(c.user, decodeURIComponent(m![1]), patch);
+      const err = await updateUser(c.user, decodeURIComponent(m![1]), patch);
       if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
       sendJSON(c.res, { success: true });
     },
@@ -2060,7 +2097,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
     handler: async (c) => {
       try {
         const settings = await readBody(c.req);
-        if (!settings || typeof settings !== 'object') {
+        if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
           sendJSON(c.res, { success: false, error: 'Settings must be an object' }, 400);
           return;
         }
@@ -2086,6 +2123,22 @@ ${text.trim()}`).catch((err) => settle(err as Error));
             const err = await validateSandboxImage(image);
             if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
           }
+        }
+        const repos = settings.gitRepos;
+        if (repos !== undefined && !Array.isArray(repos)) {
+          sendJSON(c.res, { success: false, error: 'gitRepos must be an array' }, 400);
+          return;
+        }
+        const repoValues = Array.isArray(repos) ? repos : [];
+        const invalidRepos = repoValues.some((value: unknown) => {
+          if (typeof value !== 'string') return true;
+          if (!value.trim()) return false;
+          const path = value.startsWith('/') ? value : join(homedir(), value);
+          return 'error' in resolveInRoots(c.user, path);
+        });
+        if (invalidRepos) {
+          sendJSON(c.res, { success: false, error: 'Every repository must be inside your file roots' }, 400);
+          return;
         }
         saveUserSettings(c.user, settings);
         // Reserve-% and janitor sweep policy are applied live by their pi
@@ -2175,7 +2228,13 @@ ${text.trim()}`).catch((err) => settle(err as Error));
     method: 'GET', path: API.scheduler.tasks, template: `${API_PREFIX}/scheduler/tasks`,
     role: 'chat', tag: 'Scheduler', summary: 'List tasks and the 50 most recent runs',
     handler: async (c) => {
-      sendJSON(c.res, { success: true, data: { tasks: listTasks(c.user), runs: listRuns(c.user, undefined, 50) } });
+      const admin = canRunTaskScripts(getUserRole(c.user));
+      const tasks = listTasks(c.user).map((task) => {
+        if (admin) return task;
+        const { seedScript: _seedScript, resultScript: _resultScript, ...safeTask } = task;
+        return safeTask;
+      });
+      sendJSON(c.res, { success: true, data: { tasks, runs: listRuns(c.user, undefined, 50) } });
     },
   });
 
@@ -2187,6 +2246,10 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         const input = await readBody(c.req);
         const err = validateTaskInput(input);
         if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
+        if (!canRunTaskScripts(getUserRole(c.user)) && (input.seedScript || input.resultScript)) {
+          sendJSON(c.res, { success: false, error: 'Task scripts require admin role' }, 403);
+          return;
+        }
         const now = Date.now();
         // Inherit the creating session's environment: when the caller (the
         // agent's schedule_task tool) passes its own session id, resolve
@@ -2229,8 +2292,8 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           schedule: input.schedule.trim(),
           prompt: input.prompt,
           model: typeof input.model === 'string' && input.model.trim() ? input.model.trim() : undefined,
-          seedScript: typeof input.seedScript === 'string' && input.seedScript.trim() ? input.seedScript : undefined,
-          resultScript: typeof input.resultScript === 'string' && input.resultScript.trim() ? input.resultScript : undefined,
+          seedScript: canRunTaskScripts(getUserRole(c.user)) && typeof input.seedScript === 'string' && input.seedScript.trim() ? input.seedScript : undefined,
+          resultScript: canRunTaskScripts(getUserRole(c.user)) && typeof input.resultScript === 'string' && input.resultScript.trim() ? input.resultScript : undefined,
           enabled: input.enabled !== false,
           saveSession: input.saveSession === true,
           once: input.once === true,
@@ -2243,7 +2306,12 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           updatedAt: now,
         };
         saveTask(c.user, task);
-        sendJSON(c.res, { success: true, data: task }, 201);
+        if (canRunTaskScripts(getUserRole(c.user))) {
+          sendJSON(c.res, { success: true, data: task }, 201);
+        } else {
+          const { seedScript: _seedScript, resultScript: _resultScript, ...safeTask } = task;
+          sendJSON(c.res, { success: true, data: safeTask }, 201);
+        }
       } catch (err: any) {
         sendJSON(c.res, { success: false, error: `Failed to create task: ${err.statusCode ? err.message : err}` }, err.statusCode || 500);
       }
@@ -2260,14 +2328,22 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         const input = await readBody(c.req);
         const err = validateTaskInput(input);
         if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
+        if (!canRunTaskScripts(getUserRole(c.user)) && (input.seedScript || input.resultScript)) {
+          sendJSON(c.res, { success: false, error: 'Task scripts require admin role' }, 403);
+          return;
+        }
         const updated: ScheduledTask = {
           ...existing,
           name: input.name.trim(),
           schedule: input.schedule.trim(),
           prompt: input.prompt,
           model: typeof input.model === 'string' && input.model.trim() ? input.model.trim() : undefined,
-          seedScript: typeof input.seedScript === 'string' && input.seedScript.trim() ? input.seedScript : undefined,
-          resultScript: typeof input.resultScript === 'string' && input.resultScript.trim() ? input.resultScript : undefined,
+          seedScript: canRunTaskScripts(getUserRole(c.user))
+            ? (typeof input.seedScript === 'string' && input.seedScript.trim() ? input.seedScript : undefined)
+            : existing.seedScript,
+          resultScript: canRunTaskScripts(getUserRole(c.user))
+            ? (typeof input.resultScript === 'string' && input.resultScript.trim() ? input.resultScript : undefined)
+            : existing.resultScript,
           enabled: input.enabled !== false,
           // Omitted in the body = keep the stored setting (partial update
           // from callers such as the agent's set_task_enabled round-trip).
@@ -2294,7 +2370,12 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           }
         }
         saveTask(c.user, updated);
-        sendJSON(c.res, { success: true, data: updated });
+        if (canRunTaskScripts(getUserRole(c.user))) {
+          sendJSON(c.res, { success: true, data: updated });
+        } else {
+          const { seedScript: _seedScript, resultScript: _resultScript, ...safeTask } = updated;
+          sendJSON(c.res, { success: true, data: safeTask });
+        }
       } catch (err: any) {
         sendJSON(c.res, { success: false, error: `Failed to update task: ${err.statusCode ? err.message : err}` }, err.statusCode || 500);
       }
@@ -2473,6 +2554,9 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       // CORS for API clients (scripts, TUI on another origin)
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('Referrer-Policy', 'same-origin');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Autere-Client-Id');
       if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 

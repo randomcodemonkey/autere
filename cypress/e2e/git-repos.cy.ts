@@ -93,6 +93,21 @@ describe('Git repositories feature', () => {
     });
   };
 
+  it('rejects configured repositories outside allowed roots', () => {
+    cy.task<string>('makeScratchDir').then((root: string) => {
+      const outside = `${root}-outside`;
+      cy.request('PUT', '/api/v1/users/admin', { allowedDirs: [{ path: root, access: 'rw' }] });
+      cy.request({
+        method: 'PUT',
+        url: '/api/v1/settings',
+        body: { gitRepos: [outside] },
+        failOnStatusCode: false,
+      }).its('status').should('eq', 400);
+      cy.request('PUT', '/api/v1/users/admin', { allowedDirs: [] });
+      cy.task('cleanScratchDir');
+    });
+  });
+
   it('shows configured repos, and the root click opens folder + repo detail', { retries: 3 }, () => {
     setup();
     gotoEdits();

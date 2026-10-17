@@ -67,6 +67,23 @@ describe('Edits feature', () => {
     cy.get('.files-row.files-root', { timeout: 30000 }).should('contain', '/');
   });
 
+  it('rejects writes through a symlink that escapes the allowed root', () => {
+    cy.task<string>('makeScratchDir').then((root: string) => {
+      const outside = `${root}-outside`;
+      const outsideFile = `${outside}/nested.txt`;
+      cy.exec(`mkdir -p ${outside} && ln -s ${outside} ${root}/escape`);
+      cy.request('PUT', '/api/v1/users/admin', { allowedDirs: [{ path: root, access: 'rw' }] });
+      cy.request({
+        method: 'PUT',
+        url: '/api/v1/browse/file',
+        body: { path: `${root}/escape/nested.txt`, content: 'nope' },
+        failOnStatusCode: false,
+      }).its('status').should('eq', 403);
+      cy.task<boolean>('fileExists', outsideFile).should('eq', false);
+      cy.exec(`rm -rf ${outside}`);
+    });
+  });
+
   it('creates, saves and deletes a file under a configured rw root', () => {
     cy.task<string>('makeScratchDir').then((scratch: string) => {
       cy.writeFile(`${scratch}/save-me.txt`, 'one\n');
