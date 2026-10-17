@@ -66,10 +66,20 @@ poll "9router listening on $ROUTER_URL" 120 \
   docker exec "$CONTAINER" curl -s -o /dev/null -w '%{http_code}' "$ROUTER_URL/" >/dev/null
 
 # 3. create a session (verifies auth/session machinery)
-NEW=$(docker exec "$CONTAINER" curl -sf -X POST "$BACKEND_URL/api/v1/sessions" "${auth[@]}" \
-  -H 'content-type: application/json' -d '{"sessionName":"smoke-test"}') || die "POST /sessions failed"
-SESSION_ID=$(echo "$NEW" | jq -r '.sessionState.sessionId // empty')
-[ -n "$SESSION_ID" ] || { log "$NEW"; die "no sessionId in POST /sessions response"; }
+if ! NEW=$(docker exec "$CONTAINER" curl -sS -w '\n%{http_code}' -X POST "$BACKEND_URL/api/v1/sessions" "${auth[@]}" \
+  -H 'content-type: application/json' -d '{"sessionName":"smoke-test"}'); then
+  die "POST /sessions could not reach the backend"
+fi
+NEW_STATUS=${NEW##*$'\n'}
+NEW_BODY=${NEW%$'\n'*}
+if [ "$NEW_STATUS" != 201 ]; then
+  log "POST /sessions returned HTTP $NEW_STATUS: $NEW_BODY"
+  log "backend error log:"
+  docker exec "$CONTAINER" tail -n 80 /home/autere/log/autere.err.log || true
+  die "POST /sessions failed"
+fi
+SESSION_ID=$(echo "$NEW_BODY" | jq -r '.sessionState.sessionId // empty')
+[ -n "$SESSION_ID" ] || { log "$NEW_BODY"; die "no sessionId in POST /sessions response"; }
 log "created session $SESSION_ID"
 
 # 4. pi must be installed and runnable in the image
