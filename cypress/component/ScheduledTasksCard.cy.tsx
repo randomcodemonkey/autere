@@ -399,7 +399,8 @@ describe('ScheduledTasksCard', () => {
       const getPosted = captureSchedulerPost();
       cy.mount(<ScheduledTasksCard sseConnected={true} />);
       cy.get('.scheduled-new-btn').click();
-      cy.get('.scheduled-input-workdirs').type('/home/autere/code\n/home/autere/tmp');
+      cy.get('.sortable-list-add .sortable-list-input').first().type('/home/autere/code{enter}');
+      cy.get('.sortable-list-add .sortable-list-input').first().type('/home/autere/tmp{enter}');
       cy.get('.scheduled-input-clear').should('not.exist');
       cy.get('.scheduled-input-reuse').check();
       cy.get('.scheduled-input-clear').should('exist').check();
@@ -436,7 +437,7 @@ describe('ScheduledTasksCard', () => {
       }], runs: [] };
       cy.mount(<ScheduledTasksCard sseConnected={true} />);
       cy.get('.scheduled-edit-btn').click();
-      cy.get('.scheduled-input-workdirs').should('have.value', '/home/autere/code');
+      cy.get('.sortable-list-item .sortable-list-input').first().should('have.value', '/home/autere/code');
       cy.get('.scheduled-input-reuse').should('be.checked');
       cy.get('.scheduled-input-clear').should('be.checked');
     });

@@ -1,6 +1,7 @@
 import React, { Fragment, useState, useEffect, useCallback, useRef } from 'react';
 import { DataTable } from './DataTable';
 import { Modal } from './Modal';
+import { SortableList } from './SortableList';
 import { url } from '../base-path';
 import { API } from '../api-paths';
 import { validateCron, describeCron } from '../../shared/cron';
@@ -28,7 +29,7 @@ interface TaskFormState {
   enabled: boolean;
   model: string; // '' = user's pi default
   saveSession: boolean;
-  workdirs: string; // one path per line; '' = inherit / none
+  workdirs: string[]; // first is the cwd; [] = inherit / none
   reuseSession: boolean;
   clearSession: boolean;
   saveLastSession: boolean;
@@ -44,7 +45,7 @@ const EMPTY_FORM: TaskFormState = {
   enabled: true,
   model: '',
   saveSession: false,
-  workdirs: '',
+  workdirs: [],
   reuseSession: false,
   clearSession: false,
   saveLastSession: false,
@@ -135,7 +136,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
       enabled: task.enabled,
       model: task.model || '',
       saveSession: task.saveSession === true,
-      workdirs: (task.workdirs || []).join('\n'),
+      workdirs: task.workdirs || [],
       reuseSession: task.reuseSession === true,
       clearSession: task.clearSession === true,
       saveLastSession: task.saveLastSession === true,
@@ -160,7 +161,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
     }
     setSaving(true);
     setError(null);
-    const workdirs = form.workdirs.split('\n').map((w) => w.trim()).filter(Boolean);
+    const workdirs = form.workdirs.filter(Boolean);
     try {
       const endpoint = form.id
         ? url(API.scheduler.task(form.id))
@@ -372,16 +373,16 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
           </div>
           <div className="settings-field">
             <label className="settings-label">Workdirs (optional)</label>
-            <textarea
-              className="settings-input scheduled-input-workdirs"
-              rows={2}
-              value={form.workdirs}
-              placeholder={'One absolute path per line - the first is the cwd\n~/code/my-project'}
-              onChange={(e) => setForm({ ...form, workdirs: e.target.value })}
+            <SortableList
+              items={form.workdirs}
+              onChange={(items) => setForm({ ...form, workdirs: items })}
+              placeholder="/home/autere/code/… (or relative to $HOME)"
+              addLabel="Add workdir"
             />
             <div className="settings-description">
               When set, runs are sandboxed (even if sandboxing is off) with these
-              directories mounted. Empty: runs inherit the creating session's environment.
+              directories mounted. The first path is used as the working directory.
+              Empty: runs inherit the creating session's environment.
             </div>
           </div>
           <div className="settings-field">
@@ -497,7 +498,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
           <option value="name">Sort: name</option>
           <option value="created">Sort: created</option>
         </select>
-        <button className="btn scheduled-cleanup-btn" title="Delete all one-off tasks older than 1 day" onClick={handleCleanupOneOffs}>
+        <button className="btn btn-w-auto scheduled-cleanup-btn" title="Delete all one-off tasks older than 1 day" onClick={handleCleanupOneOffs}>
           Delete old one-offs
         </button>
       </div>

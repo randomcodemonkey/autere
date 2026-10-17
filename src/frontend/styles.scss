@@ -876,6 +876,12 @@ body {
   .badge { margin-left: auto; }
 }
 
+// Keep all card headers the same height whether they contain buttons or
+// only a title — titles without buttons otherwise render visibly shorter.
+.chat-wrapper * .card-header .card-title {
+  line-height: 2.4rem;
+}
+
 .card-header {
   display: flex;
   align-items: center;
@@ -889,6 +895,11 @@ body {
 
   .card-title {
     margin-bottom: 0;
+  }
+
+  .btn {
+    width: auto; // native size, pinned to the end of the header row
+    flex: none;
   }
 }
 
@@ -3210,7 +3221,7 @@ body {
   }
 }
 
-.sessions-page .modal-body {
+.sessions-page .sessions-body {
   flex: 1;
   min-height: 0;
 }
@@ -3471,9 +3482,10 @@ body {
   margin-top: 0.35rem;
 }
 
-// Tables inside cards keep off the card borders
+// Tables inside cards: only vertical rhythm — horizontal spacing comes
+// from the card's own padding (content must stay flush with the header).
 .card .table-responsive {
-  margin: 0.5rem 0.625rem;
+  margin: 0.5rem 0;
   width: auto;
 }
 
@@ -3655,20 +3667,6 @@ body {
   }
 }
 
-.settings-card {
-  padding: 0;
-
-  .card-header {
-    padding: 0.5rem 0.625rem;
-  }
-
-  .settings-error,
-  .settings-saved,
-  .settings-loading,
-  .settings-empty {
-    margin: 0 0.625rem;
-  }
-}
 // -- Settings: side menu layout ---------------------------------------------
 // Desktop: category list as a sidebar next to the active section's fields.
 // Mobile: the list collapses to a dropdown select above the content.
@@ -3676,7 +3674,9 @@ body {
   display: flex;
   flex: 1;
   gap: 0.75rem;
-  padding: 0 0.625rem 0.625rem;
+  // Flush with the card: .card already provides the padding — the layout
+  // must not add its own on top of it.
+  padding: 0;
   min-height: 0;
   align-items: flex-start;
 }
@@ -3977,6 +3977,11 @@ body {
     opacity: 0.5;
     cursor: not-allowed;
   }
+}
+
+// Width utility: opt out of .btn's width: 100% (e.g. inline toolbar buttons)
+.btn-w-auto {
+  width: auto;
 }
 
 // Button group: vertical stack with automatic spacing between siblings
@@ -4323,33 +4328,24 @@ body {
 
 .chat-wrapper .scheduled-card {
   overflow-y: auto;
-  padding: 0;
 
-  .card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.5rem 0.625rem;
-    margin-bottom: 0;
-
-    .btn {
-      width: auto; // native size, pinned to the end of the header row
-      flex: none;
-    }
+  .card-header .btn {
+    width: auto; // native size, pinned to the end of the header row
+    flex: none;
   }
 }
 
 .scheduled-error {
   color: var(--c-danger-strong);
   font-size: 0.8rem;
-  margin: 0.5rem 0.625rem;
+  margin: 0.5rem 0;
 }
 
 // Search + sort row above the task table
 .scheduled-toolbar {
   display: flex;
   gap: 0.5rem;
-  padding: 0.5rem 0.625rem;
+  padding: 0.5rem 0;
 }
 
 .scheduled-search {
@@ -4377,14 +4373,14 @@ body {
 .scheduled-empty {
   color: var(--c-text-dimmer);
   font-size: 0.8rem;
-  padding: 0.625rem;
+  padding: 0.625rem 0;
 }
 
 .scheduled-list {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  padding: 0.625rem;
+  padding: 0.625rem 0;
 }
 
 .scheduled-task {
@@ -4504,7 +4500,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  padding: 0.625rem;
 }
 
 .scheduled-form textarea.settings-input,
@@ -4876,20 +4871,6 @@ textarea.settings-input {
 }
 
 // ── Users management (admin) ──
-
-.users-card {
-  .card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-
-    .btn {
-      width: auto; // native size, pinned to the end of the header row
-      flex: none;
-    }
-  }
-}
 
 .users-row,
 .users-dir-row {

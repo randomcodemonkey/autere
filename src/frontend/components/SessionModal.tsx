@@ -487,7 +487,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
       <div className="card-header">
         <span className="card-title">Sessions</span>
       </div>
-      <div className="modal-body">{listBody}</div>
+      <div className="sessions-body">{listBody}</div>
       {view === 'new' && (
         <Modal open onClose={() => setView('list')} className="modal-session">
           <div className="modal-header">
