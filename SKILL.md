@@ -42,6 +42,34 @@ link for image builds).
 | Backend (`src/backend/`) | `./build-dev.sh`, then the **user restarts the backend themselves** — never restart it yourself (see below) |
 | pi extensions (`extras/`) | `./build-dev.sh` (mirror sync), live on next pi spawn |
 
+## Release builds
+
+`build-dev.sh` is only for the dev environment. For a release image/version
+increment, use `./build.sh` from the repository root; do not use `npm version`
+or manually edit the version files.
+
+Before running it, make sure the worktree and index are clean. `build.sh -r`
+stages and commits the version files, and a pre-staged unrelated change could
+be included in that commit. The Docker build also uses the current worktree.
+
+- Bugfix: `./build.sh -r` (bugfix is the default increment).
+- Minor/major: `./build.sh -r -i minor` or `./build.sh -r -i major`.
+- `-r` increments `version.txt`, synchronizes `package.json` and
+  `package-lock.json` when present, commits those files as `version: X.Y.Z`,
+  then builds the versioned image and `latest` for the selected platform
+  (default: the build host's architecture). The version commit happens before
+  the Docker build, so it remains if the build fails.
+- This is a local build only: `build.sh` does not push the image, create a Git
+  tag, or push commits. Stop after the command and report the version, commit,
+  and build result. Do not run `git tag` or `git push`; the user handles
+  publication separately.
+
+The GitHub release workflow is separate. It starts only when a `v*` Git tag
+is pushed, requires the tag version to match `version.txt`, then builds and
+pushes the multi-arch (`linux/amd64` + `linux/arm64`) image to GHCR and runs
+the smoke-test matrix below. A `version: X.Y.Z` commit without a pushed tag
+does not trigger the current workflow.
+
 ## Release smoke test
 
 `docker/smoke-test.sh <image:tag> <platform>` runs one built image in a
@@ -62,9 +90,11 @@ release workflow runs it as a `smoke-test` matrix job after the image push.
    RPC connection and the task dies. Make changes, tell the user what needs a
    restart, wait for their confirmation.
 2. **NEVER commit without the user explicitly asking.** "Commit" in the user's
-   message is required. Finishing work ≠ permission to commit. And committing
-   permission ≠ pushing permission — always ask before pushing (never push
-   automatically when only a commit was requested).
+   message is required, except that an explicit request to build a release
+   using the procedure above authorizes `build.sh -r`'s version-files commit
+   only. Finishing work ≠ permission to commit. **NEVER create Git tags or push
+   commits/tags/images on your own** — release builds stop after `build.sh`;
+   the user handles publication.
 3. **Batch into logical commits** (feat:/fix:/test: headers with a payload
    body). Avoid tiny sequential "fix the fix" commits.
 3b. **Lint + typecheck BEFORE every commit** (CI lints itself): `npx eslint .`
@@ -109,18 +139,15 @@ src/backend/
                         # clearSession wipes its context but keeps the
                         # id/name), or saveLastSession: true (older run
                         # sessions are deleted when a new run starts; the
-                        # running one is kept until the next). once: true = one-off,
-                        # at most one run ever (auto-disabled after it; both a
-                        # task run inherits the creating session's cwd and
-                        # workdirs (stored on the task at creation from the
-                        # `session` id the agent's schedule_task tool passes;
-                        # backend-resolved, never client paths) or set
-                        # explicitly via the task form / API (workdirs force
-                        # sandboxing even when user/global sandboxing is
-                        # off); DELETE /scheduler/one-off-tasks removes
-                        # one-off tasks older than 24h (Tasks view button)
-                        # scheduled tick and a manual trigger are refused
-                        # afterwards) — CLI `task-run <id> --wait` blocks on
+                        # running one is kept until the next). once: true runs
+                        # at most once and auto-disables after its first run.
+                        # Runs inherit cwd/workdirs from the creating session
+                        # (`session` id passed by schedule_task, resolved by the
+                        # backend) or use task-form/API workdirs (which force
+                        # sandboxing even when user/global sandboxing is off).
+                        # DELETE /scheduler/one-off-tasks removes one-off tasks
+                        # older than 24h; scheduled/manual runs are refused
+                        # after that age. CLI `task-run <id> --wait` blocks on
                         # those and prints the run record. Deliveries a run
                         # makes via pi-autere carry the run's session id
                         # (findRunBySession) and get a `[autere task]` envelope —
@@ -131,8 +158,8 @@ src/backend/
                         # summary prompt → pi-compaction-prompt config)
   notifications.ts      # Web Push: one-time VAPID keys (~/.autere/vapid-keys.json),
                         # per-user push-subscriptions.json, sendNotification(user,
-                        # kind, {title, body, path}) for the three kinds
-                        # (explicit / taskStart / turnEnd); 256-char limit lives in
+                        # kind, {title, body, path}) for four kinds (explicit /
+                        # taskStart / turnEnd / allDone); 256-char limit lives in
                         # shared/notifications.ts (backend + tests)
   extension-handlers.ts # Named extension handlers (9router status, memory, dedup)
   stream-history.ts     # StreamMessage building, extractImages (shared)
@@ -163,7 +190,7 @@ src/frontend/
                           # save/delete gated to control/admin + rw dirs,
                           # backend-enforced. Mobile: stacked panes.
   hooks/useSSE.ts, useAuth.ts, useCardState.ts
-  styles.scss          # Single global stylesheet (~3600 lines)
+  styles.scss          # Single global stylesheet
   types/index.ts       # Shared frontend types incl. SSEEventType
 dist/                  # Built frontend, served by backend
 cypress/
@@ -318,25 +345,26 @@ npm start            # backend only
 
 ## Docker sandbox
 
-`piSandboxImage` user setting (Settings → Sandbox) runs every pi agent
-session inside a docker container (default suggestion: the project's own
-slopbox image). Only the needed volume subpaths are mounted
-(current user's pi-env dir + session cwd, via --mount volume-subpath at
-their original paths — never the whole home volume, which would expose
-other users' pi-envs); /tmp is tmpfs; never mounted: docker.sock.
-The container is forced --user <backend uid>:<gid> with
-no-new-privileges (no root, no sudo/setuid escalation); sandbox image
-defaults to randomcodemonkey.org/slopbox:latest (off via
-PI_SANDBOX_IMAGE=off — set in the e2e backend). \$HOME is a persistent
-per-user volume (autere-home-<user>, created lazily, empty and
-chowned to the sandbox uid) so ~/.cache etc. survive spawns., host network keeps the
-model router on localhost, docker.sock is forwarded when present. Backend
-wiring: rpc-client.buildSandboxCommand + user-session spawn options.
+`piSandboxImage` user setting (Settings → Sandbox) runs each pi agent
+session inside Docker (default suggestion: the project's own slopbox image).
+Only the needed volume subpaths are mounted (current user's pi-env dir and
+session cwd at their original paths — never the whole home volume, which
+would expose other users' pi-envs); `/tmp` is tmpfs. The host
+`/var/run/docker.sock` is NOT mounted by default: an admin may explicitly
+allow it per user, which is root-equivalent host access. When allowed and
+enabled, the socket is forwarded with its host GID. The container is forced
+`--user <backend uid>:<gid>` with `no-new-privileges` (no root or setuid /
+sudo escalation); image defaults to `randomcodemonkey.org/slopbox:latest`
+(off via `PI_SANDBOX_IMAGE=off`, used by the e2e backend). `$HOME` is a
+persistent per-user volume (`autere-home-<user>`, created lazily and owned by
+the sandbox UID) so `~/.cache` etc. survive spawns. Host networking keeps the
+model router reachable on localhost. Backend wiring:
+`rpc-client.buildSandboxCommand` + user-session spawn options.
 
 ## Testing
 
 ```bash
-npm run test:component   # component tests (fast, no server)
+npm run test:component   # component tests (fast, no backend server)
 npm run test:e2e         # builds frontend, starts isolated backend (slow ~4-5min)
 npm run test:all
 # Run ONE e2e group instead of the whole suite (isolated backend, faster):
