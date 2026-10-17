@@ -78,11 +78,15 @@ order: the backend boots and admin login works (INITIAL_PASSWORD), 9router
 listens on :20128 (spawned by the backend, no config), a session can be
 created via the API, `pi` is runnable, and a prompt turn FAILS with pi's
 "No API key found for the selected model" — proving pi spawned and ran, and
-the failure is exactly the unconfigured 9router. The container mounts
+the failure is exactly the unconfigured 9router. The container uses host
+networking (so the nested sandbox's `--network host` can reach 9router), mounts
 docker.sock (group_add of the socket's host gid, sandbox spawns need it),
 anonymous volumes at ~/.autere and ~/.pi (planSandboxMounts requires the
-pi env dir volume-backed) and AUTERE_SANDBOX_IMAGE=<the image itself>. The
-release workflow runs it as a `smoke-test` matrix job after the image push.
+pi env dir volume-backed), and AUTERE_SANDBOX_IMAGE=<the image itself>.
+DOCKER_DEFAULT_PLATFORM pins nested sandboxes to the CI runner's native
+architecture so an emulated arm64 outer container does not start a second
+arm64-emulated pi. The release workflow runs it as a `smoke-test` matrix job
+after the image push.
 
 ## Non-Negotiable Policies
 

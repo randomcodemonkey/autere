@@ -38,11 +38,15 @@ poll() {
 log "starting container from $IMAGE ($PLATFORM)"
 # group_add: the host docker.sock gid, so the backend can talk to the daemon
 DOCKER_GID=$(stat -c %g /var/run/docker.sock)
-docker run -d --name "$CONTAINER" --platform "$PLATFORM" \
+# The CI runner is amd64 even for the arm64 matrix leg. Keep the nested
+# sandbox native to the host, and share the host network so its localhost
+# router address resolves to the backend's 9router process.
+docker run -d --name "$CONTAINER" --platform "$PLATFORM" --network host \
   --group-add "$DOCKER_GID" \
   -e INITIAL_PASSWORD="$PI_MONITOR_PASSWORD" \
   -e NINE_ROUTER_API_KEY=configure-9router-first \
   -e AUTERE_SANDBOX_IMAGE="$IMAGE" \
+  -e DOCKER_DEFAULT_PLATFORM=linux/amd64 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$CONTAINER-data":/home/autere/.autere \
   -v "$CONTAINER-pi":/home/autere/.pi \
