@@ -56,6 +56,20 @@ describe('SessionModal', () => {
     cy.get('.session-item.active .session-delete-btn').should('not.exist');
   });
 
+  it('action buttons wrap to their own row in mobile card mode', () => {
+    cy.viewport(375, 700);
+    mountModal();
+    cy.wait('@sessions');
+    cy.get('.session-item').not('.active').first().within(() => {
+      cy.get('.session-item-content').then(($content) => {
+        cy.get('.session-delete-btn').then(($btn) => {
+          expect($btn[0].offsetTop, 'buttons wrapped below the content')
+            .to.be.greaterThan($content[0].offsetTop);
+        });
+      });
+    });
+  });
+
   it('workdir validation: bogus path shows error and blocks create', () => {
     cy.intercept('GET', '**/api/v1/browse/roots', { success: true, data: [{ path: '/home/autere', access: 'rw' }] }).as('roots');
     cy.intercept('GET', '**/api/v1/browse/list*', { success: true, data: [{ name: 'code', type: 'dir', size: 1, mtime: 1 }] }).as('list');

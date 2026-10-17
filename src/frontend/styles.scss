@@ -3356,7 +3356,10 @@ body {
 .settings-section {
   background: var(--c-surface);
   border-radius: 0.75rem;
-  padding: 1rem;
+  // Standard content-box padding (0.5rem, like the table row cards on the
+  // other pages) — was 1rem, which stacked with .settings-layout's page
+  // padding to twice the content inset of every other page.
+  padding: 0.5rem;
 }
 
 .settings-section-title {
@@ -3673,7 +3676,7 @@ body {
   display: flex;
   flex: 1;
   gap: 0.75rem;
-  padding: 0 0.625rem 1rem;
+  padding: 0 0.625rem 0.625rem;
   min-height: 0;
   align-items: flex-start;
 }
@@ -3755,7 +3758,6 @@ body {
 .settings-content {
   flex: 1;
   min-width: 0;
-  padding-bottom: 0.5rem;
 }
 
 // Inputs on the settings page fill the content width
@@ -4206,6 +4208,10 @@ body {
 .session-item {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  // Action buttons wrap to their own row when the card mode row gets tight
+  // (mobile) instead of squeezing the session name into a sliver.
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.45rem 0.6rem;
   border-radius: 0.4rem;
@@ -4236,6 +4242,13 @@ body {
 .session-item-content {
   flex: 1;
   min-width: 0;
+
+  // Mobile card mode: the content owns the first row and the action
+  // buttons wrap to their own row below (like .data-table-actions) —
+  // width-dependent wrapping kept squeezing the name into a sliver.
+  @media (max-width: 768px) {
+    flex: 1 1 100%;
+  }
 }
 
 .session-item-header {
