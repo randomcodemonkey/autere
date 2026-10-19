@@ -62,6 +62,8 @@ export interface StreamMessage {
   /** Optimistic frontend-only message — shown with a pending indicator until
    * the backend broadcast with the same text arrives. */
   pending?: boolean;
+  /** Target session for a pending message; prevents cross-session display. */
+  pendingSessionId?: string | null;
   /** Reorder payloads only: canonical buffer position to insert at when the
    * entry's id is missing client-side (it was just removed by history_remove). */
   index?: number;

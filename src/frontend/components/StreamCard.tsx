@@ -26,7 +26,7 @@ interface StreamCardProps {
   activeModelId?: string | null;
   onModelsFetched?: (models: AvailableModel[]) => void;
   /** Called after a successful send (for optimistic user-message display) */
-  onSent?: (text: string, type: 'prompt' | 'steer' | 'followUp') => void;
+  onSent?: (text: string, type: 'prompt' | 'steer' | 'followUp', sessionId?: string | null) => void;
   /** Cancel a queued (steer/follow-up) message */
   onCancelPending?: (text: string) => void;
   /** Active session id — passed to ChatInput for draft persistence */

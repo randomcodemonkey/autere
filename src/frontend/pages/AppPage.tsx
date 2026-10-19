@@ -122,6 +122,8 @@ export function AppPage({
     onBootstrapped: () => setRestartingBackend(false),
   });
 
+  const currentSessionId = urlSessionId || sessionState.sessionId;
+
   // RootRedirect failures (e.g. sandbox/docker unavailable during the very
   // first session create) are stashed there — surface once in the error
   // modal over the normal app shell, not as a blocking page.
@@ -138,7 +140,7 @@ export function AppPage({
   // backend prunes pi's queue and broadcasts history_remove for the
   // committed pending copy in streamHistory.
   const handleCancelPending = useCallback(async (text: string) => {
-    setPendingUser((prev) => prev.filter((p) => p.text !== text));
+    setPendingUser((prev) => prev.filter((p) => p.text !== text || p.pendingSessionId !== currentSessionId));
     try {
       await fetch(url(API.session.pending), {
         method: 'DELETE',
@@ -146,7 +148,7 @@ export function AppPage({
         body: JSON.stringify({ text, sessionId: targetSessionRef.current }),
       });
     } catch {}
-  }, [setPendingUser, targetSessionRef]);
+  }, [setPendingUser, targetSessionRef, currentSessionId]);
 
   const handleLogout = useCallback(async () => {
     await logout();
@@ -320,17 +322,18 @@ export function AppPage({
   }, [navigate, setSessionError]);
 
   const activeModelId = sessionState.model?.id || null;
-  // Optimistic pending copies whose text is already committed to the real
-  // history are hidden. Retirement by event ordering is unreliable: the
+  // Show only optimistic copies for this session; hide those already committed
+  // to real history. Retirement by event ordering is unreliable: the
   // backend broadcasts the user entry (history_upsert) BEFORE the send
   // response returns, so the optimistic copy is created after the real one
   // and no upsert ever targets it again.
   const visiblePendingUser = pendingUser.filter(
-    // Retire by prefix too: queued sends get an attachment note appended
-    // server-side, so committed text can be pending text + note (same rule
-    // the stream_history snapshot retirement uses). Exact match alone kept
-    // those copies visible forever.
-    (p) => !streamHistory.some((m) => m.role === 'user' && !m.streaming && (m.text === p.text || m.text.startsWith(p.text))),
+    (p) => p.pendingSessionId === currentSessionId &&
+      // Retire by prefix too: queued sends get an attachment note appended
+      // server-side, so committed text can be pending text + note (same rule
+      // the stream_history snapshot retirement uses). Exact match alone kept
+      // those copies visible forever.
+      !streamHistory.some((m) => m.role === 'user' && !m.streaming && (m.text === p.text || m.text.startsWith(p.text))),
   );
   const { type: statusType, text: statusText } = computeStatus(baseStatusType, baseStatusText, sessionState);
 
@@ -414,7 +417,7 @@ export function AppPage({
           )}
           {activeView === 'chat' && (
             <ErrorBoundary key="v-chat" name="Chat">
-            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={() => { setNewFormRequested(true); handleSetView('sessions'); }} onGoToView={(v) => handleSetView(v === 'files' ? 'edits' : v)} onSetModel={handleCommandSetModel} onSetPersona={handleCommandSetPersona} modelNames={models.map((m) => m.id)} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={urlSessionId || sessionState.sessionId} />
+            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={() => { setNewFormRequested(true); handleSetView('sessions'); }} onGoToView={(v) => handleSetView(v === 'files' ? 'edits' : v)} onSetModel={handleCommandSetModel} onSetPersona={handleCommandSetPersona} modelNames={models.map((m) => m.id)} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text, _type, pendingSessionId) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, pendingSessionId, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={urlSessionId || sessionState.sessionId} />
             </ErrorBoundary>
           )}
           {activeView === 'settings' && (

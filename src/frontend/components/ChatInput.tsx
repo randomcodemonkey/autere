@@ -29,7 +29,7 @@ interface ChatInputProps {
   onError?: (message: string) => void;
   /** Called after a successful send with the sent text and type — used for
    * optimistic display of the user message in the chat. */
-  onSent?: (text: string, type: 'prompt' | 'steer' | 'followUp') => void;
+  onSent?: (text: string, type: 'prompt' | 'steer' | 'followUp', sessionId?: string | null) => void;
   disabled?: boolean; // true when compacting — disables everything
   isStreaming?: boolean; // true when agent is streaming — shows Steer/Followup
   isActive?: boolean; // true when streaming or compacting — blocks /new command
@@ -273,7 +273,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
       if (data.success) {
         updateValue('');
         setImages([]);
-        onSent?.(text, type);
+        onSent?.(text, type, sessionId);
         // Collapse the expanded input and release focus so the UI returns to
         // the compact one-row state after sending (Enter submit included).
         setFocused(false);
