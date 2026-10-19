@@ -147,13 +147,13 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   // read like assistant output: markdown body, distinct "task" sender.
   const isTaskReport = role === 'taskReport';
   const roleLabel = isTaskReport ? 'task' : role;
-  const likeAssistant = isAssistant || isTaskReport;
+  const renderMarkdown = isAssistant || isTaskReport || role === 'user';
   const isNonText = displayText.startsWith('[') && !isTaskReport;
   const isError = msg.isError;
-  const mdClass = likeAssistant ? ' md-rendered' : '';
+  const mdClass = renderMarkdown ? ' md-rendered' : '';
   const textClass = (isToolResult ? 'stream-tool-output' : 'stream-text' + (isNonText ? ' stream-non-text' : '') + mdClass) + (expanded ? ' expanded' : '') + (isError ? ' stream-error' : '');
   const renderText = role === 'thinking' ? stripExtraNewlines(showText) : showText;
-  const renderedText = likeAssistant ? renderMd(renderText) : role === 'edit' ? '' : escHtml(renderText);
+  const renderedText = renderMarkdown ? renderMd(renderText) : role === 'edit' ? '' : escHtml(renderText);
   const ts = formatTimestamp(msg.timestamp);
 
   // Download an image. Mobile Safari ignores the download attribute on

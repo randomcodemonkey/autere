@@ -19,7 +19,7 @@ function mountMsg(role: string, displayText: string) {
   );
 }
 
-describe('ChatMessage — scheduled-task deliveries', () => {
+describe('ChatMessage — markdown rendering', () => {
   it('renders task deliveries with a distinct task sender and a markdown body', () => {
     mountMsg(
       'taskReport',
@@ -31,11 +31,11 @@ describe('ChatMessage — scheduled-task deliveries', () => {
     cy.get('.stream-text').should('not.have.class', 'stream-non-text');
   });
 
-  it('keeps ordinary user messages plain', () => {
-    mountMsg('user', 'hello there');
+  it('renders user messages as markdown', () => {
+    mountMsg('user', '**bold** and `code`');
     cy.get('.stream-role-user > span').should('contain', 'user');
-    cy.get('.md-rendered').should('not.exist');
-    cy.get('.stream-text').should('not.have.class', 'md-rendered');
+    cy.get('.md-rendered strong').should('contain', 'bold');
+    cy.get('.md-rendered code').should('contain', 'code');
   });
 
   it('does not restyle user messages that merely mention the marker', () => {
