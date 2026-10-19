@@ -82,8 +82,7 @@ function pathExists(path: string): boolean {
 
 /** Make envDir/extensions a real directory holding per-entry symlinks
  *  instead of one symlink to the shared master dir. Bundled extras are
- *  toggled per user by linking/unlinking entries in it — a shared symlink
- *  would leak those toggles into the master dir for every user.
+ *  copied per user, so toggles and refreshes never mutate the master dir.
  *  ponytail: master-loop/link copies are cheap; revisit only if master
  *  extensions ever hold per-entry state beyond symlinks. */
 export function materializeEnvExtensions(user: string): void {
@@ -144,33 +143,26 @@ function applyTestModels(envDir: string): void {
  * Idempotent — safe to call on every pi spawn.
  * Returns the environment directory to pass as PI_CODING_AGENT_DIR.
  */
-/** Bring the env's extension links in line with the user's choice set:
- *  nolink extras from the bundled dir that are enabled, unlink bundled
- *  ones that aren't. Keeps master-seeded links (e.g. pi-dedup from a
- *  pre-toggle image) from silently overriding the saved choices. */
-function reconcileExtraLinks(user: string): void {
+/** Refresh enabled bundled extensions as per-user copies and remove disabled
+ *  ones. Keeps master-seeded entries from overriding the saved choices. */
+function reconcileExtraExtensions(user: string): void {
   const wanted = new Set(desiredExtras(user).map((s) => s.slice('local:'.length)));
   for (const spec of getAvailableExtras()) {
     const name = spec.slice('local:'.length);
-    let linked = false;
-    try { linked = !!lstatSync(join(getPiEnvDir(user), 'extensions', name)); } catch { /* not linked */ }
-    const wantedON = wanted.has(name);
-    if (linked !== wantedON) {
-      try { setExtraEnabled(user, name, wantedON); } catch { /* skip */ }
-    }
+    setExtraEnabled(user, name, wanted.has(name));
   }
 }
 
-/** Apply DEFAULT_ENABLED_EXTRAS once: link defaults into a fresh env and
+/** Apply DEFAULT_ENABLED_EXTRAS once: copy defaults into a fresh env and
  *  record them, so the saved set (not defaults) governs from then on.
- *  With a choice file present, only reconcile links to the saved set. */
+ *  With a choice file present, reconcile copies to the saved set. */
 function applyExtraDefaults(user: string): void {
   const marker = join(getPiEnvDir(user), 'autere-extensions.json');
-  if (existsSync(marker)) { reconcileExtraLinks(user); return; }
+  if (existsSync(marker)) { reconcileExtraExtensions(user); return; }
   const names = getAvailableExtras()
     .filter((s) => DEFAULT_ENABLED_EXTRAS[s.slice('local:'.length)] !== false);
   writeSavedExtras(user, names.map((s) => s.slice('local:'.length)));
-  reconcileExtraLinks(user);
+  reconcileExtraExtensions(user);
 }
 
 export function ensurePiEnv(user: string): string {
@@ -235,12 +227,13 @@ export function ensurePiEnv(user: string): string {
     if (!existsSync(sessionsDir)) {
       try { mkdirSync(sessionsDir, { recursive: true }); } catch {}
     }
-    applyExtraDefaults(user);
-    // pi-autere credentials for the extension about to be loaded
-    writeAgentAccess(user);
   } catch (err) {
     log.piEnv.error(`Failed to ensure pi env for user "${user}":`, err);
   }
+  // Do not spawn with stale or missing bundled extensions if refresh failed.
+  applyExtraDefaults(user);
+  // pi-autere credentials for the extension about to be loaded
+  writeAgentAccess(user);
   return envDir;
 }
 
@@ -299,6 +292,7 @@ export function sandboxSharedEnv(): Record<string, string> {
     XDG_CONFIG_HOME: `${home}/.config`,
   };
   if (existsSync(`${home}/.config/gitconfig`)) env.GIT_CONFIG_GLOBAL = `${home}/.config/gitconfig`;
+  if (process.env.NINE_ROUTER_BASE_URL) env.NINE_ROUTER_BASE_URL = process.env.NINE_ROUTER_BASE_URL;
   return env;
 }
 
@@ -341,10 +335,8 @@ export function prepareSandboxEnvDir(agentDir: string): void {
       catch { /* missing master dir — pi tolerates absent optional pieces */ }
       continue;
     }
-    // Real dir whose entries may be symlinks (extensions after
-    // materializeEnvExtensions point at ~/pi-ext-extra) — flatten those too:
-    // their targets are NOT mounted in the sandbox, so a symlink copied
-    // through dangles in-container (tools silently vanish).
+    // Materialized extensions can still contain symlinked shared packages.
+    // Copy their targets because the sandbox does not mount those source paths.
     let entries: import('fs').Dirent[];
     try { entries = readdirSync(link, { withFileTypes: true }); } catch { continue; }
     for (const e of entries) {

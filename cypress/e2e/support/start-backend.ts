@@ -299,6 +299,7 @@ export async function startBackend(): Promise<void> {
   env: {
     ...process.env,
     PI_MONITOR_AUTH: 'false',
+    AUTERE_BACKEND_URL: `http://${routerHost()}:${TEST_PORT}`,
     AUTERE_PI_ENVS_DIR: testEnvsDir,
     // Users registry must not seed the real ~/.autere/autere-users.json
     AUTERE_USERS_FILE: join(testEnvsDir, 'autere-users.json'),

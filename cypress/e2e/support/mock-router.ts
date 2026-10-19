@@ -14,6 +14,7 @@
  *   "2 + 2"   → reply "4" (chat.cy asserts the answer)
  *   "tool"    → one bash tool call running `echo hello`, then a plain answer
  *               after the result (tools.cy, edits-feature's smoke turn)
+ *   "E2E_AUTERE_SCHEDULE_TASK:<name>" → real pi-autere scheduled-task tool call
  *   otherwise → "MOCK-ANSWER ok"
  *
  * Tool-call state: a tool call is only emitted when the conversation does
@@ -116,6 +117,19 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
                 return;
             }
             const toolCalls: { id: string; name: string; arguments: unknown }[] = [];
+            const scheduledTask = lastUserText.match(/E2E_AUTERE_SCHEDULE_TASK:([A-Za-z0-9_-]+)/);
+            if (scheduledTask && lastRole !== 'tool') {
+                toolCalls.push({
+                    id: 'mock-schedule-task',
+                    name: 'autere_schedule_task',
+                    arguments: {
+                        name: scheduledTask[1],
+                        schedule: '0 0 1 1 *',
+                        prompt: 'Reply with exactly: OK',
+                        reportTo: 'none',
+                    },
+                });
+            }
             // No tool emission after tool results — pi would loop forever
             // re-running the same scripted calls.
             if (/write tool/i.test(lastUserText) && lastRole !== 'tool') {

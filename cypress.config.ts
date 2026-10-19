@@ -1,6 +1,6 @@
 import { defineConfig } from 'cypress';
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'fs';
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -88,17 +88,21 @@ export default defineConfig({
 
         /** Sandbox containers started after the given ids (run probe):
          *  WorkingDir + work-area mounts of each new container. */
-        sandboxProbe(beforeIds: string[]): { workdir: string; workMounts: string[] }[] {
+        sandboxProbe({ beforeIds, markerPaths }: { beforeIds: string[]; markerPaths: string[] }): { workdir: string; workMounts: string[]; markerContents: (string | null)[] }[] {
           const image = process.env.AUTERE_E2E_SANDBOX_IMAGE || '';
           if (!image) return [];
           const run = (cmd: string) => execSync(cmd, { encoding: 'utf-8' }).trim();
           const ids = run(`docker ps -q --filter ancestor=${image}`).split('\n').filter(Boolean);
-          const out: { workdir: string; workMounts: string[] }[] = [];
+          const out: { workdir: string; workMounts: string[]; markerContents: (string | null)[] }[] = [];
           for (const id of ids.filter((id) => !beforeIds.includes(id))) {
             const insp = run(`docker inspect ${id} --format '{{.Config.WorkingDir}}|{{json .Mounts}}'`);
             const [workdir, mj] = insp.split('|');
             const mounts = JSON.parse(mj) as { Destination: string }[];
-            out.push({ workdir, workMounts: mounts.filter((m) => m.Destination.includes('/work')).map((m) => m.Destination) });
+            const markerContents = markerPaths.map((path) => {
+              try { return execFileSync('docker', ['exec', id, 'cat', path], { encoding: 'utf-8', timeout: 3000 }).trim(); }
+              catch { return null; }
+            });
+            out.push({ workdir, workMounts: mounts.filter((m) => m.Destination.includes('/work')).map((m) => m.Destination), markerContents });
           }
           return out;
         },

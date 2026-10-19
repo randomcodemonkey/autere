@@ -14,7 +14,7 @@
  */
 
 import { getUserRole, getUserAllowedDirs } from './users.js';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, readdirSync, symlinkSync, rmSync, lstatSync, realpathSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, readdirSync, rmSync, realpathSync, cpSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join, dirname, resolve } from 'path';
 import { homedir } from 'os';
@@ -197,23 +197,16 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
       // legitimately differ from the master list mid-merge); master's
       // fresh `pi install` state lands on the NEXT save/spawn.
       // 'local:<name>' entries are bundled extras (pi-ext-extra): they
-      // install as env extensions/<name> symlinks, not packages entries,
-      // so strip them from what pi sees and apply the link set.
+      // install as env extensions/<name> copies, not packages entries,
+      // so strip them from what pi sees and apply the copy set.
       const incoming = Array.isArray(settings.packages) ? settings.packages : [];
       const extras = incoming.filter((p: unknown) => pkgSource(p).startsWith('local:')).map((p: unknown) => pkgSource(p).slice('local:'.length));
       piSettings.packages = incoming.map(pkgSource).filter((p: string) => !p.startsWith('local:'));
       piSettingsChanged = true;
-      const envExts = join(envDir, 'extensions');
       const wanted = new Set(extras);
       for (const spec of getAvailableExtras()) {
         const name = spec.slice('local:'.length);
-        try { lstatSync(join(envExts, name)); } catch { continue; } // not linked — nothing to do
-        if (!wanted.has(name)) setExtraEnabled(user, name, false);
-      }
-      for (const name of extras) {
-        let present = false;
-        try { lstatSync(join(envExts, name)); present = true; } catch { /* absent */ }
-        if (!present) setExtraEnabled(user, name, true);
+        setExtraEnabled(user, name, wanted.has(name));
       }
       // Persist the choice so it survives image upgrades / env reseed;
       // also removes extras that disappeared from the bundled set.
@@ -775,19 +768,41 @@ export function desiredExtras(user: string): string[] {
   return available.filter((s) => DEFAULT_ENABLED_EXTRAS[s.slice('local:'.length)] !== false);
 }
 
-/** Link (enabled) or unlink (disabled) one bundled extra into the user's env. */
+/** Refresh an enabled bundled extra as a real per-user copy; remove it when disabled. */
 export function setExtraEnabled(user: string, name: string, enabled: boolean): void {
   if (!/^[-\w.]+$/.test(name)) throw new Error(`bad extension name "${name}"`);
-  // The env extensions dir may still be a shared master symlink —
-  // materialize it first so toggles stay per-user.
+  // Materialize the shared master dir first so changes stay per-user.
   materializeEnvExtensions(user);
-  const link = join(getPiEnvDir(user), 'extensions', name);
-  try { lstatSync(link); rmSync(link, { recursive: true }); } catch { /* not there */ }
-  if (!enabled) return;
+  const dest = join(getPiEnvDir(user), 'extensions', name);
+  if (!enabled) {
+    rmSync(dest, { recursive: true, force: true });
+    return;
+  }
   const src = join(EXTRAS_DIR, name);
   if (!existsSync(src)) throw new Error(`Extension "${name}" is not installed on this server`);
-  mkdirSync(dirname(link), { recursive: true });
-  symlinkSync(src, link, 'dir');
+
+  const envDir = getPiEnvDir(user);
+  const staging = join(envDir, `.extension-${name}-${randomUUID()}`);
+  const backup = join(envDir, `.extension-old-${name}-${randomUUID()}`);
+  mkdirSync(dirname(dest), { recursive: true });
+  let movedOld = false;
+  try {
+    cpSync(src, staging, { recursive: true, dereference: true, force: true });
+    try { renameSync(dest, backup); movedOld = true; } catch (err: any) {
+      if (err?.code !== 'ENOENT') throw err;
+    }
+    try {
+      renameSync(staging, dest);
+    } catch (err: any) {
+      if (movedOld) {
+        try { renameSync(backup, dest); movedOld = false; } catch { /* retain backup if restore fails */ }
+      }
+      throw err;
+    }
+    if (movedOld) rmSync(backup, { recursive: true, force: true });
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
 }
 
 /**
