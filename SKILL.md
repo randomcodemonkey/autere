@@ -77,9 +77,9 @@ container (per platform: `linux/amd64` + `linux/arm64`) and asserts, in
 order: the backend boots and admin login works (INITIAL_PASSWORD), 9router
 listens on the configured port (default :20128), a session can be
 created via the API, `pi` is runnable, and a prompt turn fails with a missing
-or invalid 9router credential — proving pi spawned and ran. The asynchronous
-turn error is checked in the backend log because the message API only confirms
-that the prompt was queued. Set AUTERE_SMOKE_BACKEND_PORT and
+or invalid 9router credential — proving pi spawned and ran. Pi may reject
+synchronously or the message API may acknowledge queueing before the async
+turn error; the test handles either. Set AUTERE_SMOKE_BACKEND_PORT and
 AUTERE_SMOKE_ROUTER_PORT to use alternate host ports for local runs. The
 container uses host networking (so the nested sandbox's `--network host` can
 reach 9router), mounts

@@ -100,25 +100,29 @@ log "created session $SESSION_ID"
 # 5. pi must be installed and runnable in the image
 docker exec "$CONTAINER" pi --version >/dev/null || die "pi binary not runnable in image"
 
-# 6. Send a prompt. The API acknowledges queueing before the LLM turn
-#    finishes, so verify the asynchronous pi error in the backend log.
-#    A fresh 9router may reject the placeholder key or report no model key.
+# 6. Send a prompt. Pi may reject it synchronously or accept it and report
+#    the LLM error asynchronously; both paths prove pi ran without credentials.
 SEND=$(docker exec "$CONTAINER" curl -sS -X POST "$BACKEND_URL/api/v1/session/messages" "${auth[@]}" \
   -H 'content-type: application/json' -d "{\"sessionId\":\"$SESSION_ID\",\"message\":\"smoke test prompt\"}")
-echo "$SEND" | jq -e '.success == true' >/dev/null \
-  || { log "$SEND"; die "prompt was not accepted"; }
-turn_failed() {
-  docker exec "$CONTAINER" grep -Eq 'assistant stream ended with stop=error: (No API key found for the selected model|.*Invalid API key)' \
-    /home/autere/log/autere.err.log
-}
-TURN_DEADLINE=$((SECONDS + 120))
-until turn_failed; do
-  if [ "$SECONDS" -ge "$TURN_DEADLINE" ]; then
-    docker exec "$CONTAINER" tail -n 80 /home/autere/log/autere.err.log || true
-    die "expected turn failure due to unconfigured 9router credentials"
-  fi
-  sleep 5
-done
-log "turn failed as expected (pi ran, 9router has no valid upstream credentials)"
+if echo "$SEND" | jq -e '.success == false and (.error | test("No API key found for the selected model|Invalid API key"))' >/dev/null; then
+  log "prompt rejected as expected: $(echo "$SEND" | jq -r '.error' | head -n 1)"
+elif echo "$SEND" | jq -e '.success == true' >/dev/null; then
+  turn_failed() {
+    docker exec "$CONTAINER" grep -Eq 'assistant stream ended with stop=error: (No API key found for the selected model|.*Invalid API key)' \
+      /home/autere/log/autere.err.log
+  }
+  TURN_DEADLINE=$((SECONDS + 120))
+  until turn_failed; do
+    if [ "$SECONDS" -ge "$TURN_DEADLINE" ]; then
+      docker exec "$CONTAINER" tail -n 80 /home/autere/log/autere.err.log || true
+      die "expected turn failure due to unconfigured 9router credentials"
+    fi
+    sleep 5
+  done
+  log "turn failed asynchronously as expected (9router has no valid upstream credentials)"
+else
+  log "$SEND"
+  die "expected missing/invalid 9router credential error"
+fi
 
 log "OK: container boots, backend + 9router + pi all start, turn fails with unconfigured credentials as expected"
