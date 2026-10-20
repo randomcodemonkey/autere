@@ -31,6 +31,7 @@ renderer.image = function({ href, title, text }: { href: string; title: string |
   const titleAttr = title ? ` title="${title}"` : '';
   return `<img src="${src}" alt="${text}"${titleAttr} />`;
 };
+renderer.html = ({ text }: { text: string }) => escHtml(text);
 
 export function escHtml(s: string): string {
   const d = document.createElement('div');

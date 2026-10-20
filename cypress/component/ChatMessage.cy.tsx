@@ -11,7 +11,7 @@ function mountMsg(role: string, displayText: string) {
       msg={base}
       role={role}
       displayText={displayText}
-      isAssistant={false}
+      isAssistant={role === 'assistant'}
       isToolResult={false}
       isLong={false}
       truncLen={5000}
@@ -37,6 +37,15 @@ describe('ChatMessage — markdown rendering', () => {
     cy.get('.md-rendered strong').should('contain', 'bold');
     cy.get('.md-rendered code').should('contain', 'code');
   });
+
+  for (const role of ['user', 'assistant']) {
+    it(`escapes raw HTML in ${role} messages while rendering Markdown`, () => {
+      mountMsg(role, '<pre>not an element</pre>\n\n**still markdown**');
+      cy.get('.md-rendered pre').should('not.exist');
+      cy.get('.md-rendered').should('contain.text', '<pre>not an element</pre>');
+      cy.get('.md-rendered strong').should('contain', 'still markdown');
+    });
+  }
 
   it('does not restyle user messages that merely mention the marker', () => {
     mountMsg('user', 'What does [autere task] in the docs mean?');
