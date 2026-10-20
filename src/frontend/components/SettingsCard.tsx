@@ -39,6 +39,7 @@ const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChang
   // (focus loss). The map is rename-aware (name edit moves the id) and
   // pruned to current entries so removed/reloaded servers don't leak ids.
   const idsRef = useRef<Record<string, string>>({});
+  const [headersDrafts, setHeadersDrafts] = useState<Record<string, string>>({});
   const rowId = (name: string): string => {
     if (!idsRef.current[name]) idsRef.current[name] = `mcp-row-${++mcpRowSeq}`;
     return idsRef.current[name];
@@ -73,9 +74,11 @@ const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChang
       <div className="sortable-list mcp-list">
         {names.map((name) => {
           const s = servers[name] || {};
+          const id = rowId(name);
+          const headersText = headersDrafts[id] ?? Object.entries(s.headers || {}).map(([h, v]) => `${h}: ${v}`).join('\n');
           const exposure = s.exposure || 'codemode';
           return (
-            <div key={rowId(name)} className="mcp-server-row">
+            <div key={id} className="mcp-server-row">
               <div className="mcp-row-line">
                 <div className="mcp-field">
                   <span className="mcp-field-label">Name</span>
@@ -144,13 +147,15 @@ const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChang
                       <textarea
                         className="mcp-textarea"
                         rows={Math.max(2, Object.keys(s.headers || {}).length + 1)}
-                        value={Object.entries(s.headers || {}).map(([h, v]) => `${h}: ${v}`).join('\n')}
+                        value={headersText}
                         placeholder={"Authorization: Bearer …\nX-Custom: value"}
                         spellCheck={false}
                         onChange={(e) => {
-                          const headers: Record<string, string> | undefined = e.target.value.trim()
+                          const text = e.target.value;
+                          setHeadersDrafts((prev) => ({ ...prev, [id]: text }));
+                          const headers: Record<string, string> | undefined = text.trim()
                             ? Object.fromEntries(
-                              e.target.value.split('\n')
+                              text.split('\n')
                                 .map((l) => l.trim())
                                 .filter(Boolean)
                                 .map((l) => {
@@ -162,6 +167,12 @@ const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChang
                             : undefined;
                           patch(name, name, { headers });
                         }}
+                        onBlur={() => setHeadersDrafts((prev) => {
+                          if (!(id in prev)) return prev;
+                          const next = { ...prev };
+                          delete next[id];
+                          return next;
+                        })}
                       />
                     </div>
                   </>

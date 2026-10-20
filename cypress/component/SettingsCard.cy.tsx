@@ -420,6 +420,21 @@ describe('SettingsCard codemode/mcp (pi 1.0)', () => {
     cy.get('.mcp-name').should('have.value', 'fs-v2'); // row not remounted
   });
 
+  it('keeps HTTP header text editable while parsing complete lines', () => {
+    stub({ codemode: false, mcpServers: { remote: { url: 'https://example.com/mcp', headers: {} } } }, true);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
+    cy.contains('.mcp-field-label', 'HTTP headers').parent().find('textarea').as('headers');
+    cy.get('@headers').type('Authorization: Bearer token{enter}X-API-Key: key');
+    cy.get('@headers').should('have.value', 'Authorization: Bearer token\nX-API-Key: key');
+    cy.contains('button', 'Save Settings').click();
+    cy.wrap(null).should(() => {
+      expect(savedBodyHolder.body.mcpServers.remote.headers).to.deep.eq({
+        Authorization: 'Bearer token',
+        'X-API-Key': 'key',
+      });
+    });
+  });
+
   it('add/remove rows and exposure select edit the mcp draft', () => {
     stub({ codemode: false, mcpServers: {} }, false);
     cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
