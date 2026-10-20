@@ -35,9 +35,7 @@ RUN apt-get -y -qq update \
       jq \
       less \
       maven \
-      nodejs \
       netcat-openbsd \
-      npm \
       openjdk-21-jdk-headless \
       openssh-client \
       python3 \
@@ -51,9 +49,12 @@ RUN apt-get -y -qq update \
     && chmod a+r /etc/apt/keyrings/*.asc \
     && printf 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: %s\nComponents: stable\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/docker.asc\n' "$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/docker.sources \
      && printf 'Types: deb\nURIs: https://repo.scala-sbt.org/scalasbt/debian\nSuites: all\nComponents: main\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/sbt.asc\n' "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/sbt.sources \
+ && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+ && printf 'Types: deb\nURIs: https://deb.nodesource.com/node_26.x\nSuites: nodistro\nComponents: main\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/nodesource.gpg\n' "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/nodesource.sources \
     && apt-get -y -qq update \
     && apt-get install -y -qq --no-install-recommends \
       docker-ce-cli \
+      nodejs \
       sbt \
     && apt-get -y clean \
     && rm -rf /var/lib/apt/lists/*
