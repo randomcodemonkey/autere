@@ -11,11 +11,7 @@ const REPO = join(new URL('..', import.meta.url).pathname, '..', '..');
 // Isolation self-check: check scripts touching users/auth/registry may
 // NEVER fall through to the real ~/.autere/autere-users.json — assert the
 // override BEFORE any backend import (constants.js captures envs at load). Refuse otherwise.
-process.env.AUTERE_USERS_FILE ||= '';
-if (!process.env.AUTERE_USERS_FILE.startsWith('/tmp/')) {
-  process.env.AUTERE_USERS_FILE = '/tmp/sock-guard-users.json';
-  writeFileSync(process.env.AUTERE_USERS_FILE, JSON.stringify({}));
-}
+process.env.AUTERE_USERS_FILE = join(mkdtempSync(join(tmpdir(), 'sock-guard-')), 'users.json');
 process.env.AUTERE_PI_ENVS_DIR ||= '';
 if (!process.env.AUTERE_PI_ENVS_DIR.startsWith('/tmp/')) {
   process.env.AUTERE_PI_ENVS_DIR = mkdtempSync(join(tmpdir(), 'sockenv-'));
@@ -39,12 +35,12 @@ check('create chat+sock', users.createUser({ username: 'chatty', password: 'pass
 check('chat denied', users.getUserMountDockerSocket('chatty') === false);
 
 // grant then demote → cleared; demote with no explicit flag → also cleared
-check('demote clears sock', users.updateUser('rooty', 'rooty', { role: 'chat' }) === null && users.getUserMountDockerSocket('rooty') === false);
-users.updateUser('rooty', 'rooty', { role: 'admin' });
+check('demote clears sock', await users.updateUser('rooty', 'rooty', { role: 'chat' }) === null && users.getUserMountDockerSocket('rooty') === false);
+await users.updateUser('rooty', 'rooty', { role: 'admin' });
 (users as any).setMountDockerSocket?.('rooty', true);
-users.updateUser('rooty', 'rooty', { mountDockerSocket: true });
+await users.updateUser('rooty', 'rooty', { mountDockerSocket: true });
 check('re-grant admin ok', users.getUserMountDockerSocket('rooty') === true);
-users.updateUser('rooty', 'rooty', { role: 'chat' });
+await users.updateUser('rooty', 'rooty', { role: 'chat' });
 check('role-patch-only clears', users.getUserMountDockerSocket('rooty') === false);
 
 // persisted registry roundtrip
@@ -61,10 +57,18 @@ const argvFor = (flag: boolean) => {
   // buildSandboxCommand is private — exercise via the exported helper if any, else reflect
   return (rc as any).buildSandboxCommand(['--help']);
 };
+const originalRunId = process.env.AUTERE_E2E_RUN_ID;
+delete process.env.AUTERE_E2E_RUN_ID;
 const withSock = argvFor(true).join(' ');
-const withoutSock = argvFor(false).join(' ');
+const withoutSock = argvFor(false);
 check('argv mounts sock', withSock.includes('/var/run/docker.sock') && withSock.includes('--group-add'));
-check('argv clean without', !withoutSock.includes('docker.sock'));
+check('argv clean without', !withoutSock.join(' ').includes('docker.sock'));
+check('no e2e label outside harness', !withoutSock.includes('--label'));
+process.env.AUTERE_E2E_RUN_ID = '01234567-89ab-cdef-0123-456789abcdef';
+const labeled = argvFor(false);
+check('e2e run label attached', labeled.includes('--label') && labeled.includes('autere.e2e.run=01234567-89ab-cdef-0123-456789abcdef'));
+if (originalRunId === undefined) delete process.env.AUTERE_E2E_RUN_ID;
+else process.env.AUTERE_E2E_RUN_ID = originalRunId;
 
 // sandboxSharedEnv: XDG vars always; GIT_CONFIG_GLOBAL only when the
 // gitconfig file exists. Run in a subprocess so HOME can be simulated.

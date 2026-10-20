@@ -3,11 +3,12 @@
  * Uses a random port to avoid conflicts with the default.
  */
 
-import { spawn, execSync, ChildProcess } from 'child_process';
-import { join, dirname } from 'path';
+import { spawn, execFileSync, execSync, ChildProcess } from 'child_process';
+import { join, dirname, basename, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, symlinkSync } from 'fs';
 import { tmpdir, homedir } from 'os';
+import { randomUUID } from 'node:crypto';
 import { startMockRouter } from './mock-router';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -16,17 +17,20 @@ const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, '..', '..', '..');
 
 let testEnvsDir: string | null = null;
+let testRunId: string | null = null;
 
 /** Remove the isolated per-run env dir. Runs create sessions there; they
  *  must not leak into /tmp (or anywhere else) after the run. */
-function cleanupEnvsDir(): void {
-  if (process.env.AUTERE_KEEP_ENVS) { console.log(`[e2e] AUTERE_KEEP_ENVS set — envs kept at ${testEnvsDir}`); return; }
-  if (!testEnvsDir) return;
+function cleanupEnvsDir(): boolean {
+  if (process.env.AUTERE_KEEP_ENVS) { console.log(`[e2e] AUTERE_KEEP_ENVS set — envs kept at ${testEnvsDir}`); return true; }
+  if (!testEnvsDir) return true;
   try {
     rmSync(testEnvsDir, { recursive: true, force: true });
     console.log(`[e2e] Removed test env dir ${testEnvsDir}`);
+    return true;
   } catch (err) {
     console.log(`[e2e] Failed to remove test env dir: ${err}`);
+    return false;
   }
 }
 
@@ -152,28 +156,64 @@ export function seedRouterConfig(routerUrl: string): void {
 // (no cleanup handlers run), its detached backend lives on — the next run
 // reaps it from here.
 const RUN_RECORD = join(tmpdir(), 'autere-e2e-last-run.json');
+const RUN_LABEL = 'autere.e2e.run';
+
+function cleanupSandboxContainers(runId: string | null): boolean {
+  if (!runId) return true;
+  if (!/^[0-9a-f-]{36}$/.test(runId)) return false;
+  try {
+    const ids = execFileSync('docker', ['ps', '-aq', '--filter', `label=${RUN_LABEL}=${runId}`], {
+      encoding: 'utf-8', timeout: 15000,
+    }).trim().split(/\s+/).filter(Boolean);
+    if (ids.length) {
+      execFileSync('docker', ['rm', '-f', ...ids], { stdio: 'ignore', timeout: 15000 });
+      console.log(`[e2e] Removed ${ids.length} sandbox container(s) for run ${runId}`);
+    }
+    return true;
+  } catch (err) {
+    console.log(`[e2e] Failed to remove sandbox containers for run ${runId}: ${err}`);
+    return false;
+  }
+}
+
+function cleanupRecordedEnvsDir(envDir?: string): boolean {
+  if (!envDir || process.env.AUTERE_KEEP_ENVS) return true;
+  const path = resolve(envDir);
+  const root = dirname(path);
+  const name = basename(path);
+  const allowed = (root === resolve(PROJECT_ROOT) && name.startsWith('.e2e-envs-'))
+    || (root === resolve(tmpdir()) && name.startsWith('autere-e2e-envs-'));
+  if (!allowed) return false;
+  try {
+    rmSync(path, { recursive: true, force: true });
+    console.log(`[e2e] Removed stale test env dir ${path}`);
+    return true;
+  } catch (err) {
+    console.log(`[e2e] Failed to remove stale test env dir ${path}: ${err}`);
+    return false;
+  }
+}
 
 function reapPreviousRun(): void {
+  let previous: { pids: number[]; runId?: string; envDir?: string } = { pids: [] };
   try {
-    // pids may carry positive pids (detached pi processes, recorded at
-    // spawn time) and negative pgids (the backend's process group).
-    // Repo-scoped sweep too: hard-killed runs from before the run record
-    // existed (or cleared tmp) still leave pi/cmdline orphans matching
-    // the test backend's unique cmdline marker.
-    const { pids } = JSON.parse(readFileSync(RUN_RECORD, 'utf-8')) as { pids: number[] };
-    killPids(pids, 'SIGKILL');
+    const record = JSON.parse(readFileSync(RUN_RECORD, 'utf-8')) as Record<string, unknown> | null;
+    if (record && typeof record === 'object') {
+      previous = {
+        pids: Array.isArray(record.pids)
+          ? record.pids.filter((pid): pid is number => Number.isSafeInteger(pid) && Math.abs(pid) > 1)
+          : [],
+        runId: typeof record.runId === 'string' ? record.runId : undefined,
+        envDir: typeof record.envDir === 'string' ? record.envDir : undefined,
+      };
+    }
   } catch {}
-  // Cmdline-marker sweep, scoped to THIS test's unique flags (isolated
-  // env dir path baked into the cmdline via AUTERE_PI_ENVS_DIR? No — env
-  // vars aren't in /proc cmdline; the test PORT arg is though; a random
-  // 30000-50000 port is unlikely to collide with a live backend).
-  try {
-    execSync(
-      `pkill -KILL -f "tsx src/backend/index.ts --port 3" 2>/dev/null; pkill -KILL -f "tsx ../src/backend/index.ts --port 3" 2>/dev/null`,
-      { stdio: 'ignore' }
-    );
-  } catch {}
-  try { rmSync(RUN_RECORD, { force: true }); } catch {}
+  // PIDs include the backend process group and detached pi/Docker clients.
+  killPids(previous.pids, 'SIGKILL');
+  const containersRemoved = cleanupSandboxContainers(previous.runId ?? null);
+  if (containersRemoved && cleanupRecordedEnvsDir(previous.envDir)) {
+    try { rmSync(RUN_RECORD, { force: true }); } catch {}
+  }
 }
 
 /** Isolated env dir for this run — exposed so run-e2e can pass it to the
@@ -193,9 +233,12 @@ export function getTestEnvsDir(): string {
  *  dies before cleanup (merge, dedupe). */
 function reapRecord(pids: number[]): void {
   try {
-    let cur: number[] = [];
-    try { cur = (JSON.parse(readFileSync(RUN_RECORD, 'utf-8')) as { pids: number[] }).pids; } catch {}
-    writeFileSync(RUN_RECORD, JSON.stringify({ pids: [...new Set([...cur, ...pids])] }));
+    let cur: { pids?: number[]; runId?: string; envDir?: string } = {};
+    try { cur = JSON.parse(readFileSync(RUN_RECORD, 'utf-8')) as typeof cur; } catch {}
+    writeFileSync(RUN_RECORD, JSON.stringify({
+      ...cur,
+      pids: [...new Set([...(cur.pids ?? []), ...pids])],
+    }));
   } catch {}
 }
 
@@ -273,7 +316,9 @@ export async function startBackend(): Promise<void> {
   // dashboard instance for the admin user).
   // Sandbox spawns require the pi env dir to live inside a docker volume
   // (planSandboxMounts refuses otherwise) — use the repo checkout's volume.
-  testEnvsDir = process.env.AUTERE_E2E_SANDBOX_IMAGE?.trim()
+  const sandboxImage = process.env.AUTERE_E2E_SANDBOX_IMAGE?.trim();
+  testRunId = sandboxImage ? randomUUID() : null;
+  testEnvsDir = sandboxImage
     ? mkdtempSync(join('/home/autere/code/autere', '.e2e-envs-'))
     : mkdtempSync(join(tmpdir(), 'autere-e2e-envs-'));
   // pi resolves an extension's npm deps by walking up the env dir — a bare
@@ -292,6 +337,9 @@ export async function startBackend(): Promise<void> {
   ];
 
   console.log(`[e2e] Starting autere backend on port ${TEST_PORT}...`);
+  try {
+    writeFileSync(RUN_RECORD, JSON.stringify({ pids: [], envDir: testEnvsDir, ...(testRunId ? { runId: testRunId } : {}) }));
+  } catch {}
 
   // Spawn detached so we get a process group we can safely kill later
   backendProcess = spawn('npx', ['tsx', ...args], {
@@ -319,10 +367,12 @@ export async function startBackend(): Promise<void> {
     // sandbox points at docker + the real home volume — off for tests.
     // AUTERE_E2E_SANDBOX_IMAGE opts ONE run into a real sandbox (workdirs
     // inheritance spec); the image must exist locally (docker images).
-    AUTERE_SANDBOX_IMAGE: process.env.AUTERE_E2E_SANDBOX_IMAGE?.trim() || 'off',
-    // Orphan record sharing: pi processes spawned by this backend
-    // append their pids to the run record (rpc-client reads it), so a
-    // SIGKILLed runner's detached pi is reaped by the next run.
+    AUTERE_SANDBOX_IMAGE: sandboxImage || 'off',
+    // Label sandbox containers so graceful cleanup and the next run can
+    // remove daemon-side containers even if the attached Docker CLI died.
+    ...(testRunId ? { AUTERE_E2E_RUN_ID: testRunId } : {}),
+    // Record detached pi/Docker client PIDs as well as the backend group.
+    AUTERE_RUN_RECORD: '1',
     AUTERE_RUN_RECORD_FILE: RUN_RECORD,
     // Harness-provisioned model list (see probeTestModels) — applied to
     // the test env's pi settings by the backend (pi-env.ts).
@@ -337,11 +387,7 @@ export async function startBackend(): Promise<void> {
   // backend itself (rpc-client) as pi processes appear — they live in
   // their OWN detached groups, so a group kill of the backend never
   // reaches them.
-  if (backendProcess.pid) {
-  try {
-    writeFileSync(RUN_RECORD, JSON.stringify({ pids: [-backendProcess.pid] }));
-  } catch {}
-  }
+  if (backendProcess.pid) reapRecord([-backendProcess.pid]);
 
   const proc = backendProcess;
 
@@ -401,7 +447,6 @@ export async function stopBackend(): Promise<void> {
     if (!backendProcess) {
       console.log('[e2e] No backend process to stop');
       await stopMock();
-      cleanupEnvsDir();
       resolve();
       return;
     }
@@ -421,7 +466,6 @@ export async function stopBackend(): Promise<void> {
 
     backendProcess.on('exit', () => {
       backendProcess = null;
-      cleanupEnvsDir();
       console.log('[e2e] Backend stopped');
     });
     void stopMock();
@@ -479,4 +523,11 @@ export async function stopBackend(): Promise<void> {
     });
   };
   await new Promise<void>((resolve) => stop(resolve));
+  if (cleanupSandboxContainers(testRunId) && cleanupEnvsDir()) {
+    try { rmSync(RUN_RECORD, { force: true }); } catch {}
+  } else {
+    try {
+      writeFileSync(RUN_RECORD, JSON.stringify({ pids: [], envDir: testEnvsDir, ...(testRunId ? { runId: testRunId } : {}) }));
+    } catch {}
+  }
 }

@@ -205,6 +205,7 @@ export class MonitorRpcClient {
       'docker', 'run',
       '-w', cwd,
       '--rm', '-i', '--init', '--network', 'host',
+      ...(process.env.AUTERE_E2E_RUN_ID ? ['--label', `autere.e2e.run=${process.env.AUTERE_E2E_RUN_ID}`] : []),
       '--user', `${uid}:${gid}`,
       // Supplementary GID of the socket: docker run only sets ONE --user
       // group; groups= lists EXTRA groups so mode 660 root:root sockets
