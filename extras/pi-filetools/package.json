@@ -1,0 +1,8 @@
+{
+  "name": "pi-filetools",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "diff": "^8.0.2"
+  }
+}
