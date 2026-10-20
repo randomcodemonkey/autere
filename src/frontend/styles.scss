@@ -5023,118 +5023,91 @@ textarea.settings-input {
 }
 
 // ── MCP server editor (Settings → MCP Servers) ──
-.mcp-server-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.75rem;
-  border: 1px solid var(--c-border);
-  border-radius: 0.6rem;
-  background: var(--c-surface);
+.mcp-table-wrap {
+  margin-top: 0.5rem;
 }
 
-.mcp-row-line {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0.45rem;
-}
-
-// Label above each input (label → input per settings convention)
-.mcp-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  min-width: 0;
-}
-
-.mcp-field-label {
-  font-size: 0.7rem;
-  color: var(--c-text-soft);
-}
-
-.mcp-field-wide {
-  width: 100%;
-}
-
-.mcp-remove-row {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.mcp-textarea {
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: 0.4rem;
-  color: var(--c-text-2);
-  font-size: 0.85rem;
-  font-family: var(--font-mono, monospace);
-  padding: 0.3rem 0.45rem;
-  width: 100%;
-  resize: vertical;
-
-  &:focus {
-    outline: none;
-    border-color: var(--c-info);
-  }
-
-  &::placeholder {
-    color: var(--c-text-dimmer);
-  }
-}
-
-// Reuse the standard settings input look inside MCP rows
-.mcp-list {
-  .mcp-name,
-  .mcp-command,
-  .mcp-args,
-  .mcp-description {
-    background: var(--c-surface);
-    border: 1px solid var(--c-border);
-    border-radius: 0.4rem;
-    color: var(--c-text-2);
-    font-size: 0.85rem;
-    font-family: inherit;
-    padding: 0.3rem 0.45rem;
-    min-width: 0;
-
-    &:focus {
-      outline: none;
-      border-color: var(--c-info);
-    }
-
-    &::placeholder {
-      color: var(--c-text-dimmer);
-    }
-  }
-
-  .mcp-name,
-  .mcp-command,
-  .mcp-args,
-  .mcp-description {
-    width: 100%;
-  }
-
-  .mcp-description {
-    font-size: 0.85em;
-    color: var(--c-muted);
-  }
-
-  // Match the other settings buttons (btn btn-primary)
-  .mcp-add-btn {
-    touch-action: manipulation; // sizing shared via .btn-row
-  }
-
-  // Enabled row mirrors Notifications: label left, toggle right, hint below.
-  .mcp-enabled-row {
+.mcp-table {
+  .mcp-server-summary {
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
-
-    .settings-toggle {
-      margin-left: auto; // right end of the header row
-    }
+    min-width: 0;
   }
+
+  .mcp-server-name {
+    color: var(--c-text);
+    overflow-wrap: anywhere;
+  }
+
+  .mcp-server-description {
+    color: var(--c-text-dimmer);
+    font-size: 0.7rem;
+    overflow-wrap: anywhere;
+  }
+
+  .mcp-endpoint {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .data-table-actions {
+    gap: 0.35rem;
+  }
+}
+
+.mcp-empty {
+  color: var(--c-text-dimmer);
+  font-size: 0.8rem;
+  padding: 0.75rem 0;
+}
+
+.modal-mcp {
+  max-width: 620px;
+}
+
+.mcp-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.mcp-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+
+  > span:first-child {
+    color: var(--c-text-soft);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .settings-input {
+    width: 100%;
+  }
+}
+
+.mcp-headers-editor {
+  font-family: var(--font-mono, monospace);
+  resize: vertical;
+  white-space: pre;
+}
+
+.mcp-edit-enabled {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--c-text-soft);
+  font-size: 0.75rem;
+}
+
+.mcp-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
 }
 
 // -- User card (self service) ---------------------------------------------------

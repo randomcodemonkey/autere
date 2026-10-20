@@ -393,15 +393,16 @@ describe('SettingsCard codemode/mcp (pi 1.0)', () => {
     });
   }
 
-  it('renders the codemode toggle and MCP rows; save posts the mcpServers object', () => {
+  it('shows servers in a table and saves edits made in the modal', () => {
     stub({ codemode: true, mcpServers: { fs: { command: 'npx', args: ['-y', 'pkg'], exposure: 'codemode' } } }, true);
     cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
-    cy.get('.mcp-server-row').should('have.length', 1);
-    cy.get('.mcp-name').should('have.value', 'fs');
-    cy.get('.mcp-command').should('have.value', 'npx');
-    cy.get('.mcp-args').should('have.value', '-y, pkg');
-    // Make a change first — the save button only renders when dirty
-    cy.get('.mcp-exposure').select('deferred');
+    cy.get('.mcp-table tbody tr').should('have.length', 1);
+    cy.get('.mcp-server-name').should('contain', 'fs');
+    cy.get('.mcp-edit').click();
+    cy.get('.modal-mcp .mcp-command').should('have.value', 'npx');
+    cy.get('.modal-mcp .mcp-args').should('have.value', '-y, pkg');
+    cy.get('.modal-mcp .mcp-exposure').select('deferred');
+    cy.contains('.modal-mcp button', 'Save server').click();
     cy.contains('button', 'Save Settings').click();
     cy.wrap(null).should(() => {
       expect(savedBodyHolder.body.codemode).to.eq(true);
@@ -409,23 +410,25 @@ describe('SettingsCard codemode/mcp (pi 1.0)', () => {
     });
   });
 
-  it('typing in an MCP name/url field keeps focus row-stable', () => {
+  it('edits server fields in a stable modal draft', () => {
     stub({ codemode: false, mcpServers: { fs: { command: 'npx', exposure: 'codemode' } } }, false);
     cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
-    cy.get('.mcp-name').click().type('-v2');
+    cy.get('.mcp-edit').click();
+    cy.get('.modal-mcp .mcp-name').clear().type('fs-v2');
     cy.focused().should('have.class', 'mcp-name');
-    cy.get('.mcp-name').should('have.value', 'fs-v2');
-    cy.get('.mcp-command').click().type(' -y pkg');
-    cy.focused().should('have.class', 'mcp-command');
-    cy.get('.mcp-name').should('have.value', 'fs-v2'); // row not remounted
+    cy.get('.modal-mcp .mcp-command').clear().type('node server.js');
+    cy.get('.modal-mcp .mcp-name').should('have.value', 'fs-v2');
+    cy.contains('.modal-mcp button', 'Save server').click();
+    cy.get('.mcp-server-name').should('contain', 'fs-v2');
   });
 
-  it('keeps HTTP header text editable while parsing complete lines', () => {
+  it('accepts multiline HTTP headers in the edit modal', () => {
     stub({ codemode: false, mcpServers: { remote: { url: 'https://example.com/mcp', headers: {} } } }, true);
     cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
-    cy.contains('.mcp-field-label', 'HTTP headers').parent().find('textarea').as('headers');
-    cy.get('@headers').type('Authorization: Bearer token{enter}X-API-Key: key');
-    cy.get('@headers').should('have.value', 'Authorization: Bearer token\nX-API-Key: key');
+    cy.get('.mcp-edit').click();
+    cy.get('.mcp-headers-editor').type('Authorization: Bearer token{enter}X-API-Key: key');
+    cy.get('.mcp-headers-editor').should('have.value', 'Authorization: Bearer token\nX-API-Key: key');
+    cy.contains('.modal-mcp button', 'Save server').click();
     cy.contains('button', 'Save Settings').click();
     cy.wrap(null).should(() => {
       expect(savedBodyHolder.body.mcpServers.remote.headers).to.deep.eq({
@@ -435,14 +438,18 @@ describe('SettingsCard codemode/mcp (pi 1.0)', () => {
     });
   });
 
-  it('add/remove rows and exposure select edit the mcp draft', () => {
+  it('adds servers in the edit modal and removes them from the table', () => {
     stub({ codemode: false, mcpServers: {} }, false);
     cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
     cy.contains('button', 'Add MCP Server').click();
-    cy.get('.mcp-server-row').should('have.length', 1);
-    cy.get('.mcp-exposure').select('direct');
-    cy.get('.mcp-exposure').should('have.value', 'direct');
+    cy.get('.modal-mcp .mcp-name').should('have.value', 'server-1');
+    cy.get('.modal-mcp .mcp-command').type('npx');
+    cy.get('.modal-mcp .mcp-exposure').select('direct');
+    cy.contains('.modal-mcp button', 'Save server').click();
+    cy.get('.mcp-table tbody tr').should('have.length', 1);
+    cy.get('.mcp-table tbody tr').should('contain', 'server-1').and('contain', 'direct');
     cy.get('.mcp-remove').click();
-    cy.get('.mcp-server-row').should('have.length', 0);
+    cy.get('.mcp-table').should('not.exist');
+    cy.contains('No MCP servers configured.').should('be.visible');
   });
 });

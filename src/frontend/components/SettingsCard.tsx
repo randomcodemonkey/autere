@@ -27,203 +27,202 @@ const FieldShell: React.FC<{ field: SettingField; children: React.ReactNode }> =
   </div>
 );
 
-// Per-user pi mcp.json editor. One row per server: name, stdio command
-// (+args) or http url, exposure, enabled. Rendered as a full section so the
-// Add button can sit on the section title row.
-let mcpRowSeq = 0;
+type McpServerEditDraft = {
+  name: string;
+  type: 'stdio' | 'http';
+  command: string;
+  args: string;
+  url: string;
+  headers: string;
+  exposure: string;
+  description: string;
+  enabled: boolean;
+};
+
+const makeMcpServerDraft = (name: string, server: Record<string, any> = {}): McpServerEditDraft => ({
+  name,
+  type: server.command !== undefined ? 'stdio' : 'http',
+  command: server.command || '',
+  args: Array.isArray(server.args) ? server.args.join(', ') : '',
+  url: server.url || '',
+  headers: Object.entries(server.headers || {}).map(([key, value]) => `${key}: ${value}`).join('\n'),
+  exposure: server.exposure || 'codemode',
+  description: server.description || '',
+  enabled: server.enabled !== false,
+});
+
+const parseMcpHeaders = (text: string): Record<string, string> | undefined => {
+  const entries = text.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const colon = line.indexOf(':');
+      return colon < 0 ? null : [line.slice(0, colon).trim(), line.slice(colon + 1).trim()];
+    })
+    .filter((entry): entry is [string, string] => entry !== null && entry[0] !== '');
+  return entries.length ? Object.fromEntries(entries) : undefined;
+};
+
 const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChange: (key: string, v: Record<string, any>) => void }> = ({ field, value, onChange }) => {
   const servers: Record<string, any> = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {};
   const names = Object.keys(servers);
-  // Rows are keyed by a stable id, NOT the server name: the name field is
-  // itself editable, so keying by name remounts the row on every keystroke
-  // (focus loss). The map is rename-aware (name edit moves the id) and
-  // pruned to current entries so removed/reloaded servers don't leak ids.
-  const idsRef = useRef<Record<string, string>>({});
-  const [headersDrafts, setHeadersDrafts] = useState<Record<string, string>>({});
-  const rowId = (name: string): string => {
-    if (!idsRef.current[name]) idsRef.current[name] = `mcp-row-${++mcpRowSeq}`;
-    return idsRef.current[name];
+  const [editing, setEditing] = useState<{ originalName: string | null; draft: McpServerEditDraft; error: string } | null>(null);
+
+  const openAdd = () => {
+    let index = 1;
+    while (servers[`server-${index}`]) index++;
+    setEditing({ originalName: null, draft: makeMcpServerDraft(`server-${index}`, { command: '', args: [] }), error: '' });
   };
-  const patch = (oldName: string, name: string, s: any) => {
-    const next: Record<string, any> = {};
-    for (const n of names) next[n === oldName ? name : n] = servers[n];
-    next[name] = { ...next[name], ...s };
-    // Rename: move the row id so the edited row keeps its DOM (and focus)
-    if (oldName !== name && idsRef.current[oldName]) {
-      idsRef.current[name] = idsRef.current[oldName];
-      delete idsRef.current[oldName];
+  const openEdit = (name: string) => setEditing({ originalName: name, draft: makeMcpServerDraft(name, servers[name]), error: '' });
+  const updateDraft = (changes: Partial<McpServerEditDraft>) => setEditing((current) => current
+    ? { ...current, draft: { ...current.draft, ...changes }, error: '' }
+    : current);
+  const save = () => {
+    if (!editing) return;
+    const name = editing.draft.name.trim();
+    if (!/^[\w-]+$/.test(name)) {
+      setEditing({ ...editing, error: 'Use letters, numbers, underscores, or hyphens for the server name.' });
+      return;
     }
+    if (names.some((existing) => existing !== editing.originalName && existing.toLowerCase() === name.toLowerCase())) {
+      setEditing({ ...editing, error: 'A server with that name already exists.' });
+      return;
+    }
+
+    const server = { ...(editing.originalName ? servers[editing.originalName] : {}) };
+    if (editing.draft.exposure !== (server.exposure || 'codemode')) server.exposure = editing.draft.exposure;
+    if (editing.draft.description !== (server.description || '')) server.description = editing.draft.description || undefined;
+    if (editing.draft.enabled !== (server.enabled !== false)) server.enabled = editing.draft.enabled;
+    if (editing.draft.type === 'stdio') {
+      server.command = editing.draft.command;
+      server.args = editing.draft.args.split(',').map((arg) => arg.trim()).filter(Boolean);
+      delete server.url;
+      delete server.headers;
+    } else {
+      server.url = editing.draft.url;
+      server.headers = parseMcpHeaders(editing.draft.headers);
+      delete server.command;
+      delete server.args;
+    }
+
+    const next = { ...servers };
+    if (editing.originalName) delete next[editing.originalName];
+    next[name] = server;
+    onChange(field.key, next);
+    setEditing(null);
+  };
+  const remove = (name: string) => {
+    const next = { ...servers };
+    delete next[name];
     onChange(field.key, next);
   };
-  // args round-trip through a comma-separated string; entries with
-  // spaces/commas need the JSON-escape hatch (edit args via CLI/API).
-  const argsText = (s: any) => Array.isArray(s.args) ? s.args.join(', ') : '';
+
   return (
     <div className="settings-section">
       <div className="settings-section-head">
         <h3 className="settings-section-title">{field.label}</h3>
-        <button
-          className="btn btn-primary btn-row mcp-add-btn"
-          type="button"
-          onClick={() => onChange(field.key, { ...servers, [`server-${names.length + 1}`]: { command: '', args: [] } })}
-        >
+        <button className="btn btn-primary btn-row mcp-add-btn" type="button" onClick={openAdd}>
           Add MCP Server
         </button>
       </div>
       {field.description && <div className="settings-description">{field.description}</div>}
-      <div className="sortable-list mcp-list">
-        {names.map((name) => {
-          const s = servers[name] || {};
-          const id = rowId(name);
-          const headersText = headersDrafts[id] ?? Object.entries(s.headers || {}).map(([h, v]) => `${h}: ${v}`).join('\n');
-          const exposure = s.exposure || 'codemode';
-          return (
-            <div key={id} className="mcp-server-row">
-              <div className="mcp-row-line">
-                <div className="mcp-field">
-                  <span className="mcp-field-label">Name</span>
-                  <input
-                    className="sortable-list-input mcp-name"
-                    type="text"
-                    value={name}
-                    title="Server name (letters, digits, _ -)"
-                    spellCheck={false}
-                    onChange={(e) => patch(name, e.target.value.replace(/[^\w-]/g, '_'), s)}
-                    placeholder="name"
-                  />
-                </div>
-                <div className="mcp-field">
-                  <span className="mcp-field-label">Type</span>
-                  <select
-                    className="settings-input mcp-kind"
-                    value={s.command !== undefined ? 'stdio' : 'http'}
-                    onChange={(e) => patch(name, name, e.target.value === 'stdio' ? { command: '', url: undefined } : { url: '', command: undefined })}
-                  >
-                    <option value="stdio">stdio</option>
-                    <option value="http">http</option>
-                  </select>
-                </div>
-                {s.command !== undefined ? (
-                  <>
-                    <div className="mcp-field">
-                      <span className="mcp-field-label">Command</span>
-                      <input
-                        className="sortable-list-input mcp-command"
-                        type="text"
-                        value={s.command || ''}
-                        placeholder="npx -y @modelcontextprotocol/server-everything"
-                        spellCheck={false}
-                        onChange={(e) => patch(name, name, { command: e.target.value })}
-                      />
-                    </div>
-                    <div className="mcp-field">
-                      <span className="mcp-field-label">Args</span>
-                      <input
-                        className="sortable-list-input mcp-args"
-                        type="text"
-                        value={argsText(s)}
-                        placeholder="args, comma separated"
-                        spellCheck={false}
-                        onChange={(e) => patch(name, name, { args: e.target.value.split(',').map((a: string) => a.trim()).filter(Boolean) })}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="mcp-field">
-                      <span className="mcp-field-label">URL</span>
-                      <input
-                        className="sortable-list-input mcp-command"
-                        type="text"
-                        value={s.url || ''}
-                        placeholder="https://example.com/mcp"
-                        spellCheck={false}
-                        onChange={(e) => patch(name, name, { url: e.target.value })}
-                      />
-                    </div>
-                    <div className="mcp-field">
-                      <span className="mcp-field-label">HTTP headers</span>
-                      <div className="settings-description">One per line: Name: value</div>
-                      <textarea
-                        className="mcp-textarea"
-                        rows={Math.max(2, Object.keys(s.headers || {}).length + 1)}
-                        value={headersText}
-                        placeholder={"Authorization: Bearer …\nX-Custom: value"}
-                        spellCheck={false}
-                        onChange={(e) => {
-                          const text = e.target.value;
-                          setHeadersDrafts((prev) => ({ ...prev, [id]: text }));
-                          const headers: Record<string, string> | undefined = text.trim()
-                            ? Object.fromEntries(
-                              text.split('\n')
-                                .map((l) => l.trim())
-                                .filter(Boolean)
-                                .map((l) => {
-                                  const i = l.indexOf(':');
-                                  return i < 0 ? null : [l.slice(0, i).trim(), l.slice(i + 1).trim()];
-                                })
-                                .filter((h): h is [string, string] => h !== null && h[0] !== '')
-                            )
-                            : undefined;
-                          patch(name, name, { headers });
-                        }}
-                        onBlur={() => setHeadersDrafts((prev) => {
-                          if (!(id in prev)) return prev;
-                          const next = { ...prev };
-                          delete next[id];
-                          return next;
-                        })}
-                      />
-                    </div>
-                  </>
-                )}
-                <div className="mcp-field mcp-field-wide">
-                  <span className="mcp-field-label">Exposure</span>
-                  <select
-                    className="settings-input mcp-exposure"
-                    value={s.exposure || 'codemode'}
-                    title="How the server's tools reach the model"
-                    onChange={(e) => patch(name, name, { exposure: e.target.value })}
-                  >
-                    <option value="codemode">codemode</option>
-                    <option value="deferred">deferred (tool search)</option>
-                    <option value="direct">direct</option>
-                  </select>
-                  <span className="settings-description" key={exposure}>
-                    {exposure === 'codemode' && 'Tools stay out of the model’s tool declarations; codemode scripts call them via functions like mcp__server__tool and discover them with searchTools(). Keeps the context small and avoids tool-description injection.'}
-                    {exposure === 'deferred' && 'The model first sees only a name stub per tool; calling one (or using tool_search) loads the full schema on demand. Callable both natively and from codemode.'}
-                    {exposure === 'direct' && 'The full tool schemas are declared to the model like built-in tools. Most discoverable; costs the most context.'}
-                  </span>
-                </div>
-              </div>
-              <div className="mcp-field mcp-field-wide">
-                <span className="mcp-field-label">Description</span>
-                <textarea
-                  className="mcp-textarea"
-                  rows={2}
-                  value={s.description || ''}
-                  placeholder="What this server offers (shown in the system prompt and used by tool search)"
-                  spellCheck={false}
-                  onChange={(e) => patch(name, name, { description: e.target.value })}
-                />
-              </div>
-              <div className="settings-field mcp-enabled-row">
-                <div className="settings-field-header">
-                  <label className="settings-label">Enabled</label>
-                  <label className="settings-toggle" title="Connect this server when the session starts">
-                    <input type="checkbox" checked={s.enabled !== false} onChange={(e) => patch(name, name, { enabled: e.target.checked })} />
-                    <span className="settings-toggle-slider" />
-                  </label>
-                </div>
-                <span className="settings-description">Enable or disable this server. When off, pi keeps the entry but does not connect to it.</span>
-              </div>
-              <div className="mcp-remove-row">
-                <button className="btn btn-danger mcp-remove" onClick={() => onChange(field.key, Object.fromEntries(names.filter((n) => n !== name).map((n) => [n, servers[n]])))} title={`Remove ${name}`}>Remove</button>
-              </div>
+      {names.length === 0 ? (
+        <div className="mcp-empty">No MCP servers configured.</div>
+      ) : (
+        <div className="table-responsive mcp-table-wrap">
+          <table className="data-table mcp-table">
+            <thead>
+              <tr><th>Server</th><th>Type</th><th>Endpoint</th><th>Exposure</th><th>Status</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+              {names.map((name) => {
+                const server = servers[name] || {};
+                const isStdio = server.command !== undefined;
+                const endpoint = isStdio ? [server.command, ...(Array.isArray(server.args) ? server.args : [])].filter(Boolean).join(' ') : server.url;
+                return (
+                  <tr key={name}>
+                    <td data-label="Server"><div className="mcp-server-summary"><strong className="mcp-server-name">{name}</strong>{server.description && <span className="mcp-server-description">{server.description}</span>}</div></td>
+                    <td data-label="Type">{isStdio ? 'stdio' : 'HTTP'}</td>
+                    <td data-label="Endpoint"><code className="mcp-endpoint">{endpoint || '—'}</code></td>
+                    <td data-label="Exposure">{server.exposure || 'codemode'}</td>
+                    <td data-label="Status">{server.enabled === false ? 'Disabled' : 'Enabled'}</td>
+                    <td data-label="Actions" className="data-table-actions">
+                      <button className="btn btn-default mcp-edit" type="button" onClick={() => openEdit(name)}>Edit</button>
+                      <button className="btn btn-danger mcp-remove" type="button" onClick={() => remove(name)} title={`Remove ${name}`}>Remove</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {editing && (
+        <Modal open onClose={() => setEditing(null)} className="modal-mcp">
+          <div className="modal-header">
+            <h3>{editing.originalName ? `Edit MCP server: ${editing.originalName}` : 'Add MCP server'}</h3>
+            <button className="modal-close" type="button" onClick={() => setEditing(null)}>✕</button>
+          </div>
+          <div className="modal-body mcp-edit-form">
+            {editing.error && <div className="settings-error">{editing.error}</div>}
+            <label className="mcp-edit-field">
+              <span>Name</span>
+              <input className="settings-input mcp-name" value={editing.draft.name} onChange={(e) => updateDraft({ name: e.target.value })} />
+            </label>
+            <label className="mcp-edit-field">
+              <span>Type</span>
+              <select className="settings-input mcp-kind" value={editing.draft.type} onChange={(e) => updateDraft({ type: e.target.value as 'stdio' | 'http' })}>
+                <option value="stdio">stdio</option>
+                <option value="http">HTTP</option>
+              </select>
+            </label>
+            {editing.draft.type === 'stdio' ? (
+              <>
+                <label className="mcp-edit-field">
+                  <span>Command</span>
+                  <input className="settings-input mcp-command" value={editing.draft.command} placeholder="npx -y @modelcontextprotocol/server-everything" onChange={(e) => updateDraft({ command: e.target.value })} />
+                </label>
+                <label className="mcp-edit-field">
+                  <span>Arguments (comma separated)</span>
+                  <input className="settings-input mcp-args" value={editing.draft.args} placeholder="-y, @modelcontextprotocol/server-everything" onChange={(e) => updateDraft({ args: e.target.value })} />
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="mcp-edit-field">
+                  <span>URL</span>
+                  <input className="settings-input mcp-command" value={editing.draft.url} placeholder="https://example.com/mcp" onChange={(e) => updateDraft({ url: e.target.value })} />
+                </label>
+                <label className="mcp-edit-field">
+                  <span>HTTP headers</span>
+                  <span className="settings-description">One per line: Name: value</span>
+                  <textarea className="settings-input mcp-headers-editor" rows={5} value={editing.draft.headers} placeholder={'Authorization: Bearer token\nX-Custom: value'} onChange={(e) => updateDraft({ headers: e.target.value })} />
+                </label>
+              </>
+            )}
+            <label className="mcp-edit-field">
+              <span>Exposure</span>
+              <select className="settings-input mcp-exposure" value={editing.draft.exposure} onChange={(e) => updateDraft({ exposure: e.target.value })}>
+                <option value="codemode">codemode</option>
+                <option value="deferred">deferred (tool search)</option>
+                <option value="direct">direct</option>
+              </select>
+            </label>
+            <label className="mcp-edit-field">
+              <span>Description</span>
+              <textarea className="settings-input" rows={2} value={editing.draft.description} placeholder="What this server offers" onChange={(e) => updateDraft({ description: e.target.value })} />
+            </label>
+            <label className="mcp-edit-enabled">
+              <input type="checkbox" checked={editing.draft.enabled} onChange={(e) => updateDraft({ enabled: e.target.checked })} />
+              <span>Enabled</span>
+            </label>
+            <div className="mcp-modal-actions">
+              <button className="btn btn-default" type="button" onClick={() => setEditing(null)}>Cancel</button>
+              <button className="btn btn-primary" type="button" onClick={save}>Save server</button>
             </div>
-          );
-        })}
-      </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };
