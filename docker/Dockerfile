@@ -26,7 +26,7 @@ RUN apt-get -y -qq update \
       apt-transport-https \
       build-essential \
       curl \
-      emacs \
+      emacs-nox \
       fd-find \
       git \
       gnupg \
@@ -56,6 +56,7 @@ RUN apt-get -y -qq update \
       docker-ce-cli \
       nodejs \
       sbt \
+    && rm -rf /usr/lib/jvm/*/jmods \
     && apt-get -y clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -66,6 +67,14 @@ RUN npm install -g cypress --ignore-scripts \
     && npm install -g 9router --ignore-scripts \
     && npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.0.4 \
     && npm install -g @tobilu/qmd \
+    # qmd ships llama.cpp prebuilds for every arch and GPU backend; keep only
+    # this arch's CPU build (deployments pass no GPU devices)
+    && arch="$(dpkg --print-architecture)" \
+    && case "$arch" in amd64) llama=x64 ;; arm64) llama=arm64 ;; *) llama="" ;; esac \
+    && for d in /usr/lib/node_modules/@tobilu/qmd/node_modules/@node-llama-cpp/*/; do \
+         n="$(basename "$d")"; \
+         case "$n" in *-cuda|*-cuda-ext|*-vulkan) rm -rf "$d" ;; "linux-$llama") ;; *) [ -z "$llama" ] || rm -rf "$d" ;; esac; \
+       done \
     && npm cache clean --force
 
 # autere backend runs from source via tsx (runtime dependency, installed with the app)
@@ -84,6 +93,11 @@ COPY --chown=autere:autere --from=build /app/dist-backend /home/autere/dist-back
 COPY --chown=autere:autere package.json package-lock.json /home/autere/dist/
 # Bundled custom pi extensions (loaded via entrypoint symlinks).
 COPY --chown=autere:autere extras /home/autere/pi-ext-extra/
+# Extensions carry their own package.json (node_modules are dockerignored),
+# so install their deps here; sandbox env copies include them.
+RUN set -e; cd /home/autere/pi-ext-extra; for d in */; do \
+      if [ -f "$d/package-lock.json" ]; then (cd "$d" && npm ci --omit=dev --no-audit --no-fund); fi; \
+    done; rm -rf /root/.npm
 
 WORKDIR /home/autere/dist
 # The compiled backend resolves bare imports starting at /home/autere/dist-backend
