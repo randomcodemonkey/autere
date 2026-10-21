@@ -29,7 +29,7 @@ import { writeAgentAccess } from './auth.js';
 import { lstatSync, readlinkSync } from 'fs';
 import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, copyFileSync, rmSync, symlinkSync, readFileSync, writeFileSync, renameSync } from 'fs';
 import { randomUUID } from 'crypto';
-import { invalidateCache, setExtraEnabled, getAvailableExtras, DEFAULT_ENABLED_EXTRAS, writeSavedExtras, desiredExtras } from './user-settings.js';
+import { invalidateCache, setExtraEnabled, getAvailableExtras, ALWAYS_ENABLED_EXTRAS, RETIRED_EXTRAS, DEFAULT_ENABLED_EXTRAS, writeSavedExtras, desiredExtras } from './user-settings.js';
 import { execFileSync } from 'node:child_process';
 import { join } from 'path';
 import { PI_DIR, AUTERE_DIR } from './constants.js';
@@ -42,24 +42,24 @@ const SHARED_DIRS = ['npm', 'extensions', 'skills', 'themes', 'bin', 'tmp'];
 /** Files copied into each user environment on first use */
 const SEED_FILES = ['settings.json', 'auth.json', 'models-store.json', 'models.json', 'mcp.json'];
 
-/** Neutralize pi-9router-ext in the env's settings.json packages list:
- *  rewrite its entry to object form with empty resource lists, which pi
- *  treats as a fully filtered-out package (nothing loads). */
-export function disable9routerExt(envDir: string): void {
+/** Strip the legacy npm pi-9router-ext from the env's settings.json packages
+ *  list. The 9router provider now comes from the bundled extras/pi-9router-ext
+ *  fork, which ensurePiEnv installs; leaving the npm entry would load both and
+ *  register the "9router" provider twice. Idempotent. */
+export function removeLegacy9routerPackage(envDir: string): void {
   const settingsPath = join(envDir, 'settings.json');
   try {
     const raw = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     if (!Array.isArray(raw.packages)) return;
-    const packages = raw.packages.map((p: any) =>
-      (typeof p === 'string' ? p.includes('pi-9router-ext') : p.source?.includes?.('pi-9router-ext'))
-        ? { source: 'npm:pi-9router-ext', extensions: [], skills: [], promptTemplates: [] }
-        : p);
-    if (JSON.stringify(packages) !== JSON.stringify(raw.packages)) {
+    const packages = raw.packages.filter((p: any) =>
+      !(typeof p === 'string' ? p.includes('pi-9router-ext') : p.source?.includes?.('pi-9router-ext')));
+    if (packages.length !== raw.packages.length) {
       raw.packages = packages;
       writeFileSync(settingsPath, JSON.stringify(raw, null, 2));
-      log.piEnv.info(`Provider is not 9router — pi-9router-ext disabled in ${settingsPath}`);
+      invalidateCache(settingsPath);
+      log.piEnv.info(`Legacy npm pi-9router-ext removed from ${settingsPath}`);
     }
-  } catch { /* no/invalid settings.json - nothing to disable */ }
+  } catch { /* no/invalid settings.json - nothing to remove */ }
 }
 
 /** Directory of per-user pi environments.
@@ -147,8 +147,15 @@ function applyTestModels(envDir: string): void {
  *  ones. Keeps master-seeded entries from overriding the saved choices. */
 function reconcileExtraExtensions(user: string): void {
   const wanted = new Set(desiredExtras(user).map((s) => s.slice('local:'.length)));
-  for (const spec of getAvailableExtras()) {
-    const name = spec.slice('local:'.length);
+  const names = [
+    ...getAvailableExtras().map((s) => s.slice('local:'.length)),
+    // Always-on extras are iterated even when the provider turns them off, so
+    // the copy is removed from envs that had it installed by a previous run.
+    ...ALWAYS_ENABLED_EXTRAS,
+    // Retired extras are never wanted — this is what deletes their copies.
+    ...RETIRED_EXTRAS,
+  ];
+  for (const name of names) {
     setExtraEnabled(user, name, wanted.has(name));
   }
 }
@@ -185,12 +192,9 @@ export function ensurePiEnv(user: string): string {
     // per-user picks (models, tools) must survive every ensure.
     applyTestModels(envDir);
 
-    // When pi runs against a non-9router provider, neutralize
-    // pi-9router-ext in the env's settings.json (object form with empty
-    // resource lists = package loads nothing; pi 'packages filter').
-    if (process.env.AUTERE_PROVIDER && process.env.AUTERE_PROVIDER !== '9router') {
-      disable9routerExt(envDir);
-    }
+    // The 9router provider ships as the bundled extras/pi-9router-ext fork —
+    // drop the legacy npm package so it is never loaded alongside it.
+    removeLegacy9routerPackage(envDir);
 
     // Copy any extension config files (e.g. 9router-config.json)
     try {

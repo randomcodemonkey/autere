@@ -1,0 +1,17 @@
+{
+  "name": "pi-9router-ext",
+  "version": "0.2.4",
+  "private": true,
+  "description": "9router provider for pi - autere fork of pi-9router-ext (model capabilities from 9router's own /v1/models, no models.dev metadata fetch, inline combo thinking levels)",
+  "type": "module",
+  "main": "./index.ts",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

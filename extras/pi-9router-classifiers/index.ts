@@ -8,7 +8,8 @@
  * classify() has zero classifiers to use.
  *
  * This extension re-registers the "9router" provider on session_start (after
- * pi-9router-ext has registered — npm packages load after local dirs):
+ * the provider exists — extras/pi-9router-ext registers it after its async
+ * /v1/models discovery, hence the before_agent_start retry below):
  *   - adds classifier entries for upstream ids that look like System One
  *     classifier routes (typesafe|jev),
  *   - supplies the built-in pi-ai `typesafe-system-one` implementation so

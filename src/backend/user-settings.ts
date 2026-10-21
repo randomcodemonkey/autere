@@ -745,16 +745,48 @@ export function writeSavedExtras(user: string, names: string[]): void {
 }
 
 /** Bundled custom extensions (pi-ext-extra) as toggle ids: 'local:pi-X'.
- *  These install into a user's env as extensions/<name> symlinks on save. */
+ *  These install into a user's env as extensions/<name> symlinks on save.
+ *  Always-on extras are excluded: they are infrastructure, not user choices. */
 export function getAvailableExtras(): string[] {
   try {
     return readdirSync(EXTRAS_DIR, { withFileTypes: true })
       .filter((e) => e.isDirectory() || e.isSymbolicLink())
       .map((e) => e.name)
-      .filter((name) => existsSync(join(EXTRAS_DIR, name, 'index.ts')) || existsSync(join(EXTRAS_DIR, name, 'index.js')))
+      .filter((name) => !ALWAYS_ENABLED_EXTRAS.includes(name) && isBundledExtra(name))
       .sort()
       .map((name) => `local:${name}`);
   } catch { return []; }
+}
+
+/** True when the bundled extras dir actually holds this extra's entry file. */
+function isBundledExtra(name: string): boolean {
+  return existsSync(join(EXTRAS_DIR, name, 'index.ts')) || existsSync(join(EXTRAS_DIR, name, 'index.js'));
+}
+
+/** Bundled extras that are always installed for 9router deployments.
+ *  They never show up in Settings → Extensions and cannot be toggled: the
+ *  name is absent from getAvailableExtras (the only source of user-facing
+ *  toggle ids), and ensurePiEnv reinstalls the copy on every spawn. */
+export const ALWAYS_ENABLED_EXTRAS = ['pi-9router-ext'];
+
+/** Bundled extras that were removed from the repo — their per-user copies are
+ *  deleted from envs on the next spawn (nothing else would clean them up: the
+ *  reconcile loop only iterates currently bundled names). */
+export const RETIRED_EXTRAS = ['pi-combo-reasoning'];
+
+/** True unless AUTERE_PROVIDER names a different provider (9router is the
+ *  default, so an unset value means 9router). */
+export function isNineRouterProvider(): boolean {
+  const provider = process.env.AUTERE_PROVIDER;
+  return !provider || provider === '9router';
+}
+
+/** Always-on extras for this deployment — empty when pi runs against a
+ *  non-9router provider, where the 9router provider must not register. Also
+ *  empty for a name that is not bundled (an image built without the extra),
+ *  so ensurePiEnv never tries to install a missing source. */
+export function getAlwaysEnabledExtras(): string[] {
+  return isNineRouterProvider() ? ALWAYS_ENABLED_EXTRAS.filter(isBundledExtra) : [];
 }
 
 /** Extras currently linked into the user's env extensions dir. */
@@ -774,11 +806,10 @@ export function getEnabledExtras(user: string): string[] {
 export function desiredExtras(user: string): string[] {
   const available = getAvailableExtras();
   const saved = savedExtras(user);
-  if (saved) {
-    const have = new Set(saved.local);
-    return available.filter((s) => have.has(s.slice('local:'.length)));
-  }
-  return available.filter((s) => DEFAULT_ENABLED_EXTRAS[s.slice('local:'.length)] !== false);
+  const chosen = saved
+    ? available.filter((s) => new Set(saved.local).has(s.slice('local:'.length)))
+    : available.filter((s) => DEFAULT_ENABLED_EXTRAS[s.slice('local:'.length)] !== false);
+  return [...getAlwaysEnabledExtras().map((name) => `local:${name}`), ...chosen];
 }
 
 /** Refresh an enabled bundled extra as a real per-user copy; remove it when disabled. */

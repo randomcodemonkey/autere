@@ -4,12 +4,17 @@
 # /home/autere/pi-ext-extra — link them into the master pi extensions dir.
 # pi-dedup is shipped but NOT auto-installed: opt in per user via
 # Settings → Extensions (admin can toggle bundled extras).
+# pi-9router-ext is installed per user by the backend (always on for 9router
+# deployments, hidden from Settings); skip it here on other providers.
 piExtensions="$HOME/.pi/agent/extensions"
 mkdir -p "$piExtensions"
 for dir in /home/autere/pi-ext-extra/*; do
   [ -d "$dir" ] || continue
   name=$(basename "$dir")
   [ "$name" = "pi-dedup" ] && continue
+  if [ "$name" = "pi-9router-ext" ] && [ -n "${AUTERE_PROVIDER:-}" ] && [ "${AUTERE_PROVIDER}" != "9router" ]; then
+    continue
+  fi
   ln -sfn "$dir" "$piExtensions/$name"
 done
 
@@ -19,7 +24,6 @@ piSettings="$HOME/.pi/agent/settings.json"
 jq --arg p "${AUTERE_PROVIDER:-}" '
   def keep($src):
     $src == "npm:pi-memory"
-    or ($src == "npm:pi-9router-ext" and ($p == "" or $p == "9router"))
     or ($src == "npm:pi-web-search" and ($p != "" and $p != "9router"))
     or ($src == "npm:copilot-credit-usage" and $p == "github-copilot");
   .packages |= [ .[]

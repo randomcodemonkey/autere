@@ -226,19 +226,29 @@ extras/pi-personas/    # pi extension: puts the session's bound persona into the
                        # bindings written per user env as persona-active.json,
                        # keyed by session file name; personas.ts stores the
                        # library)
-extras/pi-combo-reasoning/ # pi extension: fixes reasoning on 9router COMBO routes.
-                       # 9router's combo translator inlines the reasoning stream into
-                       # plain `content` when a request carries `reasoning_effort` (which
-                       # pi-9router-ext sends for pi thinking levels) — chain-of-thought
-                       # then shows up as regular assistant text. Runs on session_start
-                       # (after pi-9router-ext registers; npm packages load last, so a
-                       # load-time fix would be stomped) and re-registers the "9router"
-                       # provider with combo models' thinkingLevelMap fully nulled —
-                       # pi-ai drops those levels, pi sends NO reasoning_effort, and
-                       # upstream default reasoning streams as reasoning_content. Combo
-                       # detection = pi-9router-ext's "🔀" name prefix. Add the same fix
-                       # upstream in pi-9router-ext when this is fixed in 9router's
-                       # combo translator.
+extras/pi-9router-ext/ # pi extension: the 9router provider. Autere FORK of
+                       # pi-9router-ext 0.2.4 (MIT, LICENSE + README in the dir).
+                       # Upstream's models.dev metadata fetch (external network
+                       # call, 24h cache, fuzzy id lookup) is GONE: model
+                       # capabilities come from 9router's own /v1/models payload
+                       # (capabilities.vision -> input text+image, contextWindow,
+                       # maxOutput). Upstream's lookup never resolved combo ids
+                       # (deepseek-combo -> no metadata -> images silently
+                       # stripped) and mis-resolved others. Combo thinking levels
+                       # are pinned to null inline in mapNineRouterModel (pi
+                       # treats a missing map entry as supported, so nulls are
+                       # required) — this replaced extras/pi-combo-reasoning,
+                       # which had to re-register the provider after async
+                       # discovery to avoid racing it. ALWAYS INSTALLED and
+                       # hidden from users when AUTERE_PROVIDER is unset or
+                       # 9router (ALWAYS_ENABLED_EXTRAS in user-settings.ts):
+                       # absent from getAvailableExtras (Settings → Extensions),
+                       # filtered out of enabledExtensionsFor (dashboard card),
+                       # reinstalled per env by reconcileExtraExtensions, and
+                       # applied to sandboxed sessions too (the env extensions
+                       # dir is mounted). Non-9router providers: not installed,
+                       # and ensurePiEnv strips the legacy npm pi-9router-ext
+                       # package entry so both never register the provider.
 extras/pi-dedup/       # pi extension: elides exact-duplicate tool results
                        # (tool_result patch → pointer to the in-context first
                        # occurrence; append-time only so prompt caching keeps
