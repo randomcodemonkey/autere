@@ -1719,11 +1719,11 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         }
       }
       if (effType === 'steer') {
-        await t.rpc.steer(text);
+        await t.rpc.steer(text, rpcImages);
       } else if (effType === 'followUp') {
-        await t.rpc.followUp(text);
+        await t.rpc.followUp(text, rpcImages);
       } else {
-        await t.rpc.prompt(text);
+        await t.rpc.prompt(text, rpcImages);
       }
       // Commit the user message into the stream history immediately —
       // retires the client's optimistic pending copy (pi never emits
