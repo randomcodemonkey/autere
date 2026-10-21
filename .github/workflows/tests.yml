@@ -14,6 +14,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      # Bundled extras live at ~/pi-ext-extra in the image; in CI point at the
+      # repo copy so the CLI/e2e envs install the same extensions the image
+      # ships (notably extras/pi-9router-ext, which replaces the npm package).
+      AUTERE_PI_EXT_EXTRA: ${{ github.workspace }}/extras
     steps:
       - uses: actions/checkout@v5
 

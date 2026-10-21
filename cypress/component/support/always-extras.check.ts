@@ -61,6 +61,17 @@ try {
   ensurePiEnv('admin');
   assert.equal(installed('pi-9router-ext'), false, 'copy removed when the provider changes');
 
+  // Bundled source missing (deployment/image built without extras): nothing is
+  // always-on, and the legacy npm package is left in place so the env still has
+  // a 9router provider at all.
+  delete process.env.AUTERE_PROVIDER;
+  rmSync(extrasDir, { recursive: true, force: true });
+  assert.deepEqual(getAlwaysEnabledExtras(), [], 'no always-on extras without the bundled source');
+  writeFileSync(join(envDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-9router-ext'] }));
+  ensurePiEnv('admin');
+  assert.deepEqual(JSON.parse(readFileSync(join(envDir, 'settings.json'), 'utf8')).packages, ['npm:pi-9router-ext'],
+    'legacy npm pi-9router-ext is kept when the bundled copy is missing');
+
   console.log('Always-on extension checks passed');
 } finally {
   rmSync(root, { recursive: true, force: true });

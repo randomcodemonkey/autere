@@ -29,7 +29,7 @@ import { writeAgentAccess } from './auth.js';
 import { lstatSync, readlinkSync } from 'fs';
 import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, copyFileSync, rmSync, symlinkSync, readFileSync, writeFileSync, renameSync } from 'fs';
 import { randomUUID } from 'crypto';
-import { invalidateCache, setExtraEnabled, getAvailableExtras, ALWAYS_ENABLED_EXTRAS, RETIRED_EXTRAS, DEFAULT_ENABLED_EXTRAS, writeSavedExtras, desiredExtras } from './user-settings.js';
+import { invalidateCache, setExtraEnabled, getAvailableExtras, ALWAYS_ENABLED_EXTRAS, RETIRED_EXTRAS, DEFAULT_ENABLED_EXTRAS, writeSavedExtras, desiredExtras, getAlwaysEnabledExtras } from './user-settings.js';
 import { execFileSync } from 'node:child_process';
 import { join } from 'path';
 import { PI_DIR, AUTERE_DIR } from './constants.js';
@@ -45,8 +45,12 @@ const SEED_FILES = ['settings.json', 'auth.json', 'models-store.json', 'models.j
 /** Strip the legacy npm pi-9router-ext from the env's settings.json packages
  *  list. The 9router provider now comes from the bundled extras/pi-9router-ext
  *  fork, which ensurePiEnv installs; leaving the npm entry would load both and
- *  register the "9router" provider twice. Idempotent. */
+ *  register the "9router" provider twice. Idempotent.
+ *  Skipped when the bundled copy is absent (image/deployment built without
+ *  extras): stripping it there would leave the env with no 9router provider at
+ *  all, failing every turn with "No API key found for the selected model". */
 export function removeLegacy9routerPackage(envDir: string): void {
+  if (!getAlwaysEnabledExtras().includes('pi-9router-ext')) return;
   const settingsPath = join(envDir, 'settings.json');
   try {
     const raw = JSON.parse(readFileSync(settingsPath, 'utf-8'));
