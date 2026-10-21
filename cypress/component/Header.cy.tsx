@@ -156,6 +156,17 @@ describe('Header running-session tabs', () => {
     cy.get('.session-tab').should('not.exist');
   });
 
+  it('defaults to eight sessions and respects the configured limit', () => {
+    const sessions = Array.from({ length: 10 }, (_, i) => ({
+      id: `s${i}`, sessionFile: `f${i}`, sessionName: `Session ${i}`, parentSession: null,
+      createdAt: 0, lastActivity: i, active: true,
+    }));
+    mountTabs({ runningSessions: sessions as any, sessionId: 's0' });
+    cy.get('.session-tabs > .session-tab, .session-tabs > .session-badge-tab').should('have.length', 8);
+    mountTabs({ runningSessions: sessions as any, sessionId: 's0', sessionTabLimit: 2 });
+    cy.get('.session-tabs > .session-tab, .session-tabs > .session-badge-tab').should('have.length', 2);
+  });
+
   it('switches immediately on tab click', () => {
     const onRunningSessionClick = cy.stub().as('onTab');
     mountTabs({ runningSessions: tabs as any, onRunningSessionClick });

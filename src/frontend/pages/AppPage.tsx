@@ -95,6 +95,16 @@ export function AppPage({
 
   // UI state
   const [restartingBackend, setRestartingBackend] = useState(false);
+  const [sessionTabLimit, setSessionTabLimit] = useState(8);
+  useEffect(() => {
+    if (!authenticated) return;
+    let current = true;
+    fetch(url(API.settings.root)).then((res) => res.json()).then((data) => {
+      const limit = Number(data.data?.sessionTabLimit);
+      if (current && data.success && Number.isFinite(limit)) setSessionTabLimit(limit);
+    }).catch(() => {});
+    return () => { current = false; };
+  }, [authenticated]);
 
   const {
     sessionState, setSessionState,
@@ -361,6 +371,7 @@ export function AppPage({
         activeView={activeView}
         onViewChange={handleSetView}
         runningSessions={availableSessions}
+        sessionTabLimit={sessionTabLimit}
         sessionsLoaded={sessionsLoaded}
         onSessionsRefreshed={setAvailableSessions}
         onRunningSessionClick={handleSwitchSession}
@@ -422,7 +433,7 @@ export function AppPage({
           )}
           {activeView === 'settings' && (
             <ErrorBoundary key="v-settings" name="Settings">
-              <SettingsCard sseConnected={sseConnected} />
+              <SettingsCard sseConnected={sseConnected} onSessionTabLimitChange={setSessionTabLimit} />
             </ErrorBoundary>
           )}
           {activeView === 'tasks' && (

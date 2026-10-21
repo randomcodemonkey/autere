@@ -111,6 +111,36 @@ describe('SettingsCard number fields', () => {
       expect(savedBody).to.deep.equal({ reserveTokensPercent: '30' });
     });
   });
+
+  it('bounds the session tab setting and updates the header after saving', () => {
+    const tabSchema = [{
+      id: 'chat', label: 'Chat', fields: [{ key: 'sessionTabLimit', label: 'Session tabs shown', type: 'number' as const, min: 1, max: 20 }],
+    }];
+    let savedBody: any = null;
+    const onLimitChange = cy.stub().as('onLimitChange');
+    cy.window({ log: false }).then((win) => {
+      win.fetch = (input: any, init: any) => {
+        const u = String(input);
+        let data: any = { success: true };
+        if (u.includes('/api/v1/settings/schema')) data = { success: true, data: [...tabSchema, ...backendSections] };
+        else if (u.includes('/api/v1/settings') && init?.method === 'PUT') {
+          savedBody = JSON.parse(init.body);
+          data = { success: true };
+        }
+        else if (u.includes('/api/v1/settings')) data = { success: true, data: { sessionTabLimit: 8 } };
+        else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
+        return Promise.resolve({ json: () => Promise.resolve(data) } as any);
+      };
+    });
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} onSessionTabLimitChange={onLimitChange} /></MemoryRouter>);
+    cy.get('input[type="number"].settings-input').should('have.value', '8').and('have.attr', 'min', '1').and('have.attr', 'max', '20').clear().type('0').blur().should('have.value', '1');
+    cy.get('input[type="number"].settings-input').clear().type('22').blur().should('have.value', '20');
+    cy.contains('button', 'Save').click();
+    cy.wrap(null).should(() => {
+      expect(savedBody.sessionTabLimit).to.eq(20);
+      expect(onLimitChange).to.have.been.calledWith(20);
+    });
+  });
 });
 
 describe('SettingsCard side menu', () => {

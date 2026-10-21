@@ -37,6 +37,8 @@ export interface SettingField {
   key: string;
   label: string;
   type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel' | 'folderIgnores' | 'mcpServers';
+  min?: number;
+  max?: number;
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;
@@ -128,17 +130,28 @@ export function getUserSetting(user: string, key: string, defaultValue?: any): a
 
 // ── Get all user settings (merged with defaults) ──
 
+const DEFAULT_SESSION_TAB_LIMIT = 8;
+
+function normalizeSessionTabLimit(value: unknown): number {
+  const parsed = typeof value === 'number' ? value
+    : typeof value === 'string' && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(20, Math.floor(parsed))) : DEFAULT_SESSION_TAB_LIMIT;
+}
+
 export function getAllUserSettings(user: string): UserSettings {
   const userSettings = readUserSettingsFile(user);
   const defaults = getUserSettingsDefaults(user);
-  return { ...defaults, ...userSettings };
+  const settings = { ...defaults, ...userSettings };
+  settings.sessionTabLimit = normalizeSessionTabLimit(settings.sessionTabLimit);
+  return settings;
 }
 
 // ── Save user settings ──
 
 export function saveUserSettings(user: string, settings: UserSettings): void {
-  writeUserSettingsFile(user, settings);
-  applySettingsToPiEnv(user, settings);
+  const normalized = { ...settings, sessionTabLimit: normalizeSessionTabLimit(settings.sessionTabLimit) };
+  writeUserSettingsFile(user, normalized);
+  applySettingsToPiEnv(user, normalized);
 }
 
 /**
@@ -972,6 +985,7 @@ function getUserSettingsDefaults(user: string): UserSettings {
   defaults.enabledModels = readJsonCached(join(PI_DIR, 'settings.json'))?.enabledModels || [];
   defaults.packages = getEnabledPackages(user);
   defaults.codemode = false;
+  defaults.sessionTabLimit = DEFAULT_SESSION_TAB_LIMIT;
   // MCP servers live in the env's mcp.json (seeded from master); the
   // settings UI edits that file through the mcp CRUD routes — the value
   // here is only what the schema renderer reads on load.
@@ -1107,6 +1121,14 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
     id: 'chat',
     label: 'Chat',
     fields: [
+      {
+        key: 'sessionTabLimit',
+        label: 'Session tabs shown',
+        type: 'number',
+        min: 1,
+        max: 20,
+        description: 'Maximum sessions in the header tab bar (1-20). Most recently active sessions appear first.',
+      },
       {
         key: 'historyLimit',
         label: 'Chat history length',

@@ -114,6 +114,8 @@ export interface SettingField {
   key: string;
   label: string;
   type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel' | 'folderIgnores' | 'mcpServers';
+  min?: number;
+  max?: number;
   placeholder?: string;
   options?: { value: string; label: string }[];
   description?: string;

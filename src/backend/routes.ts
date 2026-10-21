@@ -2142,13 +2142,11 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           return;
         }
         saveUserSettings(c.user, settings);
-        // Reserve-% and janitor sweep policy are applied live by their pi
-        // extensions (mtime-cached config reads, per model/call — no
-        // restart needed); notification toggles are read live by the
-        // backend when a notification fires — skip the restart when only
-        // those change, so the running session is not interrupted.
+        // Session-tab count is a UI preference; reserve-% and janitor sweep
+        // policy apply live, and notification toggles are read by the backend
+        // when needed. Skip restarting pi for these settings.
         const onlyLiveApplyKeys = Object.keys(settings).every(
-          (k) => k === 'reserveTokensPercent' || k === 'reserveTokensPercentByModel' || k === 'summaryPromptExtra' || k === 'summaryPromptGuardTokens' || k.startsWith('janitor') || k.startsWith('notify') || isDeepStrictEqual(prev[k], (settings as any)[k])
+          (k) => k === 'sessionTabLimit' || k === 'reserveTokensPercent' || k === 'reserveTokensPercentByModel' || k === 'summaryPromptExtra' || k === 'summaryPromptGuardTokens' || k.startsWith('janitor') || k.startsWith('notify') || isDeepStrictEqual(prev[k], (settings as any)[k])
         );
         if (onlyLiveApplyKeys) {
           sendJSON(c.res, { success: true });

@@ -13,7 +13,14 @@ interface FolderIgnoreEntry { path: string; edits: boolean; files: boolean }
 
 interface SettingsCardProps {
   sseConnected: boolean;
+  onSessionTabLimitChange?: (limit: number) => void;
 }
+
+const normalizeSessionTabLimit = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value
+    : typeof value === 'string' && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(20, Math.floor(parsed))) : 8;
+};
 
 // Module-level ON PURPOSE: a component type defined inside the render
 // function is a NEW type every render, so React remounts the whole subtree —
@@ -379,7 +386,7 @@ const ModelsSection: React.FC<{
   );
 };
 
-export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
+export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected, onSessionTabLimitChange }) => {
   const [schema, setSchema] = useState<SettingSection[]>([]);
   const [settings, setSettings] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
@@ -499,7 +506,13 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
       });
       const data = await res.json();
       if (data.success) {
-        baselineRef.current = JSON.stringify(settings);
+        const savedSettings = { ...settings };
+        if ('sessionTabLimit' in savedSettings) {
+          savedSettings.sessionTabLimit = normalizeSessionTabLimit(savedSettings.sessionTabLimit);
+          setSettings(savedSettings);
+          onSessionTabLimitChange?.(savedSettings.sessionTabLimit);
+        }
+        baselineRef.current = JSON.stringify(savedSettings);
         setSaved(data.deferred ? 'deferred' : true);
         // Refresh the effective prompt after saving, but only show it on request.
         if ('summaryPromptExtra' in settings || 'summaryPromptGuardTokens' in settings) {
@@ -516,7 +529,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
     } finally {
       setSaving(false);
     }
-  }, [settings]);
+  }, [settings, onSessionTabLimitChange]);
 
   // Shared shell for the plain label+description field variants
 
@@ -704,7 +717,18 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected }) => {
           type={field.type}
           className="settings-input"
           value={value}
+          min={field.min}
+          max={field.max}
+          step={field.min !== undefined || field.max !== undefined ? 1 : undefined}
           placeholder={field.placeholder || ''}
+          onBlur={(e) => {
+            if (field.min === undefined && field.max === undefined) return;
+            const number = Number(e.target.value);
+            const normalized = Number.isFinite(number)
+              ? Math.floor(Math.max(field.min ?? -Infinity, Math.min(field.max ?? Infinity, number)))
+              : field.min ?? field.max ?? 0;
+            handleChange(field.key, normalized);
+          }}
           // new-password: the standard token telling browsers (incl. iOS
           // Passwords) this is NOT a login/signup field — suppresses the
           // save-password prompt (plain "off" is ignored for passwords).
