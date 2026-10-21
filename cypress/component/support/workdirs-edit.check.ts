@@ -62,3 +62,6 @@ rmSync(wd2, { recursive: true, force: true });
 
 if (fail) { console.log(`\n${fail} failure(s)`); process.exit(1); }
 console.log('\nAll workdirs-edit checks passed');
+// Spawned pi children leave a handle behind that keeps the loop open (same as
+// sandbox-restart.check.ts) - exit explicitly so the script terminates.
+process.exit(0);

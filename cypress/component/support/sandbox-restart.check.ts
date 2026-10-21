@@ -104,3 +104,7 @@ if (failures) {
   process.exit(1);
 }
 console.log('\nAll sandbox-restart checks passed');
+// A spawned pi child leaves a handle behind that keeps the event loop open
+// (pre-existing; the backend is held open by its HTTP server anyway), so exit
+// explicitly or the script looks hung in a loop/CI step.
+process.exit(0);
