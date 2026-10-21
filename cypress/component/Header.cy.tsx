@@ -180,11 +180,26 @@ describe('Header session tabs: membership stable, selected becomes badge', () =>
       />
     );
   };
-  const mk = (id: string, name: string) => ({
-    id, sessionFile: `f-${id}`, sessionName: name, parentSession: null, createdAt: 0, lastActivity: 0, cwd: null, active: true,
+  const mk = (id: string, name: string, lastActivity = 0) => ({
+    id, sessionFile: `f-${id}`, sessionName: name, parentSession: null, createdAt: 0, lastActivity, cwd: null, active: true,
   });
 
-  it('order is alphabetical and stable; selected slot renders the badge', () => {
+  it('orders tabs and the mobile dropdown by most recent activity', () => {
+    cy.viewport(375, 667);
+    mountTabs({
+      sessionId: 'older',
+      runningSessions: [mk('older', 'Zulu', 100), mk('newer', 'Alpha', 300), mk('middle', 'Mike', 200)],
+    });
+    cy.get('.session-tabs > *').then(($items) => {
+      expect(Array.from($items).map((item) => item.querySelector('.session-badge-text')?.textContent?.trim())).to.deep.eq(['Alpha', 'Mike', 'Zulu']);
+    });
+    cy.get('.session-badge').click({ force: true });
+    cy.get('.session-menu-item-label').then(($items) => {
+      expect(Array.from($items).map((item) => item.textContent?.trim())).to.deep.eq(['Alpha', 'Mike']);
+    });
+  });
+
+  it('keeps alphabetical order for sessions with tied activity; selected slot renders the badge', () => {
     const onRunningSessionClick = cy.stub().as('onSwitch');
     mountTabs({
       sessionId: 'x00000000000000000000000000003',
@@ -200,16 +215,15 @@ describe('Header session tabs: membership stable, selected becomes badge', () =>
     cy.get('@onSwitch').should('have.been.calledWith', 'x00000000000000000000000000004');
   });
 
-  it('selected session missing from running list still keeps an alphabetical slot', () => {
+  it('selected session missing from running list still keeps a slot', () => {
     // mid-switch: selection not in (stale) running list — must NOT be
     // rendered separately after the tabs
     mountTabs({ sessionId: 'bravo-id', sessionName: 'bravo', runningSessions: [mk('s1', 'alpha'), mk('s2', 'charlie')] });
-    // room left: both members kept, 'bravo' slot added (alphabetical: middle)
+    // Room left: both members kept and 'bravo' receives a slot.
     cy.get('.session-tab').should('have.length', 2); // alpha + charlie
     cy.get('.session-tabs .session-badge').should('contain', 'bravo');
     const order: string[] = [];
     cy.get('.session-tabs > *').each(($el) => order.push($el.text())).then(() => {
-      // alphabetical: alpha, bravo(badge), charlie — lenient: badge exists within group
       expect(order.join('|').length).to.be.greaterThan(0);
     });
   });

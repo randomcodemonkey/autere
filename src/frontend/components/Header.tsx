@@ -32,9 +32,8 @@ interface HeaderProps {
   sessionName: string | null;
   activeView: ViewId;
   onViewChange: (view: ViewId) => void;
-  /** Running pi sessions (api order: most recent first) — up to 4 recent
-   *  tabs kept alphabetically; the selected one renders as the session
-   *  badge/status button in place */
+  /** Sessions ordered by recent activity; the selected one renders as the
+   *  session badge/status button in place */
   runningSessions?: SessionInfo[];
   /** Receive a fresh sessions list (e.g. after deleting a tab's session) */
   onSessionsRefreshed?: (sessions: SessionInfo[]) => void;
@@ -85,27 +84,18 @@ export const Header: React.FC<HeaderProps> = ({
     ? (sessionName.length > 64 ? sessionName.slice(0, 62) + '…' : sessionName)
     : (sessionId || 'session');
   const dotClass = statusType === 'connected' ? 'green' : statusType === 'streaming' ? 'yellow' : statusType === 'disconnected' ? 'red' : 'gray';
-  // Stable membership for session tabs: the viewed session always keeps its
-  // ordered slot. Legacy ids (spawn alias) resolve to the live session with
-  // the same short 29-char id prefix, so switching sessions does not shuffle
-  // the row — only which item renders as the badge (modal button).
+  // Keep the viewed session in the capped tab set. Legacy ids (spawn aliases)
+  // resolve to the live session by id prefix, then by session name.
 
   const availableTabs = useMemo(() => runningSessions ?? [], [runningSessions]);
 
 
-  // Session tabs per spec: up to 5 slots — running sessions first (api
-  // order = most recent first), padded with non-running sessions to fill
-  // the row when fewer than 5 running; the selected session guaranteed
-  // among them (replace the last slot if the cap is full, one extra slot
-  // when there is room), then sorted alphabetically. The selected slot
-  // renders as the session badge (opens session chat); every other slot
-  // as a running tab.
-  // Selected session: exact id, then legacy-alias prefix (id drift on
-  // resume), then name equality (reheaded running sessions lose the id
-  // link). Not matching at all → slot labeled from the header's own name.
-  // Selected session: exact id, then legacy-alias prefix (id drift on
-  // resume), then name equality (reheaded running sessions lose the id
-  // link). Not matching at all → slot labeled from the header's own name.
+  // Keep running sessions ahead of idle history when choosing the capped set,
+  // then display that set by most recent activity. The selected session is
+  // guaranteed a slot and renders as the session badge; other slots are tabs.
+  // Selected session: exact id, then legacy-alias prefix (id drift on resume),
+  // then name equality (reheaded sessions lose the id link). If unmatched, use
+  // the header's own name for the selected slot.
   // Memoized: the effect below depends on it and tabs, so the deps must
   // not change identity every render (react-hooks/exhaustive-deps).
   const selectedEntry = useMemo(() => (sessionId
@@ -137,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
         tabs = [...tabs.slice(0, -1), selectedEntry];
       }
     }
-    return [...tabs].sort((a, b) => (a.sessionName || a.id).localeCompare(b.sessionName || b.id));
+    return [...tabs].sort((a, b) => b.lastActivity - a.lastActivity || (a.sessionName || a.id).localeCompare(b.sessionName || b.id));
   }, [availableTabs, selectedEntry, sessionId]);
   // Ctrl+Shift + digit (1..8) jumps to that session tab; the session must be
   // known (tabs rendered) — digits beyond the cap do nothing. (Alt/opt is
