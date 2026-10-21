@@ -60,6 +60,34 @@ RUN apt-get -y -qq update \
     && apt-get -y clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Electron/Chromium runtime libraries required by Cypress (component + e2e
+# tests). These used to arrive transitively with `emacs`; the image-shrink
+# change to `emacs-nox` dropped the whole GTK/X11 stack, after which the
+# Cypress binary died on launch (exit 127, no output) because libgtk-3.so.0,
+# libnss3.so, libgbm.so.1 etc. were missing. Keep them explicit.
+RUN apt-get -y -qq update \
+    && apt-get install -y -qq --no-install-recommends \
+      libasound2t64 \
+      libatk-bridge2.0-0t64 \
+      libatspi2.0-0t64 \
+      libcairo2 \
+      libcups2t64 \
+      libdrm2 \
+      libgbm1 \
+      libgdk-pixbuf-2.0-0 \
+      libgtk-3-0t64 \
+      libnspr4 \
+      libnss3 \
+      libpango-1.0-0 \
+      libxcomposite1 \
+      libxdamage1 \
+      libxfixes3 \
+      libxkbcommon0 \
+      libxss1 \
+      libxtst6 \
+    && apt-get -y clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # increment the counter if you want to force npm reinstalls, e.g. new versions
 ENV NPM_CACHE_COUNTER=0002
 
@@ -119,7 +147,7 @@ WORKDIR /home/autere
 # installs at container start (rerunning it would fetch fresh versions).
 # Enabled/disabled per deployment in entrypoint.sh by filtering settings.json
 # "packages". Bump NPM_CACHE_COUNTER when updating versions.
-RUN set -e; for pkg in pi-9router-ext pi-web-search pi-memory copilot-credit-usage; do pi install "npm:$pkg"; done \
+RUN set -e; for pkg in pi-web-search pi-memory copilot-credit-usage; do pi install "npm:$pkg"; done \
     && npm cache clean --force
 
 ENTRYPOINT ["/entrypoint.sh"]
