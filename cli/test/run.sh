@@ -88,10 +88,9 @@ RELEASE_PI=$(grep -oE 'pi-coding-agent@[0-9][0-9.]*' docker/Dockerfile | head -1
   echo "pi version mismatch: tests spawn $SPAWNED_PI, release ships $RELEASE_PI (docker/Dockerfile)"
   exit 1
 }
-# pi resolves an extension's npm deps by walking up from the symlinked env
-# path (/tmp/…/pi-envs/admin/extensions/…) — that chain has no node_modules
-# on CI (upstream node lacks Debian's /usr/share/nodejs fallback, which is
-# why dev/prod passed while CI's pi exited on 'Cannot find module diff').
+# Expose the app dependency tree inside this isolated HOME. Bundled pi
+# extensions install their own dependencies from extras/*/package-lock.json
+# in CI and the Docker image; those deps live beside the extension source.
 ln -s "$PWD/node_modules" "$TD/node_modules"
 export XDG_CACHE_HOME="$TD/cache"
 node node_modules/tsx/dist/cli.mjs cli/test/router.ts > "$TD/router.log" 2>&1 &

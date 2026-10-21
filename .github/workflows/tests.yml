@@ -58,9 +58,15 @@ jobs:
           # pi resolves packages under PI_PACKAGE_DIR (~/.pi/agent/npm):
           export PI_PACKAGE_DIR=~/.pi/agent/npm
           pi install npm:pi-9router-ext
-          # Repo pi extensions (pi-filetools backs the Changes tab spec —
-          # same layout the docker entrypoint uses: symlink into master
-          # extensions dir; e2e envs inherit via the shared-dir symlink).
+          # Install each bundled extension's own dependencies, as the release
+          # Dockerfile does. npm ci at the repo root does not install these.
+          for d in extras/*/; do
+            if [ -f "$d/package-lock.json" ]; then
+              npm ci --prefix "$d" --no-audit --no-fund
+            fi
+          done
+          # Repo pi extensions use the same layout as the Docker entrypoint:
+          # symlink into master extensions; e2e envs inherit via shared-dir link.
           mkdir -p ~/.pi/agent/extensions
           for d in "$PWD"/extras/*/; do ln -sfn "$PWD/${d#$PWD/}" ~/.pi/agent/extensions/$(basename "$d"); done
 
