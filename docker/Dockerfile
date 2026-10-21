@@ -95,9 +95,12 @@ COPY --chown=autere:autere package.json package-lock.json /home/autere/dist/
 COPY --chown=autere:autere extras /home/autere/pi-ext-extra/
 # Extensions carry their own package.json (node_modules are dockerignored),
 # so install their deps here; sandbox env copies include them.
+# Keep the generated node_modules writable by build-dev.sh.
+USER autere
 RUN set -e; cd /home/autere/pi-ext-extra; for d in */; do \
       if [ -f "$d/package-lock.json" ]; then (cd "$d" && npm ci --omit=dev --no-audit --no-fund); fi; \
-    done; rm -rf /root/.npm
+    done; rm -rf /home/autere/.npm
+USER root
 
 WORKDIR /home/autere/dist
 # The compiled backend resolves bare imports starting at /home/autere/dist-backend
