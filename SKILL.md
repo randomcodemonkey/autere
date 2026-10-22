@@ -148,6 +148,10 @@ src/backend/
                         # sessions are deleted when a new run starts; the
                         # running one is kept until the next). once: true runs
                         # at most once and auto-disables after its first run.
+                        # Boot marks run records a previous backend left
+                        # 'running' as error (interrupted) — in-memory runs
+                        # never survive a restart, so they would otherwise be
+                        # shown as running forever.
                         # Runs inherit cwd/workdirs from the creating session
                         # (`session` id passed by schedule_task, resolved by the
                         # backend) or use task-form/API workdirs (which force

@@ -79,6 +79,15 @@ function runFile(user: string, taskId: string, runId: string): string {
   return join(userRunsDir(user), taskId, `${runId}.json`);
 }
 
+/** Atomic write of a run record (tmp file + rename in the same dir). */
+function writeRunRecord(user: string, record: TaskRunLog): void {
+  const f = runFile(user, record.taskId, record.runId);
+  mkdirSync(dirname(f), { recursive: true });
+  const tmp = join(dirname(f), `.${record.runId}.tmp-${randomUUID()}`);
+  writeFileSync(tmp, JSON.stringify(record, null, 2), 'utf-8');
+  renameSync(tmp, f);
+}
+
 // ── Task store (per-user JSON files) ──
 
 export function listTasks(user: string): ScheduledTask[] {
@@ -268,6 +277,7 @@ export class Scheduler {
 
   start(): void {
     if (this.tickTimer) return;
+    this.reconcileStaleRuns();
     this.tickTimer = setInterval(() => {
       try { this.tick(); } catch (err) {
         log.scheduler.error('Scheduler tick failed:', err);
@@ -286,6 +296,35 @@ export class Scheduler {
         log.scheduler.error('Failed to abort active run:', err);
       }
     }
+  }
+
+  /**
+   * Finalize run records a previous backend process left 'running'. Its
+   * in-memory run map died with it, so nothing would ever write a final
+   * status — the tasks view would show the task as running forever (and
+   * keep "Run now" disabled). Runs this process starts are always younger
+   * than start(), so every on-disk running record here is an orphan.
+   */
+  private reconcileStaleRuns(): void {
+    let count = 0;
+    for (const user of this.usersWithTasks()) {
+      for (const rec of listRuns(user, undefined, Infinity)) {
+        if (rec.status !== 'running') continue;
+        const record = readRunLog(user, rec.taskId, rec.runId);
+        if (!record || record.status !== 'running') continue;
+        record.status = 'error';
+        record.error = 'Run interrupted: the backend stopped before the run finished';
+        record.finishedAt = Date.now();
+        record.log.push({ t: record.finishedAt, line: 'Marked failed: backend stopped mid-run' });
+        try {
+          writeRunRecord(user, record);
+          count++;
+        } catch (err) {
+          log.scheduler.error(`Failed to finalize interrupted run ${record.runId}:`, err);
+        }
+      }
+    }
+    if (count) log.scheduler.warn(`Marked ${count} interrupted task run(s) as failed`);
   }
 
   /** Users that have scheduled tasks (a scheduled-tasks dir on disk) */
@@ -387,11 +426,7 @@ export class Scheduler {
     };
     const writeRecord = () => {
       try {
-        const f = runFile(user, task.id, runId);
-        mkdirSync(dirname(f), { recursive: true });
-        const tmp = join(dirname(f), `.${runId}.tmp-${randomUUID()}`);
-        writeFileSync(tmp, JSON.stringify(record, null, 2), 'utf-8');
-        renameSync(tmp, f);
+        writeRunRecord(user, record);
       } catch (err) {
         log.scheduler.error(`Failed to write run record ${runId}:`, err);
       }
@@ -401,23 +436,35 @@ export class Scheduler {
 
     let aborted = false;
     let abortWaiter: (() => void) | null = null;
-    const piEnvDir = ensurePiEnv(user);
-    const rpc = new MonitorRpcClient({
-      // Per-task model override wins over the scheduler default; when unset
-      // the user's pi default model applies.
-      model: task.model || this.spawnOptions.model,
-      args: this.spawnOptions.args,
-      agentDir: piEnvDir,
-      // Runs inherit the creating session's environment (spawn settings,
-      // sandbox image/mounts) and workdirs — resolved from backend state at
-      // task creation. No sandbox/workdirs = host spawn like any session.
-      editIgnorePaths: getEditIgnorePaths(user),
-      sendImagesToChatModel: getSendImagesToChatModel(user),
-      imagePreviewQuality: getImagePreviewQuality(user),
-      imageStreamFix: getImageStreamFix(user),
-      ...(task.cwd ? { cwd: task.cwd } : {}),
-      ...sandboxSpawnOptions(user, piEnvDir, task.cwd, task.workdirs),
-    });
+    let rpc: MonitorRpcClient;
+    try {
+      const piEnvDir = ensurePiEnv(user);
+      rpc = new MonitorRpcClient({
+        // Per-task model override wins over the scheduler default; when unset
+        // the user's pi default model applies.
+        model: task.model || this.spawnOptions.model,
+        args: this.spawnOptions.args,
+        agentDir: piEnvDir,
+        // Runs inherit the creating session's environment (spawn settings,
+        // sandbox image/mounts) and workdirs — resolved from backend state at
+        // task creation. No sandbox/workdirs = host spawn like any session.
+        editIgnorePaths: getEditIgnorePaths(user),
+        sendImagesToChatModel: getSendImagesToChatModel(user),
+        imagePreviewQuality: getImagePreviewQuality(user),
+        imageStreamFix: getImageStreamFix(user),
+        ...(task.cwd ? { cwd: task.cwd } : {}),
+        ...sandboxSpawnOptions(user, piEnvDir, task.cwd, task.workdirs),
+      });
+    } catch (err: any) {
+      // The record exists already — finalize it, or it stays 'running' on
+      // disk forever and the task can never look idle again.
+      record.status = 'error';
+      record.error = err?.message || String(err);
+      addLog(`Run failed to start: ${record.error}`);
+      record.finishedAt = Date.now();
+      writeRecord();
+      throw err;
+    }
     const active: ActiveRun = {
       user,
       taskId: task.id,

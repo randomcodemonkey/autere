@@ -106,6 +106,27 @@ export AUTERE_NINE_ROUTER_URL="$ROUTER_URL" NINE_ROUTER_BASE_URL="$ROUTER_URL" \
   NINE_ROUTER_API_KEY=9router-no-api-key AUTERE_TEST_MODELS=mock-chat
 export AUTERE_DIR=$TD/state AUTERE_PI_ENVS_DIR=$TD/pi-envs AUTERE_USERS_FILE=$TD/state/users.json \
   AUTERE_ADMIN_USER=admin INITIAL_PASSWORD=clitest AUTERE_SANDBOX_IMAGE=off AUTERE_LOG_LEVEL=warn
+
+# A run record a previous backend left 'running' must be finalized at boot --
+# otherwise the task looks busy forever (and Run now stays disabled).
+STALE_TASK_ID=stale-run-task
+STALE_DIRS=("$AUTERE_DIR/users/admin/scheduled-tasks" "$AUTERE_DIR/users/admin/scheduled-task-logs/$STALE_TASK_ID")
+mkdir -p "${STALE_DIRS[@]}"
+node -e '
+const fs = require("fs");
+const [tasks, logs] = process.argv.slice(1);
+const now = Date.now();
+fs.writeFileSync(`${tasks}/stale-run-task.json`, JSON.stringify({
+  id: "stale-run-task", name: "stale run record", schedule: "0 0 1 1 *",
+  prompt: "never runs", enabled: false, createdAt: now, updatedAt: now,
+}, null, 2));
+fs.writeFileSync(`${logs}/run-stale.json`, JSON.stringify({
+  runId: "run-stale", taskId: "stale-run-task", taskName: "stale run record",
+  trigger: "schedule", startedAt: now - 3600e3, status: "running",
+  prompt: "never runs", log: [{ t: now - 3600e3, line: "Run started (trigger: schedule)" }],
+}, null, 2));
+' "${STALE_DIRS[@]}"
+
 node node_modules/tsx/dist/cli.mjs src/backend/index.ts --port $PORT --autere-auth true \
   > "$TD/backend.log" 2>&1 &
 BACKEND_PID=$!
@@ -263,6 +284,9 @@ cli task-update "$TASK_ID" "renamed task $$" "0 0 1 1 *" "hi" > /dev/null
 assert_exit 0 "task-update"
 cli runs-list > /dev/null
 assert_exit 0 "runs-list"
+cli runs-list "$STALE_TASK_ID"
+assert_in '"status": "error"' "run record left 'running' by a dead backend is finalized at boot"
+assert_in "interrupted" "finalized record names the reason"
 cli task-delete "$TASK_ID" > /dev/null
 assert_exit 0 "task-delete"
 
