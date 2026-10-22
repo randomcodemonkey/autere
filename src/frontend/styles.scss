@@ -4707,34 +4707,6 @@ textarea.settings-input {
   min-height: 0;
 }
 
-.changes-file {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.3rem 0.6rem;
-  cursor: pointer;
-  font-size: 0.75rem;
-  color: var(--c-text-dim);
-  transition: background 0.1s;
-}
-
-.changes-file:hover {
-  background: var(--c-surface-3);
-}
-
-.changes-file.selected {
-  background: var(--c-accent-dim);
-  color: var(--c-text);
-}
-
-.changes-file-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: monospace;
-  font-size: 0.72rem;
-}
-
 .changes-file-count {
   background: var(--c-border);
   color: var(--c-text-ghost);

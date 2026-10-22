@@ -27,10 +27,51 @@ describe('ChangesPage file selection', () => {
     cy.get('.changes-mods').then(($el) => {
       cy.spy($el[0], 'scrollTo').as('scrollTo');
     });
-    cy.get('.changes-file').contains('src/long.ts').click();
+    cy.get('.files-row.files-file').contains('.files-name', 'long.ts').click();
     cy.get('@scrollTo').should('have.been.calledWith', 0, 0);
-    cy.get('.changes-file').contains('src/short.ts').click();
+    cy.get('.files-row.files-file').contains('.files-name', 'short.ts').click();
     cy.get('@scrollTo').should('have.been.calledWith', 0, 0);
+  });
+
+  it('shows only changed files in a collapsible tree rooted at their common directory', () => {
+    cy.intercept('GET', '**/file-changes', {
+      success: true,
+      data: [
+        ...changes,
+        { ts: 3, path: 'src/nested/deep.ts', tool: 'write', change: 'created', diff: 'new file' },
+      ],
+    });
+    cy.mount(
+      <div style={{ height: '400px', display: 'flex', flexDirection: 'column' }}>
+        <ChangesPage sessionId="s1" />
+      </div>
+    );
+    cy.get('.files-row.files-root .files-name').should('have.text', 'src');
+    cy.get('.files-row.files-file').should('have.length', 3);
+    cy.get('.files-row.files-dir .files-name').should('have.text', 'nested');
+    cy.get('.files-row').should('not.contain', 'unchanged.ts');
+    cy.get('.files-row.files-dir').click();
+    cy.get('.files-row.files-file').should('have.length', 2);
+  });
+
+  it('omits the dot filler and keeps unrelated folders as separate roots', () => {
+    cy.intercept('GET', '**/file-changes', {
+      success: true,
+      data: [
+        { ts: 1, path: 'src/a.ts', tool: 'edit', change: 'modified', diff: 'a' },
+        { ts: 2, path: 'tests/b.ts', tool: 'write', change: 'created', diff: 'b' },
+      ],
+    });
+    cy.mount(
+      <div style={{ height: '400px', display: 'flex', flexDirection: 'column' }}>
+        <ChangesPage sessionId="s1" />
+      </div>
+    );
+    cy.get('.files-row.files-root').should('not.exist');
+    cy.get('.files-row.files-dir .files-name').then(($names) => {
+      expect([...$names].map((node) => node.textContent)).to.deep.equal(['src', 'tests']);
+    });
+    cy.get('.files-row.files-file').should('have.length', 2);
   });
 
   it('shows every incremental edit to one file, not just the last one', () => {
@@ -56,15 +97,15 @@ describe('ChangesPage file selection', () => {
 
   it('deselects on second click — empty state in the detail pane', () => {
     mountPage();
-    cy.get('.changes-file').contains('src/long.ts').click();
+    cy.get('.files-row.files-file').contains('.files-name', 'long.ts').click();
     cy.get('.changes-mods .changes-mod').should('exist');
 
     // Click the already-selected file: detail pane shows the empty state.
-    cy.get('.changes-file').contains('src/long.ts').click();
+    cy.get('.files-row.files-file').contains('.files-name', 'long.ts').click();
     cy.get('.changes-mods').should('contain', 'Select a file to view its changes');
 
     // Selecting again restores the diff pane.
-    cy.get('.changes-file').contains('src/long.ts').click();
+    cy.get('.files-row.files-file').contains('.files-name', 'long.ts').click();
     cy.get('.changes-mods .changes-mod').should('exist');
   });
 });

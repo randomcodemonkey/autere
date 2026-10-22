@@ -165,16 +165,16 @@ describe('Edits feature', () => {
     // The Files tab is the default view — switch to the Changes tab
     cy.get('.edits-tabs').contains('Session Edits').click();
 
-    cy.get('.changes-files-list .changes-file', { timeout: 10000 }).should('have.length', 2);
+    cy.get('.changes-files-list .files-row.files-file', { timeout: 10000 }).should('have.length', 2);
     cy.get('.changes-files-list').should('contain', 'e2e-a.txt');
     cy.get('.changes-files-list').should('contain', 'e2e-b.txt');
 
     // e2e-a has 2 surviving changes (created + modified), e2e-b has 1
-    cy.contains('.changes-file', 'e2e-a.txt').find('.changes-file-count').should('have.text', '2');
-    cy.contains('.changes-file', 'e2e-b.txt').find('.changes-file-count').should('have.text', '1');
+    cy.contains('.files-row.files-file', 'e2e-a.txt').find('.changes-file-count').should('have.text', '2');
+    cy.contains('.files-row.files-file', 'e2e-b.txt').find('.changes-file-count').should('have.text', '1');
 
     // Latest file (e2e-a) is pre-selected and its latest change auto-expanded
-    cy.get('.changes-file.selected').should('contain', 'e2e-a.txt');
+    cy.get('.files-row.files-file.selected').should('contain', 'e2e-a.txt');
     cy.get('.changes-mod.selected', { timeout: 10000 }).should('have.length', 1);
     cy.get('.changes-mod.selected').should('contain', 'goodbye a');
     cy.get('.changes-mod.selected .changes-badge-modified').should('have.text', 'modified');
@@ -182,11 +182,11 @@ describe('Edits feature', () => {
     cy.get('.changes-mod .changes-badge-created').should('have.length', 1);
     cy.get('.changes-mod .changes-badge-modified').should('have.length', 1);
 
-    cy.contains('.changes-file', 'e2e-b.txt').click();
+    cy.contains('.files-row.files-file', 'e2e-b.txt').click();
     cy.get('.changes-mod.selected', { timeout: 10000 }).should('contain', 'hello b');
 
     cy.get('.changes-search').type('e2e-a');
-    cy.get('.changes-files-list .changes-file').should('have.length', 1);
+    cy.get('.changes-files-list .files-row.files-file').should('have.length', 1);
     cy.get('.changes-files-list').should('contain', 'e2e-a.txt');
   });
 
@@ -212,14 +212,14 @@ describe('Edits feature', () => {
       cy.get('.edits-tabs').contains('Session Edits').click();
       // Long retry window: provider hiccups make pi auto-retry the turn, and
       // the status badge briefly reads idle during retry gaps.
-      cy.get('.changes-files-list .changes-file', { timeout: 120000 }).should('have.length', 2);
+      cy.get('.changes-files-list .files-row.files-file', { timeout: 120000 }).should('have.length', 2);
       cy.get('.changes-files-list').should('contain', 'e2e-agent-a.txt');
       cy.get('.changes-files-list').should('contain', 'e2e-agent-b.txt');
 
-      cy.get('.changes-file.selected').should('contain', 'e2e-agent-a.txt');
+      cy.get('.files-row.files-file.selected').should('contain', 'e2e-agent-a.txt');
       cy.get('.changes-mod.selected', { timeout: 10000 }).should('contain', 'gamma');
 
-      cy.contains('.changes-file', 'e2e-agent-b.txt').click();
+      cy.contains('.files-row.files-file', 'e2e-agent-b.txt').click();
       cy.get('.changes-mod.selected', { timeout: 10000 }).should('contain', 'beta');
     });
   });

@@ -11,6 +11,89 @@ interface FileChange {
   diff: string;
 }
 
+interface ChangeTreeRow {
+  path: string;
+  name: string;
+  type: 'root' | 'dir' | 'file';
+  depth: number;
+  expanded: boolean;
+  count?: number;
+}
+
+interface ChangeTreeNode {
+  path: string;
+  name: string;
+  type: 'root' | 'dir' | 'file';
+  children: Map<string, ChangeTreeNode>;
+  count?: number;
+}
+
+function buildChangeTreeRows(
+  allPaths: string[],
+  visiblePaths: string[],
+  changesByPath: Map<string, FileChange[]>,
+  collapsed: Set<string>,
+  forceExpanded: boolean,
+): ChangeTreeRow[] {
+  if (!allPaths.length || !visiblePaths.length) return [];
+  const parsed = allPaths.map((path) => {
+    const absolute = path.startsWith('/');
+    const parts = path.split('/').filter(Boolean);
+    return { path, absolute, parts: absolute ? ['/', ...parts] : parts };
+  });
+  const dirs = parsed.map(({ parts }) => parts.slice(0, -1));
+  let commonLength = 0;
+  while (dirs[0][commonLength] && dirs.every((parts) => parts[commonLength] === dirs[0][commonLength])) commonLength++;
+  const rootParts = dirs[0].slice(0, commonLength);
+  const allAbsolute = parsed.every(({ absolute }) => absolute);
+  const rootPath = rootParts.length
+    ? rootParts[0] === '/' ? `/${rootParts.slice(1).join('/')}` : rootParts.join('/')
+    : allAbsolute ? '/' : '.';
+  const root: ChangeTreeNode = { path: rootPath, name: rootPath, type: 'root', children: new Map() };
+  const parsedByPath = new Map(parsed.map((entry) => [entry.path, entry]));
+  const pathFor = (parts: string[], absolute: boolean) => {
+    const joined = parts.filter((part) => part !== '/').join('/');
+    return absolute ? `/${joined}` : joined || '.';
+  };
+
+  for (const path of visiblePaths) {
+    const entry = parsedByPath.get(path);
+    if (!entry) continue;
+    let parent = root;
+    const directories = entry.parts.slice(commonLength, -1);
+    let currentParts = rootParts;
+    for (const name of directories) {
+      currentParts = [...currentParts, name];
+      const dirPath = pathFor(currentParts, entry.absolute);
+      let dir = parent.children.get(`dir:${dirPath}`);
+      if (!dir) {
+        dir = { path: dirPath, name, type: 'dir', children: new Map() };
+        parent.children.set(`dir:${dirPath}`, dir);
+      }
+      parent = dir;
+    }
+    const name = entry.parts[entry.parts.length - 1] || path;
+    parent.children.set(`file:${path}`, {
+      path, name, type: 'file', children: new Map(), count: changesByPath.get(path)?.length || 0,
+    });
+  }
+
+  const rows: ChangeTreeRow[] = [];
+  const visit = (node: ChangeTreeNode, depth: number) => {
+    const expanded = node.type !== 'file' && (forceExpanded || !collapsed.has(node.path));
+    rows.push({ path: node.path, name: node.name, type: node.type, depth, expanded, count: node.count });
+    if (!expanded) return;
+    const children = [...node.children.values()].sort((a, b) =>
+      Number(a.type === 'file') - Number(b.type === 'file') || a.name.localeCompare(b.name));
+    children.forEach((child) => visit(child, depth + 1));
+  };
+  const roots = [...root.children.values()].sort((a, b) =>
+    Number(a.type === 'file') - Number(b.type === 'file') || a.name.localeCompare(b.name));
+  if (rootPath === '.' || rootPath === '/') roots.forEach((node) => visit(node, 0));
+  else visit(root, 0);
+  return rows;
+}
+
 interface ChangesPageProps {
   sessionId: string | null;
   /** Deep link: file to open initially (URL ?c=); changes are recorded
@@ -26,8 +109,11 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId, initialFile
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [selectedChange, setSelectedChange] = useState<number | null>(null);
   const modsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => setCollapsedDirs(new Set()), [sessionId]);
 
   // Switching files swaps the diff content under the (persistent) scroll
   // container — a long diff scrolled down left a short diff scrolled out of
@@ -91,6 +177,7 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId, initialFile
       return true;
     });
   }, [filtered]);
+  const allPaths = useMemo(() => [...new Set(deduped.map((c) => c.path))], [deduped]);
 
   const changesByPath = useMemo(() => {
     const map = new Map<string, FileChange[]>();
@@ -101,6 +188,11 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId, initialFile
     }
     return map;
   }, [filtered]);
+
+  const treeRows = useMemo(
+    () => buildChangeTreeRows(allPaths, paths, changesByPath, collapsedDirs, !!search.trim()),
+    [allPaths, paths, changesByPath, collapsedDirs, search],
+  );
 
   const fileChanges = useMemo(() => {
     if (!selectedFile) return [];
@@ -120,10 +212,10 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId, initialFile
   return (
     <>
       {/* File list — left card on desktop, capped strip on mobile */}
-      <div className="changes-files">
+      <div className="files-tree changes-files">
         <div className="changes-files-bar">
           <input
-            className="changes-search"
+            className="changes-search files-search"
             type="text"
             placeholder="Search.."
             value={search}
@@ -131,27 +223,41 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId, initialFile
           />
           <span className="changes-count">{filtered.length}</span>
         </div>
-        <div className="changes-files-list">
+        <div className="files-tree-list changes-files-list">
           {loading && <div className="changes-loading">Loading…</div>}
           {error && <div className="changes-error">{error}</div>}
           {!loading && !error && paths.length === 0 && (
-            <div className="changes-empty-sm">
+            <div className="files-empty-sm">
               {changes.length === 0 ? 'No file changes yet' : 'No matches'}
             </div>
           )}
-          {paths.map((path) => {
-            const count = changesByPath.get(path)!.length;
-            return (
-              <div
-                key={path}
-                className={`changes-file${selectedFile === path ? ' selected' : ''}`}
-                onClick={() => { const p = selectedFile === path ? null : path; setSelectedFile(p); onSelect?.(p); }}
-              >
-                <span className="changes-file-name">{path}</span>
-                <span className="changes-file-count">{count}</span>
-              </div>
-            );
-          })}
+          {treeRows.map((row) => (
+            <div
+              key={`${row.type}:${row.path}`}
+              className={`files-row files-${row.type}${row.type === 'file' && selectedFile === row.path ? ' selected' : ''}`}
+              style={{ paddingLeft: `${0.6 + row.depth * 0.45}rem` }}
+              title={row.path}
+              onClick={() => {
+                if (row.type !== 'file') {
+                  if (search.trim()) setSearch('');
+                  setCollapsedDirs((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(row.path)) next.delete(row.path);
+                    else next.add(row.path);
+                    return next;
+                  });
+                  return;
+                }
+                const path = selectedFile === row.path ? null : row.path;
+                setSelectedFile(path);
+                onSelect?.(path);
+              }}
+            >
+              <span className="files-chev">{row.type === 'file' ? '' : row.expanded ? '▾' : '▸'}</span>
+              <span className="files-name">{row.name}</span>
+              {row.type === 'file' && <span className="changes-file-count">{row.count}</span>}
+            </div>
+          ))}
         </div>
       </div>
 
