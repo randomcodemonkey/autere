@@ -5,6 +5,7 @@ interface SortableListProps {
   onChange: (items: string[]) => void;
   placeholder?: string;
   addLabel?: string;
+  addButtonVariant?: 'primary' | 'info';
   disabled?: boolean;
 }
 
@@ -15,6 +16,7 @@ export function SortableList({
   onChange,
   placeholder = 'Enter value…',
   addLabel = 'Add',
+  addButtonVariant = 'primary',
   disabled = false,
 }: SortableListProps) {
   const [newItem, setNewItem] = useState('');
@@ -183,7 +185,7 @@ export function SortableList({
           disabled={disabled}
         />
         <button
-          className="btn btn-primary sortable-list-add-btn"
+          className={`btn btn-${addButtonVariant} sortable-list-add-btn`}
           onClick={handleAdd}
           disabled={disabled || !newItem.trim()}
           type="button"

@@ -56,6 +56,35 @@ describe('SessionModal', () => {
     cy.get('.session-item.active .session-delete-btn').should('not.exist');
   });
 
+  it('places New Session at the end of the Sessions header', () => {
+    mountModal();
+    cy.wait('@sessions');
+    cy.get('.sessions-page > .card-header .sessions-new-btn').should('contain', 'New Session').click();
+    cy.get('.modal-header h3').should('contain', 'New session');
+  });
+
+  it('uses an info Add workdir button and only shows Save for unsaved changes', () => {
+    const current = { ...SESSIONS[0], workdirs: ['/home/autere/code'] };
+    cy.intercept('GET', '**/api/v1/sessions', { success: true, data: [current, ...SESSIONS.slice(1)] }).as('sessionsWithWorkdirs');
+    cy.intercept('GET', '**/api/v1/browse/roots', { success: true, data: [{ path: '/home/autere', access: 'rw' }] });
+    cy.intercept('GET', '**/api/v1/browse/list*', {
+      success: true,
+      data: [{ name: 'code', type: 'dir' }, { name: 'tmp', type: 'dir' }],
+    });
+    mountModal({ canSetWorkdir: true });
+    cy.wait('@sessionsWithWorkdirs');
+    cy.get('.session-workdirs-save').should('not.exist');
+    cy.get('.session-workdirs-edit .sortable-list-add-btn')
+      .should('have.class', 'btn-info')
+      .and('not.have.class', 'btn-primary');
+    cy.get('.session-workdirs-edit').first().within(() => {
+      cy.get('.sortable-list-item .sortable-list-input').first().clear().type('/home/autere/tmp');
+      cy.get('.session-workdirs-save').should('exist');
+      cy.get('.sortable-list-item .sortable-list-input').first().clear().type('/home/autere/code');
+      cy.get('.session-workdirs-save').should('not.exist');
+    });
+  });
+
   it('pins old sessions from the full session list without switching', () => {
     const onTogglePinnedSession = cy.stub().as('togglePin');
     mountModal({ onTogglePinnedSession, pinnedSessionFiles: ['/s/aaaa.jsonl'] });

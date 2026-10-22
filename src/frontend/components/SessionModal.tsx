@@ -343,6 +343,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
               onChange={setNewWorkdirs}
               placeholder="/home/autere/code/… (or relative to $HOME)"
               addLabel="Add workdir"
+              addButtonVariant="info"
             />
             {wdCheck && (wdCheck.checking ? (
               <div className="settings-description">Checking workdirs…</div>
@@ -401,11 +402,6 @@ export const SessionView: React.FC<SessionViewProps> = ({
       </div>
 
       <div className="sessions-section">
-        <div className="btn-group">
-          <button className="btn btn-primary" onClick={openNewSessionForm} disabled={switching || statusType === 'disconnected'}>
-            ✨ New Session
-          </button>
-        </div>
         <input
           className="session-search-input"
           type="text"
@@ -502,6 +498,9 @@ export const SessionView: React.FC<SessionViewProps> = ({
     <div className="card sessions-page">
       <div className="card-header">
         <span className="card-title">Sessions</span>
+        <button className="btn btn-primary sessions-new-btn" onClick={openNewSessionForm} disabled={switching || statusType === 'disconnected'}>
+          New Session
+        </button>
       </div>
       <div className="sessions-body">{listBody}</div>
       {view === 'new' && (
@@ -541,6 +540,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
                     onChange={setCloneWorkdirs}
                     placeholder="/home/autere/code/… (or relative to $HOME)"
                     addLabel="Add workdir"
+                    addButtonVariant="info"
                   />
                 </div>
               )}
@@ -570,9 +570,9 @@ const WorkdirEditor: React.FC<{
   onSwitching: (id: string) => void;
 }> = ({ sessionId, busy, onSwitching }) => {
   const [workdirs, setWorkdirs] = useState<string[] | null>(null);
+  const [savedWorkdirs, setSavedWorkdirs] = useState<string[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [dirty, setDirty] = useState(false);
 
   // Current session's workdirs from the sessions listing. Until BOTH the
   // session id and the listing are available we stay in the loading state —
@@ -580,19 +580,31 @@ const WorkdirEditor: React.FC<{
   useEffect(() => {
     if (!sessionId) return; // wait for the session state to arrive
     let cancelled = false;
+    setWorkdirs(null);
+    setSavedWorkdirs(null);
     fetch(url(API.sessions.list))
       .then((res) => res.json())
       .then((data) => {
         if (!cancelled && data.success) {
           const cur = (data.data || []).find((s: { id: string }) => s.id === sessionId);
-          setWorkdirs(cur?.workdirs || []);
+          const loadedWorkdirs = [...(cur?.workdirs || [])];
+          setWorkdirs(loadedWorkdirs);
+          setSavedWorkdirs(loadedWorkdirs);
         }
       })
-      .catch(() => { if (!cancelled) setWorkdirs([]); });
+      .catch(() => {
+        if (!cancelled) {
+          setWorkdirs([]);
+          setSavedWorkdirs([]);
+        }
+      });
     return () => { cancelled = true; };
   }, [sessionId]);
 
   const wdCheck = useWorkdirCheck(workdirs || []);
+  const dirty = workdirs !== null && savedWorkdirs !== null && (
+    workdirs.length !== savedWorkdirs.length || workdirs.some((item, index) => item !== savedWorkdirs[index])
+  );
 
   // Unsaved-changes guard: browser reload/close warns, and in-app view
   // switches confirm via workdirsUnsaved() in AppPage's handleSetView.
@@ -622,7 +634,7 @@ const WorkdirEditor: React.FC<{
         if (!res.ok || body.success === false) {
           setError(body.error || `Failed (${res.status})`);
         } else {
-          setDirty(false);
+          setSavedWorkdirs([...workdirs]);
           // pi respawned — rebind this client view (no-op when same id)
           onSwitching(sessionId);
         }
@@ -647,9 +659,10 @@ const WorkdirEditor: React.FC<{
       {busy && <span className="settings-description">Session busy — wait for the current turn to finish.</span>}
       <SortableList
         items={workdirs}
-        onChange={(items) => { setWorkdirs(items); setDirty(true); }}
+        onChange={setWorkdirs}
         placeholder="/home/autere/code/… (or relative to $HOME)"
         addLabel="Add workdir"
+        addButtonVariant="info"
         disabled={busy || saving}
       />
       {wdCheck && (wdCheck.checking ? (
@@ -660,11 +673,13 @@ const WorkdirEditor: React.FC<{
         </div>
       ) : null)}
       {error && <div className="settings-description" style={{ color: 'var(--c-danger-strong)' }}>{error}</div>}
-      <div className="btn-group">
-        <button className="btn btn-primary session-workdirs-save" onClick={apply} disabled={disabled}>
-          {saving ? '⏳ Restarting…' : '💾 Save workdirs'}
-        </button>
-      </div>
+      {dirty && (
+        <div className="btn-group">
+          <button className="btn btn-primary session-workdirs-save" onClick={apply} disabled={disabled}>
+            {saving ? '⏳ Restarting…' : '💾 Save workdirs'}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
