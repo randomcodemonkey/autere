@@ -162,18 +162,51 @@ describe('Header running-session tabs', () => {
       createdAt: 0, lastActivity: i, active: true,
     }));
     mountTabs({ runningSessions: sessions as any, sessionId: 's0' });
-    cy.get('.session-tabs > .session-tab, .session-tabs > .session-badge-tab').should('have.length', 8);
+    cy.get('.session-tabs > .session-tab-item').should('have.length', 8);
     mountTabs({ runningSessions: sessions as any, sessionId: 's0', sessionTabLimit: 2 });
-    cy.get('.session-tabs > .session-tab, .session-tabs > .session-badge-tab').should('have.length', 2);
+    cy.get('.session-tabs > .session-tab-item').should('have.length', 2);
+  });
+
+  it('shows full-name tooltips and keeps pinned idle sessions first alphabetically beyond the cap', () => {
+    const longName = 'A'.repeat(90);
+    const sessions = [
+      { id: 'current', sessionFile: 'current-file', sessionName: 'Current', parentSession: null, createdAt: 0, lastActivity: 100, active: true },
+      { id: 'recent', sessionFile: 'recent-file', sessionName: longName, parentSession: null, createdAt: 0, lastActivity: 90, active: true },
+      { id: 'zulu', sessionFile: 'zulu-file', sessionName: 'Zulu archive', parentSession: null, createdAt: 0, lastActivity: 1, active: false },
+      { id: 'alpha', sessionFile: 'alpha-file', sessionName: 'Alpha archive', parentSession: null, createdAt: 0, lastActivity: 0, active: false },
+    ];
+    const onTogglePinnedSession = cy.stub().as('togglePin');
+    mountTabs({
+      sessionId: 'current', runningSessions: sessions as any, sessionTabLimit: 2,
+      pinnedSessionFiles: ['zulu-file', 'alpha-file', 'recent-file'], onTogglePinnedSession,
+    });
+    cy.get('.session-tabs > .session-tab-item').then(($items) => {
+      expect(Array.from($items).map((item) => item.querySelector('.session-badge-text')?.textContent?.trim()))
+        .to.deep.eq([`${longName.slice(0, 62)}…`, 'Alpha archive', 'Zulu archive', 'Current']);
+    });
+    cy.get('.session-tab-item').first().should('have.attr', 'data-tooltip', longName);
+    cy.get('.session-tab-item').first().find('.session-tab').should('have.attr', 'aria-label').and('include', longName);
+    cy.get('.session-tab').should('not.have.attr', 'title');
+    cy.get('.session-tab-pin').first().click();
+    cy.get('@togglePin').should('have.been.calledWith', sessions[1]);
   });
 
   it('switches immediately on tab click', () => {
     const onRunningSessionClick = cy.stub().as('onTab');
     mountTabs({ runningSessions: tabs as any, onRunningSessionClick });
-    // click the text, not the button: the unstyled close-SVG (component tests
-    // load no CSS) covers the button's center
     cy.get('.session-tab').eq(0).find('.session-badge-text').click();
     cy.get('@onTab').should('have.been.calledWith', 's2');
+  });
+
+  it('can pin a session from the mobile dropdown without switching', () => {
+    cy.viewport(375, 667);
+    const onRunningSessionClick = cy.stub().as('onTab');
+    const onTogglePinnedSession = cy.stub().as('togglePin');
+    mountTabs({ runningSessions: tabs as any, sessionId: 's1', onRunningSessionClick, onTogglePinnedSession });
+    cy.get('.session-badge').click({ force: true });
+    cy.get('.session-menu-pin').click({ force: true });
+    cy.get('@togglePin').should('have.been.calledWith', tabs[1]);
+    cy.get('@onTab').should('not.have.been.called');
   });
 });
 
@@ -277,10 +310,10 @@ describe('Header session tabs: click-through switch flow', () => {
     mountWith('id-tui', 'autere tui', sessions);
     cy.get('.session-tabs > *').then(($c) => {
       expect($c[0].textContent).to.contain('autere tabbed sessions');
-      expect($c[0].className).to.contain('session-tab');    // tabbed: back to orange running tab
+      expect($c[0].querySelector('.session-tab')).to.exist;    // tabbed: back to orange running tab
       expect($c[1].textContent).to.contain('autere tui');
-      expect($c[1].className).to.contain('session-badge');  // tui: badge at its alpha slot
-      expect($c[1].className).to.not.contain('session-tab');
+      expect($c[1].querySelector('.session-badge')).to.exist;  // tui: badge at its alpha slot
+      expect($c[1].querySelector('.session-tab')).to.not.exist;
     });
   });
 
@@ -291,9 +324,9 @@ describe('Header session tabs: click-through switch flow', () => {
     cy.get('.session-tabs > *').then(($c) => {
       expect($c.length).to.eq(2);
       expect($c[0].textContent).to.contain('autere tabbed sessions');
-      expect($c[0].className).to.contain('session-tab');
+      expect($c[0].querySelector('.session-tab')).to.exist;
       expect($c[1].textContent).to.contain('autere tui');
-      expect($c[1].className).to.contain('session-badge');
+      expect($c[1].querySelector('.session-badge')).to.exist;
     });
   });
 });
@@ -328,9 +361,9 @@ describe('Header session tabs: name-matched reheaded sessions + room for extra',
     cy.get('.session-tabs > *').then(($c) => {
       expect($c.length).to.eq(2);
       expect($c[0].textContent).to.contain('autere tabbed sessions');
-      expect($c[0].className).to.contain('session-badge');   // selected → badge FIRST (alpha)
+      expect($c[0].querySelector('.session-badge')).to.exist;   // selected → badge FIRST (alpha)
       expect($c[1].textContent).to.contain('autere tui');
-      expect($c[1].className).to.contain('session-tab');
+      expect($c[1].querySelector('.session-tab')).to.exist;
     });
   });
 
@@ -341,7 +374,7 @@ describe('Header session tabs: name-matched reheaded sessions + room for extra',
       expect($c[0].textContent).to.contain('autere tabbed sessions');
       expect($c[1].textContent).to.contain('autere tui');
       expect($c[2].textContent).to.contain('idle session');
-      expect($c[2].className).to.contain('session-badge'); // alphabetically last here, still the badge
+      expect($c[2].querySelector('.session-badge')).to.exist; // alphabetically last here, still the badge
     });
   });
 });
@@ -375,9 +408,9 @@ describe('Header session tabs: idle padding below the cap', () => {
       // 2 running + 3 idle = 5, alphabetical: idle-1, idle-2, idle-3, run-a(badge), run-b
       // Delete affordance sits inside each tab (× appended to textContent)
       expect(labels.map((l) => l.replace(/×$/, ''))).to.deep.eq(['idle-1', 'idle-2', 'idle-3', 'run-a', 'run-b']);
-      expect($c[3].className).to.contain('session-badge'); // selected running = badge
-      expect($c[0].className).to.contain('idle').and.to.not.contain('running');   // idle padding = gray
-      expect($c[4].className).to.contain('running'); // other alive-idle tab = bright yellow running
+      expect($c[3].querySelector('.session-badge')).to.exist; // selected running = badge
+      expect($c[0].querySelector('.session-tab')?.className).to.contain('idle').and.to.not.contain('running');   // idle padding = gray
+      expect($c[4].querySelector('.session-tab')?.className).to.contain('running'); // other alive-idle tab = bright yellow running
     });
   });
 });
@@ -407,9 +440,9 @@ describe('Header session tab delete', () => {
     const confirmStub = cy.stub(window, 'confirm').returns(true);
     withTabs();
     // Viewed (badge) and busy tabs carry no ×; the idle one does
-    cy.get('.session-badge .session-tab-close').should('not.exist');
-    cy.get('.session-tab.working .session-tab-close').should('not.exist');
-    cy.get('.session-tab.idle .session-tab-close').click();
+    cy.get('.session-tab-item.selected .session-tab-close').should('not.exist');
+    cy.get('.session-tab-item:has(.session-tab.working) .session-tab-close').should('not.exist');
+    cy.get('.session-tab-item:has(.session-tab.idle) .session-tab-close').click();
     cy.wait('@del').then(() => {
       expect(confirmStub).to.have.been.called;
     });

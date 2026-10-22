@@ -360,10 +360,61 @@ body {
   border-left: 1px solid rgba(255, 255, 255, 0.08); // gray edge for the first (leftmost) tab
   border-right: 1px solid rgba(255, 255, 255, 0.08);
 
-  // Never wider than the header can give — tabs shrink to fit (below)
+  // Tabs shrink to fit, while overflow remains visible for the name tooltip.
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
+}
+
+// A session tab group contains the switch target plus independent pin/delete actions.
+.session-tab-item {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 2.2rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+
+  &::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    z-index: 1000;
+    top: calc(100% + 0.35rem);
+    left: 50%;
+    width: max-content;
+    max-width: min(24rem, calc(100vw - 1rem));
+    padding: 0.45rem 0.65rem;
+    border: 1px solid var(--c-border);
+    border-radius: 0.35rem;
+    background: var(--c-surface);
+    color: var(--c-text);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.35;
+    text-align: center;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translate(-50%, 0.15rem);
+    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
+  }
+
+  &:hover::after, &:focus-within::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translate(-50%, 0);
+  }
+
+  &:first-child::after {
+    left: 0;
+    transform: translateY(0.15rem);
+  }
+
+  &:first-child:hover::after, &:first-child:focus-within::after { transform: none; }
+  &:last-child::after { left: auto; right: 0; transform: translateY(0.15rem); }
+  &:last-child:hover::after, &:last-child:focus-within::after { transform: none; }
 }
 
 // "Loading sessions…" placeholder while the first sessions list is in flight
@@ -379,20 +430,21 @@ body {
 .session-tab {
   height: 100%;
   min-height: 2.2rem;
-  padding: 0 0.75rem;
+  width: 100%;
+  padding: 0 2.6rem 0 0.75rem;
   font-size: 0.65rem;
   font-weight: 500;
   display: inline-flex;
   align-items: center;
   justify-content: center; // text centers when the tab grows wider than content (via badge-text's auto margin)
   border: none;
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: none;
   cursor: pointer;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   min-width: 0;
-  flex: 1 1 0; // fill the header bar evenly; still shrinks with ellipsis below content width
+  flex: none;
   transition: filter 0.15s;
 
   &:hover { filter: brightness(1.25); }
@@ -440,8 +492,9 @@ body {
   overflow: hidden;
 }
 @media (max-width: 768px) {
-  // Mobile: only the selected session's badge-tab is shown (space)
-  .session-tab { display: none; }
+  // Mobile: only the selected session group is shown in the header.
+  .session-tabs .session-tab-item:not(.selected) { display: none; }
+  .session-tabs .session-tab-item.selected { flex: 1; }
 
   // The badge becomes the middle bar: grow into all the space between the
   // logo (fixed) and the hamburger menu (fixed). Left border mirrors the
@@ -460,21 +513,21 @@ body {
   }
 }
 
-// Selected session inside the tab row renders as the regular session-badge
-// (status colors + dot); make it behave exactly like a .session-tab: stretch,
-// grow evenly with the tabs, shrink with ellipsis.
-.session-tabs .session-badge {
+// The selected session badge fills its tab group and leaves room for actions.
+.session-tabs .session-tab-item > .session-badge {
   align-self: stretch;
   height: 100%;
+  width: 100%;
   min-width: 0; // per-system ellipsis like .session-tab (overrides the badge's flex-shrink:0)
   overflow: hidden;
-  flex: 1 1 0;
+  flex: none;
 
   .session-badge-text {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    margin-right: auto; // pin a following close affordance to the tab's end
+    margin-right: auto;
+    padding-right: 2.5rem; // leave room for pin/delete controls
   }
 }
 
@@ -492,28 +545,34 @@ body {
   &.tab-offline   { border-bottom-color: var(--c-state-offline); }
 }
 
-// Per-tab delete affordance (hidden for the viewed / busy sessions in JSX):
-// small muted × at the tab's right edge, red on hover
-.session-tab-close {
-  margin-left: 0.5rem;
+// Independent pin/delete actions overlaid at the tab's right edge.
+.session-tab-pin, .session-tab-close {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.2rem;
+  background: transparent;
   color: var(--c-text-ghost-2);
   cursor: pointer;
-  flex-shrink: 0;
 
-  .session-tab-close-icon {
-    height: 0.55rem; // punches above its weight like the old 0.9rem text ×
-    width: auto;
-    display: block;
-  }
-
-  &:hover { color: var(--c-danger, var(--c-danger-strong)); }
+  &:hover { color: var(--c-text); background: rgba(255, 255, 255, 0.08); }
 }
+.session-tab-pin { right: 1.25rem; }
+.session-tab-pin.pinned { color: var(--c-warning); }
+.session-tab-pin svg { width: 0.55rem; height: 0.75rem; }
+.session-tab-close { right: 0.1rem; }
+.session-tab-close .session-tab-close-icon { height: 0.55rem; width: auto; display: block; }
+.session-tab-close:hover { color: var(--c-danger, var(--c-danger-strong)); }
 
-// Tabs stretch (flex:1 1 0) and center their content; the auto margins on the
-// text absorb all free space so the text centers in the leftover width while
-// the close affordance pins to the tab's end edge.
+// Tab text truncates before the overlaid session actions.
 
 // Underline for non-selected tabs (incl. compacting sessions)
 .session-tab {
@@ -545,20 +604,47 @@ body {
   z-index: 100;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   .session-menu-item {
-    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0 0.35rem;
+    border-radius: 0.35rem;
 
-    .session-menu-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    &:hover { background: var(--c-surface-3); }
+  }
+  .session-menu-switch {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex: 1;
+    min-width: 0;
+    text-align: left;
     background: none;
     border: none;
     color: var(--c-muted);
     font-size: 0.8rem;
-    padding: 0.5rem 0.6rem;
-    border-radius: 0.35rem;
+    padding: 0.5rem 0.25rem;
     cursor: pointer;
     white-space: nowrap;
-
-    &:hover { background: var(--c-surface-3); }
   }
+  .session-menu-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .session-menu-pin {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    min-width: 3.2rem;
+    height: 2rem;
+    padding: 0 0.4rem;
+    border: 0;
+    border-radius: 0.25rem;
+    background: none;
+    color: var(--c-text-ghost-2);
+    cursor: pointer;
+  }
+  .session-menu-pin:hover { background: var(--c-surface-3); }
+  .session-menu-pin.pinned { color: var(--c-warning); }
+  .session-menu-pin svg { width: 0.65rem; height: 0.85rem; }
 }
 
 .header > .session-tabs-dropdown {
@@ -4243,6 +4329,12 @@ body {
     }
   }
 }
+
+.session-pin-toggle svg {
+  height: 0.9rem;
+  width: 0.675rem;
+}
+.session-pin-toggle.pinned { color: var(--c-warning); }
 
 .session-item-content {
   flex: 1;

@@ -56,6 +56,17 @@ describe('SessionModal', () => {
     cy.get('.session-item.active .session-delete-btn').should('not.exist');
   });
 
+  it('pins old sessions from the full session list without switching', () => {
+    const onTogglePinnedSession = cy.stub().as('togglePin');
+    mountModal({ onTogglePinnedSession, pinnedSessionFiles: ['/s/aaaa.jsonl'] });
+    cy.wait('@sessions');
+    cy.get('.session-item.active .session-pin-toggle').should('contain', 'Unpin').click();
+    cy.get('@togglePin').should('have.been.calledWithMatch', { sessionFile: '/s/aaaa.jsonl' });
+    cy.get('.session-item').contains('Idle one').parents('.session-item').find('.session-pin-toggle').should('contain', 'Pin').click();
+    cy.get('@togglePin').should('have.been.calledWithMatch', { sessionFile: '/s/cccc.jsonl' });
+    cy.get('@onSwitchSession').should('not.have.been.called');
+  });
+
   it('action buttons wrap to their own row in mobile card mode', () => {
     cy.viewport(375, 700);
     mountModal();

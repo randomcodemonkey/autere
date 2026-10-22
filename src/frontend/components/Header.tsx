@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { url } from '../base-path';
 import { API } from '../../shared/api-paths';
 import type { SessionInfo } from '../types';
+import { PinIcon } from './PinIcon';
 
 export type ViewId = 'status' | 'sessions' | 'chat' | 'settings' | 'tasks' | 'edits' | 'users' | 'user';
 
@@ -35,8 +36,10 @@ interface HeaderProps {
   /** Sessions ordered by recent activity; the selected one renders as the
    *  session badge/status button in place */
   runningSessions?: SessionInfo[];
-  /** Maximum number of sessions rendered in the tab bar (1-20, default 8). */
+  /** Tab cap (1-20, default 8); pinned sessions remain visible beyond it. */
   sessionTabLimit?: number;
+  pinnedSessionFiles?: string[];
+  onTogglePinnedSession?: (session: SessionInfo) => void;
   /** Receive a fresh sessions list (e.g. after deleting a tab's session) */
   onSessionsRefreshed?: (sessions: SessionInfo[]) => void;
   /** false until the first sessions list arrives — shows a loading
@@ -51,13 +54,14 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   sessionState,
   statusType,
-  statusText,
   sessionId,
   sessionName,
   activeView,
   onViewChange,
   runningSessions,
   sessionTabLimit = 8,
+  pinnedSessionFiles,
+  onTogglePinnedSession,
   onSessionsRefreshed,
   sessionsLoaded = true,
   onRunningSessionClick,
@@ -107,32 +111,26 @@ export const Header: React.FC<HeaderProps> = ({
       ?? (sessionName ? availableTabs.find((s) => s.sessionName === sessionName) : undefined)
     : undefined)
     ?? { sessionFile: '', cwd: null, createdAt: 0, lastActivity: 0, parentSession: null, id: sessionId ?? '', sessionName: sessionName ?? null, active: false }, [availableTabs, sessionId, sessionName]);
+  const pinnedSet = useMemo(() => new Set(pinnedSessionFiles ?? []), [pinnedSessionFiles]);
   const tabCap = Number.isFinite(sessionTabLimit) ? Math.max(1, Math.min(20, Math.floor(sessionTabLimit))) : 8;
   const tabs = useMemo(() => {
-    const running = availableTabs.filter((s) => s.active);
-    const idle = availableTabs.filter((s) => !s.active);
-    const SESSION_TAB_CAP = tabCap; // running + most recent idle historic sessions
-    // running take precedence: keep every running slot, pad with the most
-    // recent idle sessions below the cap
-    let tabs = [...running.slice(0, SESSION_TAB_CAP), ...idle.slice(0, Math.max(0, SESSION_TAB_CAP - running.length))];
-    if (tabs.length === 0) {
-      // No sessions known yet (initial load) or none exist — no tabs at all,
-      // rather than a raw synthetic id placeholder
-      tabs = [];
-    } else if (!tabs.some((s) => s === selectedEntry || s.id === sessionId || sessionId?.startsWith(s.id))) {
-      // Replace the last slot or append, never exceeding the configured cap.
-      if (tabs.length < SESSION_TAB_CAP) {
-        // Selection wins a slot: drop the last idle pad if one was added.
-        const lastIsPad = tabs.length > running.length && tabs[tabs.length - 1] === idle[Math.min(idle.length, SESSION_TAB_CAP - running.length) - 1];
-        tabs = lastIsPad ? [...tabs.slice(0, -1), selectedEntry] : [...tabs, selectedEntry];
-      } else {
-        tabs = [...tabs.slice(0, -1), selectedEntry];
-      }
+    if (availableTabs.length === 0) return [];
+    const pinned = availableTabs.filter((s) => pinnedSet.has(s.sessionFile)).sort((a, b) =>
+      (a.sessionName || a.id).localeCompare(b.sessionName || b.id, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id));
+    const running = availableTabs.filter((s) => s.active && !pinnedSet.has(s.sessionFile));
+    const idle = availableTabs.filter((s) => !s.active && !pinnedSet.has(s.sessionFile));
+    const remaining = Math.max(0, tabCap - pinned.length);
+    const recent = [...running.slice(0, remaining), ...idle.slice(0, Math.max(0, remaining - running.length))];
+    const isSelected = (s: SessionInfo) => s === selectedEntry || s.id === sessionId || !!sessionId?.startsWith(s.id);
+    if (!pinned.some(isSelected) && !recent.some(isSelected)) {
+      if (recent.length >= remaining && recent.length > 0) recent[recent.length - 1] = selectedEntry;
+      else recent.push(selectedEntry);
     }
-    return [...tabs].sort((a, b) => b.lastActivity - a.lastActivity || (a.sessionName || a.id).localeCompare(b.sessionName || b.id));
-  }, [availableTabs, selectedEntry, sessionId, tabCap]);
-  // Ctrl+Shift + digit (1..9) jumps to that session tab; the session must be
-  // known (tabs rendered) — digits beyond the cap do nothing. (Alt/opt is
+    recent.sort((a, b) => b.lastActivity - a.lastActivity || (a.sessionName || a.id).localeCompare(b.sessionName || b.id));
+    return [...pinned, ...recent];
+  }, [availableTabs, selectedEntry, sessionId, tabCap, pinnedSet]);
+  // Ctrl+Shift + digit (1..9) jumps to that session tab; digits beyond the
+  // rendered tabs do nothing. (Alt/opt is
   // reserved for typing special characters on many layouts.)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -153,6 +151,22 @@ export const Header: React.FC<HeaderProps> = ({
     s.sessionName
       ? (s.sessionName.length > 64 ? s.sessionName.slice(0, 62) + '…' : s.sessionName)
       : (s.id || displayName);
+  const renderPinToggle = (session: SessionInfo, className: string) => {
+    if (!onTogglePinnedSession || !session.sessionFile) return null;
+    const pinned = pinnedSet.has(session.sessionFile);
+    const name = session.sessionName || session.id;
+    return (
+      <button
+        type="button"
+        className={`${className}${pinned ? ' pinned' : ''}`}
+        aria-label={`${pinned ? 'Unpin' : 'Pin'} session ${name}`}
+        aria-pressed={pinned}
+        onClick={(e) => { e.stopPropagation(); onTogglePinnedSession(session); }}
+      >
+        <PinIcon />{className === 'session-menu-pin' && <span>{pinned ? 'Unpin' : 'Pin'}</span>}
+      </button>
+    );
+  };
 
   // Users management is admin-only
   const viewIds: ViewId[] = ['status', 'sessions', 'chat', 'edits', 'settings', 'tasks', 'user'];
@@ -165,34 +179,36 @@ export const Header: React.FC<HeaderProps> = ({
         {!sessionsLoaded && <span className="session-tabs-loading">Loading sessions…</span>}
         {tabs.map((s, ti) => {
           const label = tabLabel(s);
-          return s === selectedEntry ? (
-            <span
-              key={s.id}
-              className={`session-badge status-badge status-${statusType} session-badge-tab${statusType === 'disconnected' ? ' tab-offline' : ' tab-' + (sessionState?.compacting ? 'compacting' : statusType === 'streaming' ? 'working' : 'idle')}`}
-              title={statusText}
-              onClick={() => { onViewChange('chat'); if (window.innerWidth <= 768) { setMenuOpen(false); setSessionsMenuOpen((o) => !o); } }}
-            >
-              <span className={`connection-dot dot-${dotClass}`} />
-              <span className="session-badge-text">{label}</span>
-            </span>
-          ) : (
-            <button
-              key={s.id}
-              className={`session-tab ${statusType === 'disconnected' ? 'offline' : s.compacting ? 'compacting' : s.active ? (s.streaming ? 'working' : 'running') : 'idle'}`}
-              title={`Switch to ${s.sessionName || s.id}${ti < 9 ? ` (Ctrl+Shift+${ti + 1})` : ''}`}
-              onClick={() => onRunningSessionClick?.(s.id)}
-            >
-              <span className="session-badge-text">{label}</span>
-              {/* Delete affordance: never on the viewed session or one with a
-                  turn in flight; the tab click still switches on the delete
-                  click's stopPropagation */}
-              {!s.streaming && !s.compacting && (
+          const fullName = s.sessionName || s.id;
+          const selected = s === selectedEntry;
+          return (
+            <div key={s.sessionFile || s.id} className={`session-tab-item${selected ? ' selected' : ''}${pinnedSet.has(s.sessionFile) ? ' pinned' : ''}`} data-tooltip={fullName}>
+              {selected ? (
                 <span
+                  className={`session-badge status-badge status-${statusType} session-badge-tab${statusType === 'disconnected' ? ' tab-offline' : ' tab-' + (sessionState?.compacting ? 'compacting' : statusType === 'streaming' ? 'working' : 'idle')}`}
+                  aria-label={fullName}
+                  onClick={() => { onViewChange('chat'); if (window.innerWidth <= 768) { setMenuOpen(false); setSessionsMenuOpen((o) => !o); } }}
+                >
+                  <span className={`connection-dot dot-${dotClass}`} />
+                  <span className="session-badge-text">{label}</span>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className={`session-tab ${statusType === 'disconnected' ? 'offline' : s.compacting ? 'compacting' : s.active ? (s.streaming ? 'working' : 'running') : 'idle'}`}
+                  aria-label={`${fullName}${ti < 9 ? ` (Ctrl+Shift+${ti + 1})` : ''}`}
+                  onClick={() => onRunningSessionClick?.(s.id)}
+                >
+                  <span className="session-badge-text">{label}</span>
+                </button>
+              )}
+              {renderPinToggle(s, 'session-tab-pin')}
+              {!selected && !s.streaming && !s.compacting && (
+                <button
+                  type="button"
                   className="session-tab-close"
-                  title="Delete session"
-                  aria-label={`Delete session ${label}`}
-                  onClick={async (e) => {
-                    e.stopPropagation();
+                  aria-label={`Delete session ${s.sessionName || s.id}`}
+                  onClick={async () => {
                     if (!window.confirm(`Delete session "${label}"? It will be moved to deleted-sessions.`)) return;
                     try {
                       await fetch(url(API.sessions.item(s.id)), { method: 'DELETE' });
@@ -203,9 +219,9 @@ export const Header: React.FC<HeaderProps> = ({
                   }}
                 >
                   <svg className="session-tab-close-icon" viewBox="0 0 320 512" aria-hidden="true"><path fill="currentColor" d="M310.6 150.6c-12.5-12.5-32.8-12.5-45.3 0L160 255.9 54.6 150.6c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L114.7 301.3 9.4 406.6c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0L160 346.7l105.4 105.3c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L205.3 301.3l105.3-105.4c12.5-12.5 12.5-32.8 0-45.3z"/></svg>
-                </span>
+                </button>
               )}
-            </button>
+            </div>
           );
         })}
       </div>
@@ -256,16 +272,20 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Mobile: the collapsed tab badge toggles this session dropdown */}
       {sessionsMenuOpen && (
-        <div className="session-tabs-dropdown" onClick={() => setSessionsMenuOpen(false)}>
+        <div className="session-tabs-dropdown">
           {tabs.filter((s) => s !== selectedEntry).map((s) => (
-            <button
-              key={s.id}
-              className="session-menu-item"
-              onClick={() => { setSessionsMenuOpen(false); onRunningSessionClick?.(s.id); }}
-            >
-              <span className={`connection-dot ${s.compacting ? 'dot-blue' : s.active ? (s.streaming ? 'dot-yellow' : 'dot-amber') : 'dot-gray'}`} />
-              <span className="session-menu-item-label">{tabLabel(s)}</span>
-            </button>
+            <div key={s.sessionFile || s.id} className="session-menu-item">
+              <button
+                type="button"
+                className="session-menu-switch"
+                title={s.sessionName || s.id}
+                onClick={() => { setSessionsMenuOpen(false); onRunningSessionClick?.(s.id); }}
+              >
+                <span className={`connection-dot ${s.compacting ? 'dot-blue' : s.active ? (s.streaming ? 'dot-yellow' : 'dot-amber') : 'dot-gray'}`} />
+                <span className="session-menu-item-label">{tabLabel(s)}</span>
+              </button>
+              {renderPinToggle(s, 'session-menu-pin')}
+            </div>
           ))}
         </div>
       )}

@@ -4,6 +4,7 @@ import { SortableList } from './SortableList';
 import { url } from '../base-path';
 import { API } from '../api-paths';
 import { uiSessionName } from '../session-name';
+import { PinIcon } from './PinIcon';
 import type { SessionSearchResult, Persona } from '../types';
 
 /** Navigational guard: WorkdirEditor raises this while it has unsaved
@@ -90,6 +91,8 @@ interface SessionViewProps {
   /** Creates the session: chosen persona id (null = none) + form name + sandbox workdirs + docker.sock opt-in. clearSessionId deletes that session after the new one is bound ("clear" flow) */
   onNewSession: (personaId: string | null, sessionName: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string) => void;
   onSwitchSession: (sessionId: string) => void;
+  pinnedSessionFiles?: string[];
+  onTogglePinnedSession?: (session: SessionSearchResult) => void;
   /** True while a switch request is in flight — blocks further actions */
   switching?: boolean;
   /** Open directly on the new-session form tab (e.g. chat '/new' command) */
@@ -127,6 +130,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
   statusType, sessionId, sessionName,
   compacting, isStreaming, canSetWorkdir = false,
   onNewSession, onSwitchSession,
+  pinnedSessionFiles = [], onTogglePinnedSession,
   switching = false,
   initialView, onConsumedInitial,
 }) => {
@@ -448,6 +452,18 @@ export const SessionView: React.FC<SessionViewProps> = ({
                       <span className="badge info session-match-tag">content match</span>
                     )}
                   </div>
+                  {onTogglePinnedSession && (
+                    <button
+                      type="button"
+                      className={`btn btn-default btn-row session-pin-toggle${pinnedSessionFiles.includes(session.sessionFile) ? ' pinned' : ''}`}
+                      title={`${pinnedSessionFiles.includes(session.sessionFile) ? 'Unpin' : 'Pin'} session ${session.sessionName || session.id}`}
+                      aria-label={`${pinnedSessionFiles.includes(session.sessionFile) ? 'Unpin' : 'Pin'} session ${session.sessionName || session.id}`}
+                      aria-pressed={pinnedSessionFiles.includes(session.sessionFile)}
+                      onClick={(e) => { e.stopPropagation(); onTogglePinnedSession(session); }}
+                    >
+                      <PinIcon /> {pinnedSessionFiles.includes(session.sessionFile) ? 'Unpin' : 'Pin'}
+                    </button>
+                  )}
                   {!isCurrentSession && (
                     <button
                       className="btn btn-danger btn-row session-delete-btn"

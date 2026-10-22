@@ -17,9 +17,21 @@ import { url, basePath } from '../base-path';
 import { API } from '../api-paths';
 import { uiSessionName } from '../session-name';
 import { useSessionStream } from '../hooks/useSessionStream';
-import type { SSEMessage } from '../types';
+import type { SSEMessage, SessionInfo } from '../types';
 
 /** Combine base auth/SSE status with session streaming state */
+const PINNED_SESSION_FILES_KEY = 'autere:pinned-session-files';
+
+function readPinnedSessionFiles(): string[] {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(PINNED_SESSION_FILES_KEY) || '[]');
+    return Array.isArray(value) ? value.filter((file): file is string => typeof file === 'string') : [];
+  } catch (error) {
+    console.warn('Could not read pinned sessions from local storage', error);
+    return [];
+  }
+}
+
 function computeStatus(baseType: string, baseText: string, s: { compacting?: boolean; isStreaming?: boolean }): { type: string; text: string } {
   if (baseType === 'disconnected') return { type: 'disconnected', text: 'Disconnected' };
   if (baseType === 'loading') return { type: 'loading', text: 'Loading…' };
@@ -96,6 +108,14 @@ export function AppPage({
   // UI state
   const [restartingBackend, setRestartingBackend] = useState(false);
   const [sessionTabLimit, setSessionTabLimit] = useState(8);
+  const [pinnedSessionFiles, setPinnedSessionFiles] = useState(readPinnedSessionFiles);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PINNED_SESSION_FILES_KEY, JSON.stringify(pinnedSessionFiles));
+    } catch (error) {
+      console.warn('Could not save pinned sessions to local storage', error);
+    }
+  }, [pinnedSessionFiles]);
   useEffect(() => {
     if (!authenticated) return;
     let current = true;
@@ -131,6 +151,15 @@ export function AppPage({
     setRestarting,
     onBootstrapped: () => setRestartingBackend(false),
   });
+  const handleTogglePinnedSession = useCallback((session: SessionInfo) => {
+    if (!session.sessionFile) return;
+    setPinnedSessionFiles((current) => current.includes(session.sessionFile)
+      ? current.filter((file) => file !== session.sessionFile)
+      : [...current, session.sessionFile]);
+    setAvailableSessions((current) => current.some((item) => item.sessionFile === session.sessionFile)
+      ? current
+      : [...current, session]);
+  }, [setAvailableSessions]);
 
   const currentSessionId = urlSessionId || sessionState.sessionId;
 
@@ -372,6 +401,8 @@ export function AppPage({
         onViewChange={handleSetView}
         runningSessions={availableSessions}
         sessionTabLimit={sessionTabLimit}
+        pinnedSessionFiles={pinnedSessionFiles}
+        onTogglePinnedSession={handleTogglePinnedSession}
         sessionsLoaded={sessionsLoaded}
         onSessionsRefreshed={setAvailableSessions}
         onRunningSessionClick={handleSwitchSession}
@@ -422,6 +453,8 @@ export function AppPage({
               canSetWorkdir={userRole === 'admin'}
               onNewSession={handleNewSession}
               onSwitchSession={handleSwitchSession}
+              pinnedSessionFiles={pinnedSessionFiles}
+              onTogglePinnedSession={handleTogglePinnedSession}
               switching={switchingSession}
             />
             </ErrorBoundary>
