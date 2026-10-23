@@ -74,14 +74,13 @@ export function getDashboardHTML(basePath: string = ''): string {
 
     // 2. Inject runtime base path so the frontend JS knows the prefix.
     //    The frontend reads window.__AUTERE_BASE__ and uses it for
-    //    all fetch() / EventSource calls.
-    const script = `<script>window.__AUTERE_BASE__ = ${JSON.stringify(basePath)}</script>`;
+    //    all fetch() / EventSource calls. `<` is escaped so a crafted
+    //    prefix can never close the script tag.
+    const script = `<script>window.__AUTERE_BASE__ = ${JSON.stringify(basePath).replace(/</g, '\\u003c')}</script>`;
     html = html.replace('<head>', `<head>${script}`);
   }
   return html;
 }
-
-export { extractFullText } from '../shared/format.js';
 
 // ── Session file I/O ──
 

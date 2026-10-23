@@ -99,6 +99,13 @@ function writeUserSettingsFile(user: string, settings: UserSettings): void {
   invalidateCache(filePath);
 }
 
+/** Drop every per-user artifact under the settings dir: settings, personas,
+ *  scheduled tasks + run logs, push subscriptions. Used on user deletion. */
+export function deleteUserSettings(user: string): void {
+  const dir = dirname(getUserSettingsPath(user));
+  rmSync(dir, { recursive: true, force: true });
+}
+
 // ── Get a user-scoped setting ──
 
 export function getUserSetting(user: string, key: string, defaultValue?: any): any {

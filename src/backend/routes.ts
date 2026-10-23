@@ -18,26 +18,27 @@
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { execFileSync } from 'child_process';
-import { readFileSync, writeFileSync, existsSync, renameSync, mkdirSync, openSync, readSync, closeSync, statSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, renameSync, mkdirSync, statSync, rmSync } from 'fs';
+import * as fsp from 'fs/promises';
 import { join, dirname, basename } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { isDeepStrictEqual } from 'node:util';
-import { ProcessManager } from './process-manager.js';
+import { ProcessManager, spawnOpts } from './process-manager.js';
 import { getUser, getUserRole, hasRole, verifyCredentials, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, removeUserTokens, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, getLastSession, isRegisteredUser, userMustChangePassword, listApiTokens, createApiToken, deleteApiToken } from './auth.js';
 import { getClientSession, setClientSession, registerClient, broadcastToUser, viewedSessions, hubUsers } from './client-hub.js';
-import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword, getUserAllowedDirs, getUserMountDockerSocket, getUserTheme, setUserTheme } from './users.js';
+import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword, getUserMountDockerSocket, getUserTheme, setUserTheme } from './users.js';
 import { withDedupSections, withJanitorSections } from './extension-handlers.js';
 import { copilotStatsFor } from './extension-handlers.js';
 import type { CopilotTotals } from './copilot-totals.js';
 import { readExtensions } from './extensions.js';
-import { sendJSON, getDashboardHTML, readSessionHistory } from './utils.js';
+import { sendJSON, sendFile, getDashboardHTML, readSessionHistory } from './utils.js';
 import { getEnabledModelEntries, scopeModelsForSession } from './utils.js';
 import { isPiImagesInstalled } from './image-models.js';
 import { getPiEnvDir, ensurePiEnv, validateSandboxImage } from './pi-env.js';
 import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
-import { appendSessionInfo } from './sessions.js';
+import { appendSessionInfo, findSessionFileBySessionId } from './sessions.js';
 
 // pi --version, resolved once per backend process (cached — the binary does
 // not change mid-process). Empty string on failure so the UI shows '—'.
@@ -99,7 +100,7 @@ import { canRunTaskScripts } from '../shared/tasks.js';
 import { buildOpenApiSpec, type RouteDoc } from './openapi.js';
 import type { SessionInfo } from './types.js';
 
-import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths, getFolderIgnores, getSummaryPromptComposition, getSummaryPromptGuardTokens, getSummaryPromptExtra } from './user-settings.js';
+import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths, getFolderIgnores, getSummaryPromptComposition, getSummaryPromptGuardTokens, getSummaryPromptExtra, deleteUserSettings } from './user-settings.js';
 
 const startsWithLocal = (p: unknown): boolean => String(typeof p === 'string' ? p : (p as { source?: string })?.source || '').startsWith('local:');
 
@@ -147,17 +148,24 @@ function getClientId(req: IncomingMessage): string | null {
     || null;
 }
 
+/** Reverse-proxy base path: only a plain path segment list is accepted.
+ *  The value is reflected into cookies and index.html, so anything else
+ *  (quotes, `</script>`, absolute URLs) is dropped instead of passed on. */
+export function sanitizeBasePath(raw: string): string {
+  const prefix = String(raw || '').trim().replace(/\/+$/, '');
+  return /^\/[A-Za-z0-9._~/-]*$/.test(prefix) && !prefix.includes('..') ? prefix : '';
+}
+
 function detectBasePath(req: IncomingMessage): string {
   const prefix = (req.headers['x-forwarded-path'] || req.headers['x-forwarded-prefix'] || req.headers['x-forwarded-base'] || '') as string;
-  if (prefix) return prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
-  return '';
+  return sanitizeBasePath(prefix);
 }
 
 function detectBasePathFromURL(requestPath: string): string {
   // Reverse-proxy base: /<base>/api/... — the API version segment is not
   // part of the base.
   const match = requestPath.match(/^(.+)\/api(?:\/v\d+)?\//);
-  if (match && match[1]) return match[1];
+  if (match && match[1]) return sanitizeBasePath(match[1]);
   return '';
 }
 
@@ -248,6 +256,18 @@ const IMAGE_MIME: Record<string, string> = {
 /** Read the session target selector from body or query string */
 function targetParam(c: Ctx, body?: any): string | undefined {
   return body?.sessionId ?? c.url.searchParams.get('sessionId') ?? undefined;
+}
+
+/** True when an Origin header points at the host this request arrived for. */
+function isSameHostOrigin(origin: string, host: string | undefined): boolean {
+  if (!host) return false;
+  try { return new URL(origin).host === host; } catch { return false; }
+}
+
+/** Route params are percent-decoded; a malformed escape is a bad request,
+ *  not an internal error. */
+function decodeParam(raw: string): string | null {
+  try { return decodeURIComponent(raw); } catch { return null; }
 }
 
 interface RouteMatch {
@@ -457,24 +477,24 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     role: 'chat', tag: 'Auth', summary: 'Log in; sets the session cookie and returns a bearer token',
     handler: async (c) => {
       const { user, password } = await readBody(c.req);
+      // Rate-limit per address AND account: keying on the address alone would
+      // let one user's failures lock out everyone behind a shared proxy IP.
       const ip = c.req.socket.remoteAddress || 'unknown';
-      if (loginRateLimited(ip)) {
+      const attemptKey = `${ip}|${typeof user === 'string' ? user : ''}`;
+      if (loginRateLimited(attemptKey)) {
         sendJSON(c.res, { success: false, error: 'Too many login attempts; try again later' }, 429);
         return;
       }
       if (!getAuthEnabled()) { sendJSON(c.res, { success: true, message: 'Authentication disabled' }); return; }
       if (!user || typeof user !== 'string') { sendJSON(c.res, { success: false, error: 'User is required' }, 400); return; }
-      if (!isRegisteredUser(user)) {
-        recordLoginAttempt(ip, false);
-        sendJSON(c.res, { success: false, error: 'Invalid user' }, 401);
+      // One message for both cases: the response must not reveal whether the
+      // account exists.
+      if (!isRegisteredUser(user) || !await verifyCredentials(user, password)) {
+        recordLoginAttempt(attemptKey, false);
+        sendJSON(c.res, { success: false, error: 'Invalid credentials' }, 401);
         return;
       }
-      if (!await verifyCredentials(user, password)) {
-        recordLoginAttempt(ip, false);
-        sendJSON(c.res, { success: false, error: 'Invalid password' }, 401);
-        return;
-      }
-      recordLoginAttempt(ip, true);
+      recordLoginAttempt(attemptKey, true);
       const token = generateToken();
       addAuthToken(token, user);
       saveAuthTokens();
@@ -625,9 +645,14 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       const name = decodeURIComponent(m![1]);
       const err = deleteUser(c.user, name);
       if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
-      // Invalidate the deleted user's login tokens and stop their pi processes
+      // Invalidate the deleted user's login tokens, stop their pi processes
+      // and drop their on-disk state — a re-created account must not inherit
+      // the old env, sessions, tasks or settings.
       removeUserTokens(name);
       await pm.terminateByUser(name);
+      deleteUserSettings(name);
+      try { rmSync(getPiEnvDir(name), { recursive: true, force: true }); }
+      catch (err: any) { log.http.error(`Failed to remove pi env of deleted user ${name}: ${err?.message || err}`); }
       sendJSON(c.res, { success: true });
     },
   });
@@ -758,34 +783,27 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
   });
 
   // ── Sessions ──
-  /** Shared workdirs validation (new-session + clone): admin-only, absolute
-   *  paths that exist and sit inside the caller's allowed roots. Deduped,
-   *  order preserved; entry [0] doubles as the session cwd. */
+  /** Shared workdirs validation (new-session + clone + session update):
+   *  admin-only, absolute paths that exist and sit inside the caller's
+   *  allowed roots. resolveInRoots also follows symlinks, so a link inside
+   *  a root cannot smuggle a cwd from outside it. Deduped, order preserved;
+   *  entry [0] doubles as the session cwd. */
   const validateWorkdirs = (user: string, raw: unknown[]): { list?: string[]; error?: string; status?: number } => {
     if (getUserRole(user) !== 'admin') return { error: 'workdirs require admin role', status: 403 };
-    const resolveWorkdir = (r: string): string => {
-      let wd = r.trim();
-      if (wd.startsWith('~/')) wd = join(homedir(), wd.slice(2));
-      if (!/^\//.test(wd)) wd = join(homedir(), wd);
-      return wd.replace(/\/+$/, '');
-    };
-    const dirs = isRegisteredUser(user) ? getUserAllowedDirs(user) : [];
-    const roots = dirs.length ? dirs.map((d) => d.path) : [homedir()];
     const list: string[] = [];
     for (const item of raw) {
-      const wd = typeof item === 'string' ? resolveWorkdir(item) : '';
-      if (!/^\//.test(wd) || wd.includes('\0')) return { error: 'workdirs must be absolute paths', status: 400 };
-      const inside = roots.some((root) => {
-        const r = root.replace(/\/+$/, '');
-        return wd === r || wd.startsWith(r + '/');
-      });
-      if (!inside) return { error: `workdir ${wd} is outside your allowed directories (${roots.join(', ')})`, status: 403 };
-      try {
-        if (!statSync(wd).isDirectory()) return { error: `workdir ${wd} is not a directory`, status: 400 };
-      } catch {
-        return { error: `workdir ${wd} does not exist`, status: 400 };
+      let wd = typeof item === 'string' ? item.trim() : '';
+      if (wd.startsWith('~/') || (wd && !wd.startsWith('/'))) wd = join(homedir(), wd.replace(/^~\/?/, ''));
+      const target = resolveInRoots(user, wd);
+      if ('error' in target) {
+        return { error: `workdir ${wd || '(empty)'}: ${target.error}`, status: target.status };
       }
-      if (!list.includes(wd)) list.push(wd);
+      try {
+        if (!statSync(target.abs).isDirectory()) return { error: `workdir ${target.abs} is not a directory`, status: 400 };
+      } catch {
+        return { error: `workdir ${target.abs} does not exist`, status: 400 };
+      }
+      if (!list.includes(target.abs)) list.push(target.abs);
     }
     return { list };
   };
@@ -809,52 +827,13 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // translated by planSandboxMounts into the container's $HOME/work/…
       // layout). The first entry is the session cwd; all are mounted as work
       // roots. Relative inputs resolve from $HOME. Validated BEFORE anything
-      // is spawned.
-      const resolveWorkdir = (raw: string): string => {
-        let wd = raw.trim();
-        if (wd.startsWith('~/')) wd = join(homedir(), wd.slice(2));
-        if (!/^\//.test(wd)) wd = join(homedir(), wd);
-        return wd.replace(/\/+$/, '');
-      };
-      let workdir: string | undefined;
-      if (body?.workdir !== undefined) {
-        const wd = typeof body.workdir === 'string' ? resolveWorkdir(body.workdir) : '';
-        if (getUserRole(c.user) !== 'admin') {
-          sendJSON(c.res, { success: false, error: 'workdir requires admin role' }, 403);
-          return;
-        }
-        if (!/^\//.test(wd) || wd.includes('\0')) {
-          sendJSON(c.res, { success: false, error: 'workdir must be an absolute path' }, 400);
-          return;
-        }
-        // Must sit inside the caller's allowed dirs — those are the work
-        // roots the sandbox mounts. Admins without configured dirs get $HOME.
-        const dirs = isRegisteredUser(c.user) ? getUserAllowedDirs(c.user) : [];
-        const roots = dirs.length ? dirs.map((d) => d.path) : [homedir()];
-        const inside = roots.some((r) => {
-          const root = r.replace(/\/+$/, '');
-          return wd === root || wd.startsWith(root + '/');
-        });
-        if (!inside) {
-          sendJSON(c.res, { success: false, error: `workdir is outside your allowed directories (${roots.join(', ')})` }, 403);
-          return;
-        }
-        try {
-          if (!statSync(wd).isDirectory()) {
-            sendJSON(c.res, { success: false, error: 'workdir is not a directory' }, 400);
-            return;
-          }
-        } catch {
-          sendJSON(c.res, { success: false, error: 'workdir does not exist' }, 400);
-          return;
-        }
-        workdir = wd;
-      }
-      // Multi-workdir form (New Session modal). Same validation per entry;
-      // deduped, order preserved; entry [0] doubles as the session cwd.
+      // is spawned. `workdir` is the single-dir form of `workdirs`.
       let workdirs: string[] | undefined;
-      if (Array.isArray(body?.workdirs)) {
-        const check = validateWorkdirs(c.user, body.workdirs);
+      const rawWorkdirs = Array.isArray(body?.workdirs)
+        ? body.workdirs
+        : (body?.workdir !== undefined ? [body.workdir] : []);
+      if (rawWorkdirs.length > 0) {
+        const check = validateWorkdirs(c.user, rawWorkdirs);
         if (check.error) { sendJSON(c.res, { success: false, error: check.error }, check.status!); return; }
         if (check.list?.length) workdirs = check.list;
       }
@@ -883,8 +862,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       let fresh;
       try {
         fresh = await pm.getOrCreate(c.user, null, {
-          ...(workdir ? { cwd: workdir } : workdirs ? { cwd: workdirs[0] } : {}),
-          ...(workdirs ? { workdirs } : {}),
+          ...(workdirs ? { cwd: workdirs[0], workdirs } : {}),
           mountDockerSocket,
         });
       } catch (err: any) {
@@ -1179,7 +1157,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       }
       // Stop a running process for the session before removing its file
       await pm.terminate(c.user, sess.sessionFile);
-      const deletedDir = join(homedir(), '.autere', 'deleted-sessions');
+      // Keep archived sessions inside the owner's env: nothing else reads
+      // this dir, and deleting the user takes their history with it.
+      const deletedDir = join(getPiEnvDir(c.user), 'deleted-sessions');
       mkdirSync(deletedDir, { recursive: true });
       // Empty sessions have no jsonl yet (created on first message) — only
       // archive when the file exists.
@@ -1444,29 +1424,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           return;
         }
         if (!Array.isArray(body.workdirs)) { sendJSON(c.res, { success: false, error: 'workdirs must be an array' }, 400); return; }
-        // Same validation as session creation (shared .resolveWorkdir logic)
-        const resolveWorkdir = (raw: string): string => {
-          let wd = raw.trim();
-          if (wd.startsWith('~/')) wd = join(homedir(), wd.slice(2));
-          return wd;
-        };
-        const roots = (() => {
-          const dirs = isRegisteredUser(c.user) ? getUserAllowedDirs(c.user) : [];
-          return dirs.length ? dirs.map((d) => d.path) : [homedir()];
-        })();
-        const list: string[] = [];
-        for (const raw of body.workdirs) {
-          const wd = typeof raw === 'string' ? resolveWorkdir(raw) : '';
-          if (!wd) { sendJSON(c.res, { success: false, error: 'workdirs must be absolute paths' }, 400); return; }
-          const inside = roots.some((r) => { const root = r.replace(/\/+$/, ''); return wd === root || wd.startsWith(root + '/'); });
-          if (!inside) { sendJSON(c.res, { success: false, error: `workdir ${wd} is outside your allowed directories (${roots.join(', ')})` }, 403); return; }
-          try {
-            if (!statSync(wd).isDirectory()) { sendJSON(c.res, { success: false, error: `workdir ${wd} is not a directory` }, 400); return; }
-          } catch {
-            sendJSON(c.res, { success: false, error: `workdir ${wd} does not exist` }, 400); return;
-          }
-          if (!list.includes(wd)) list.push(wd.replace(/\/+$/, ''));
-        }
+        // Same validation as session creation.
+        const check = validateWorkdirs(c.user, body.workdirs);
+        if (check.error) { sendJSON(c.res, { success: false, error: check.error }, check.status!); return; }
+        const list = check.list ?? [];
         log.http.info(`set_workdirs ${JSON.stringify(list)} for ${c.user} session=${file}`);
         const fresh = await pm.setWorkdirs(c.user, file, list);
         setClientSession(c.user, c.clientId, fresh.routedSessionFile());
@@ -2113,11 +2074,12 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         }
         // Changing the sandbox image is only useful if it can actually
         // run pi — validate before saving (docker may pull, so this can
-        // take a while the first time).
+        // take a while the first time). The image IS the isolation
+        // boundary (and validation runs it for real), so it is admin-only.
         if (settings.piSandboxImage !== undefined && String(settings.piSandboxImage).trim() !== prev.piSandboxImage) {
           const image = String(settings.piSandboxImage).trim();
-          if (/^(off|none|disabled)$/i.test(image) && !isRegisteredUser(c.user) && getUserRole(c.user) !== 'admin') {
-            sendJSON(c.res, { success: false, error: 'Disabling the sandbox is admin-only' }, 400);
+          if (getUserRole(c.user) !== 'admin') {
+            sendJSON(c.res, { success: false, error: 'Changing or disabling the sandbox is admin-only' }, 403);
             return;
           }
           if (image && !/^(off|none|disabled)$/i.test(image)) {
@@ -2490,8 +2452,8 @@ ${text.trim()}`).catch((err) => settle(err as Error));
     method: 'GET', path: RE.file, template: `${API_PREFIX}/files/{name}`,
     role: 'chat', tag: 'Session', summary: 'A file shared by the agent (name: file-<hash>-<orig>, served as attachment)',
     handler: async (c, m) => {
-      const name = decodeURIComponent(m![1]);
-      if (!/^file-[a-f0-9]{16}-[A-Za-z0-9._-]{1,80}$/.test(name)) {
+      const name = decodeParam(m![1]);
+      if (!name || !/^file-[a-f0-9]{16}-[A-Za-z0-9._-]{1,80}$/.test(name)) {
         sendJSON(c.res, { success: false, error: 'Bad file name' }, 400);
         return;
       }
@@ -2550,8 +2512,15 @@ ${text.trim()}`).catch((err) => settle(err as Error));
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
-      // CORS for API clients (scripts, TUI on another origin)
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      // CORS: the dashboard is same-origin, so only echo an Origin that
+      // matches this host (proxies keep the public Host header). A wildcard
+      // would let any site read authenticated API responses. Non-browser
+      // clients (TUI, scripts) never send Origin and are unaffected.
+      const origin = req.headers.origin;
+      if (origin && isSameHostOrigin(origin, req.headers.host)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      }
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('X-Frame-Options', 'DENY');

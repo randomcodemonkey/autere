@@ -256,7 +256,9 @@ export async function validateSandboxImage(image: string): Promise<string | null
   const { execFile } = await import('node:child_process');
   try {
     const out = await new Promise<string>((resolve, reject) =>
-      execFile('docker', ['run', '--rm', '--entrypoint', 'bash', image, '-c', 'command -v pi'],
+      // --user autere: every sandbox image must ship that account, and
+      // validation runs the image for real — never as root.
+      execFile('docker', ['run', '--rm', '--user', 'autere', '--entrypoint', 'bash', image, '-c', 'command -v pi'],
         { timeout: 120_000, encoding: 'utf-8' }, (err, stdout, stderr) =>
         err ? reject(Object.assign(err, { stderr })) : resolve(String(stdout))));
     return out.includes('/pi') || /(^|\/)pi$|\bpi\b/.test(out.trim()) ? null : 'pi binary not found on PATH in this image';
@@ -407,6 +409,15 @@ export function ensureSandboxGitconfig(volume: string, image: string): void {
   }
 }
 
+/** Script + argv for the subpath bootstrap container. Subpaths are passed as
+ *  positional parameters ($@ / $1..), never interpolated into the script:
+ *  they are user-named directories and must not reach the shell parser. */
+export function volumeSubpathCommand(subs: string[], uid: number, gid: number): { script: string; args: string[] } {
+  const script = 'for s in "$@"; do test -d "/v/$s" || { mkdir -p "/v/$s" && chown '
+    + `${uid}:${gid} "/v/$s" "$(dirname "/v/$s")" || true; }; done`;
+  return { script, args: ['autere-subpaths', ...subs] };
+}
+
 /** Docker's volume-subpath mount fails container creation when the
  *  subpath doesn't exist inside the volume (moby#47842) — the daemon never
  *  creates it. Pre-create every missing subpath dir in its volume, using
@@ -424,11 +435,10 @@ export function ensureVolumeSubpaths(mounts: SandboxMount[], image: string): voi
   for (const [vol, subs] of byVolume) {
     // One container per volume: test each subpath, mkdir+chown only the
     // missing ones. mkdir -p is a no-op for existing dirs — never destructive.
-    const script = subs.map((s) =>
-      `test -d "/v/${s}" || { mkdir -p "/v/${s}" && chown ${uid}:${gid} "/v/${s}" $(dirname "/v/${s}") || true; }`
-    ).join('; ');
+    const { script, args } = volumeSubpathCommand(subs, uid, gid);
     try {
-      execFileSync('docker', ['run', '--rm', '-u', '0', '--entrypoint', 'sh', '-v', `${vol}:/v`, image, '-c', script], { stdio: 'ignore', timeout: 30000 });
+      execFileSync('docker', ['run', '--rm', '-u', '0', '--entrypoint', 'sh', '-v', `${vol}:/v`, image,
+        '-c', script, ...args], { stdio: 'ignore', timeout: 30000 });
     } catch (e: any) {
       log.rpc?.warn?.(`volume subpath prep failed for ${vol}: ${String(e && e.message || e)}`);
     }

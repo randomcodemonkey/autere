@@ -24,12 +24,14 @@ marked.setOptions({
   breaks: true,
 });
 
-// Custom renderer to prefix image URLs with the base path
+// Custom renderer to prefix image URLs with the base path. Attributes are
+// escaped here (DOMPurify still runs afterwards) so model output can never
+// break out of the tag and inject attributes of its own.
 const renderer = new marked.Renderer();
 renderer.image = function({ href, title, text }: { href: string; title: string | null; text: string }) {
-  const src = url(href);
-  const titleAttr = title ? ` title="${title}"` : '';
-  return `<img src="${src}" alt="${text}"${titleAttr} />`;
+  const src = escHtml(url(href));
+  const titleAttr = title ? ` title="${escHtml(title)}"` : '';
+  return `<img src="${src}" alt="${escHtml(text)}"${titleAttr} />`;
 };
 renderer.html = ({ text }: { text: string }) => escHtml(text);
 

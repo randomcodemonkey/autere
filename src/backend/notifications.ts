@@ -93,20 +93,49 @@ function writeSubscriptions(user: string, subs: StoredSubscription[]): void {
   writePrivateFile(file, JSON.stringify(subs, null, 2));
 }
 
+/** Push services live on public HTTPS hosts; anything else is either a bug
+ *  or an attempt to make the backend fetch an internal address (SSRF). */
+function isPublicPushEndpoint(raw: string): boolean {
+  let u: URL;
+  try { u = new URL(raw); } catch { return false; }
+  if (u.protocol !== 'https:' || !u.hostname) return false;
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost')) return false;
+  // Literal private / loopback / link-local IPv4 and IPv6 ranges
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 0 || a === 10 || a === 127 || (a === 169 && b === 254)) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a >= 224) return false;
+  }
+  if (host.includes(':') && (host === '::1' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host))) return false;
+  // ponytail: no DNS resolution — a public name resolving to a private IP
+  // still gets through; add resolve+check if that ever matters here.
+  return true;
+}
+
 /** Shape check for a browser PushSubscription — an error message or null. */
 export function validateSubscription(sub: unknown): string | null {
   const s = sub as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } } | null;
   if (!s || typeof s !== 'object') return 'subscription must be an object';
   if (typeof s.endpoint !== 'string' || !s.endpoint) return 'subscription.endpoint is required';
+  if (!isPublicPushEndpoint(s.endpoint)) return 'subscription.endpoint must be a public https URL';
   if (typeof s.keys?.p256dh !== 'string' || !s.keys.p256dh) return 'subscription.keys.p256dh is required';
   if (typeof s.keys?.auth !== 'string' || !s.keys.auth) return 'subscription.keys.auth is required';
   return null;
 }
 
+/** Cap per user so one account cannot turn every notification into a fan-out. */
+const MAX_PUSH_SUBSCRIPTIONS = 20;
+
 /** Add or refresh a subscription (same endpoint = replace). */
 export function saveSubscription(user: string, sub: StoredSubscription): number {
   const rest = listSubscriptions(user).filter((s) => s.endpoint !== sub.endpoint);
   rest.push({ endpoint: sub.endpoint, keys: sub.keys, expirationTime: sub.expirationTime ?? null });
+  // Keep the newest, drop the oldest beyond the cap.
+  if (rest.length > MAX_PUSH_SUBSCRIPTIONS) rest.splice(0, rest.length - MAX_PUSH_SUBSCRIPTIONS);
   writeSubscriptions(user, rest);
   return rest.length;
 }
