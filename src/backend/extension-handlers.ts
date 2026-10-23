@@ -688,25 +688,64 @@ register(piJanitorHandler);
  * pi session data, so compute server-side from the requesting user's env).
  * Exported for the /api/extensions injection point in routes.ts.
  */
+interface FileUsage {
+	size: number;
+	mtimeMs: number;
+	totals: CopilotTotals;
+	/** month key -> totals (untimestamped usage counts as the current month) */
+	byMonth: Map<string, CopilotTotals>;
+}
+
+/** Parsed usage per session file, invalidated by size/mtime — a dashboard
+ *  refresh must not re-read every session log to show the same numbers. */
+const usageCache = new Map<string, FileUsage>();
+
+function usageOfFile(file: string): FileUsage | null {
+	let st;
+	try { st = statSync(file); } catch { usageCache.delete(file); return null; }
+	const hit = usageCache.get(file);
+	if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit;
+	let content: string;
+	try { content = readFileSync(file, 'utf-8'); } catch { return null; }
+	const monthKey = new Date().toISOString().slice(0, 7);
+	const totals = emptyTotals();
+	const byMonth = new Map<string, CopilotTotals>();
+	for (const line of content.split('\n')) {
+		if (!line.trim()) continue;
+		let e: any;
+		try { e = JSON.parse(line); } catch { continue; }
+		if (e.type !== 'message') continue;
+		const u = usageFromMessage(e.message);
+		if (!u) continue;
+		addUsage(totals, u);
+		const key = e.timestamp ? new Date(e.timestamp).toISOString().slice(0, 7) : monthKey;
+		let m = byMonth.get(key);
+		if (!m) { m = emptyTotals(); byMonth.set(key, m); }
+		addUsage(m, u);
+	}
+	const entry: FileUsage = { size: st.size, mtimeMs: st.mtimeMs, totals, byMonth };
+	usageCache.set(file, entry);
+	return entry;
+}
+
+function mergeTotals(into: CopilotTotals, t: CopilotTotals): void {
+	into.turns += t.turns;
+	into.input += t.input;
+	into.output += t.output;
+	into.cacheRead += t.cacheRead;
+	into.costUsd += t.costUsd;
+}
+
 export function copilotStatsFor(user: string): { session: CopilotTotals; month: CopilotTotals } {
 	const monthKey = new Date().toISOString().slice(0, 7);
 	const session = emptyTotals();
 	const month = emptyTotals();
 	for (const s of readSessions(user)) {
-		if (!existsSync(s.sessionFile)) continue;
-		let lines: string[];
-		try { lines = readFileSync(s.sessionFile, 'utf-8').split('\n'); } catch { continue; }
-		for (const line of lines) {
-			if (!line.trim()) continue;
-			let e: any;
-			try { e = JSON.parse(line); } catch { continue; }
-			if (e.type !== 'message') continue;
-			const u = usageFromMessage(e.message);
-			if (!u) continue;
-			addUsage(session, u);
-			const ts = e.timestamp ? new Date(e.timestamp).toISOString().slice(0, 7) : '';
-			if (!ts || ts === monthKey) addUsage(month, u);
-		}
+		const usage = usageOfFile(s.sessionFile);
+		if (!usage) continue;
+		mergeTotals(session, usage.totals);
+		const m = usage.byMonth.get(monthKey);
+		if (m) mergeTotals(month, m);
 	}
 	return { session: finalize(session), month: finalize(month) };
 }

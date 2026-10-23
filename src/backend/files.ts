@@ -7,7 +7,8 @@
  * the fs helpers directly from routes.
  */
 
-import { constants as fsConstants, openSync, readSync, closeSync, readdirSync, statSync, mkdirSync, unlinkSync, realpathSync, writeFileSync } from 'fs';
+import { constants as fsConstants, realpathSync } from 'fs';
+import { open, readdir, lstat, stat, mkdir, unlink, writeFile } from 'fs/promises';
 import { resolve, dirname, join } from 'path';
 import { homedir } from 'os';
 import { getUserAllowedDirs } from './users.js';
@@ -29,8 +30,8 @@ function rootsFor(user: string): FileRoot[] {
   return [{ path: homedir(), access: 'rw' }];
 }
 
-/** True if abs is root itself or somewhere under it */
-function under(root: string, abs: string): boolean {
+/** True if abs is root itself or somewhere under it (plain string prefix) */
+export function under(root: string, abs: string): boolean {
   const r = resolve(root);
   return abs === r || abs.startsWith(r.endsWith('/') ? r : r + '/');
 }
@@ -74,41 +75,44 @@ export function userFileRoots(user: string): FileRoot[] {
   return rootsFor(user).map((r) => ({ ...r }));
 }
 
-export function listDirectoryEntries(path: string, limit = MAX_LIST_ENTRIES): DirEntry[] {
-  const entries: DirEntry[] = [];
-  for (const e of readdirSync(path, { withFileTypes: true })) {
-    if (entries.length >= limit) break;
+/** One directory listing: readdir + concurrent lstat (async — a 500-entry
+ *  listing must not block the event loop). */
+export async function listDirectoryEntries(path: string, limit = MAX_LIST_ENTRIES): Promise<DirEntry[]> {
+  const dirents = (await readdir(path, { withFileTypes: true })).slice(0, limit);
+  const entries = await Promise.all(dirents.map(async (e): Promise<DirEntry | null> => {
     try {
-      const stat = statSync(join(path, e.name));
-      entries.push({ name: e.name, type: e.isDirectory() ? 'dir' : 'file', size: stat.size, mtime: stat.mtimeMs });
-    } catch { /* entry was removed or became inaccessible */ }
-  }
-  return entries.sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1);
+      const st = await lstat(join(path, e.name));
+      return { name: e.name, type: e.isDirectory() ? 'dir' : 'file', size: st.size, mtime: st.mtimeMs };
+    } catch { return null; /* entry was removed or became inaccessible */ }
+  }));
+  return entries
+    .filter((e): e is DirEntry => e !== null)
+    .sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1);
 }
 
-export function browseList(user: string, path: string): BrowseResult<DirEntry[]> {
+export async function browseList(user: string, path: string): Promise<BrowseResult<DirEntry[]>> {
   const t = resolveInRoots(user, path);
   if ('error' in t) return t;
   try {
-    if (!statSync(t.abs).isDirectory()) return { error: 'Not a directory', status: 400 };
-    return { data: listDirectoryEntries(t.abs) };
+    if (!(await stat(t.abs)).isDirectory()) return { error: 'Not a directory', status: 400 };
+    return { data: await listDirectoryEntries(t.abs) };
   } catch (err: any) {
     if (err.code === 'ENOENT') return { error: 'Not found', status: 404 };
     return { error: `Listing failed: ${err.message}`, status: 500 };
   }
 }
 
-export function browseRead(user: string, path: string): BrowseResult<ReadData> {
+export async function browseRead(user: string, path: string): Promise<BrowseResult<ReadData>> {
   const t = resolveInRoots(user, path);
   if ('error' in t) return t;
   try {
-    const st = statSync(t.abs);
+    const st = await stat(t.abs);
     if (!st.isFile()) return { error: 'Not a file', status: 400 };
     const size = st.size;
     const len = Math.min(size, MAX_FILE_BYTES);
-    const fd = openSync(t.abs, 'r');
     const buf = Buffer.alloc(len);
-    try { readSync(fd, buf, 0, len, 0); } finally { closeSync(fd); }
+    const fh = await open(t.abs, 'r');
+    try { await fh.read(buf, 0, len, 0); } finally { await fh.close(); }
     const binary = buf.subarray(0, Math.min(len, 8192)).includes(0);
     return { data: { content: binary ? '' : buf.toString('utf-8'), binary, truncated: size > MAX_FILE_BYTES, size } };
   } catch (err: any) {
@@ -117,7 +121,7 @@ export function browseRead(user: string, path: string): BrowseResult<ReadData> {
   }
 }
 
-export function browseWrite(user: string, path: string, content: unknown): BrowseResult<{ saved: boolean }> {
+export async function browseWrite(user: string, path: string, content: unknown): Promise<BrowseResult<{ saved: boolean }>> {
   if (typeof content !== 'string' || content.length > MAX_FILE_BYTES) {
     return { error: 'Invalid or oversized content', status: 400 };
   }
@@ -126,14 +130,16 @@ export function browseWrite(user: string, path: string, content: unknown): Brows
   if (t.access !== 'rw') return { error: 'Directory is read-only', status: 403 };
   try {
     const parent = dirname(t.abs);
-    mkdirSync(parent, { recursive: true });
+    await mkdir(parent, { recursive: true });
     // Re-resolve after directory creation to close symlink/missing-path escapes.
     const checked = resolveInRoots(user, t.abs);
     if ('error' in checked || checked.access !== 'rw' || checked.abs !== t.abs) {
       return { error: 'Path changed or escaped its file root', status: 403 };
     }
-    const fd = openSync(t.abs, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW, 0o666);
-    try { writeFileSync(fd, content); } finally { closeSync(fd); }
+    await writeFile(t.abs, content, {
+      flag: fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW,
+      mode: 0o666,
+    });
     log.http.info(`file write ${t.abs} (${content.length} bytes) by ${user}`);
     return { data: { saved: true } };
   } catch (err: any) {
@@ -141,7 +147,7 @@ export function browseWrite(user: string, path: string, content: unknown): Brows
   }
 }
 
-export function browseDelete(user: string, path: string): BrowseResult<{ deleted: boolean }> {
+export async function browseDelete(user: string, path: string): Promise<BrowseResult<{ deleted: boolean }>> {
   const t = resolveInRoots(user, path);
   if ('error' in t) return t;
   if (t.access !== 'rw') return { error: 'Directory is read-only', status: 403 };
@@ -149,8 +155,8 @@ export function browseDelete(user: string, path: string): BrowseResult<{ deleted
     return { error: 'Cannot delete a file root', status: 403 };
   }
   try {
-    if (!statSync(t.abs).isFile()) return { error: 'Only files can be deleted', status: 400 };
-    unlinkSync(t.abs);
+    if (!(await lstat(t.abs)).isFile()) return { error: 'Only files can be deleted', status: 400 };
+    await unlink(t.abs);
     log.http.info(`file delete ${t.abs} by ${user}`);
     return { data: { deleted: true } };
   } catch (err: any) {

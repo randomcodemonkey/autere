@@ -19,6 +19,9 @@
 import type { ServerResponse } from 'http';
 import { log } from './logger.js';
 
+/** Drop a client whose socket stopped draining (see writeFrame). */
+const MAX_SSE_BACKLOG_BYTES = 1024 * 1024;
+
 const bindingsByUser = new Map<string, Map<string, string | null>>();
 const streamsByUser = new Map<string, Map<string, ServerResponse>>();
 
@@ -72,6 +75,28 @@ export function setClientSession(user: string, clientId: string | null, sessionF
   userBindings(user).set(clientId, sessionFile);
 }
 
+/**
+ * Write one SSE frame. A stalled client (phone asleep, dead proxy) leaves the
+ * bytes queued in the response buffer forever; without this check a fast
+ * stream grows that buffer without bound. Dropping such a client is correct —
+ * the browser reconnects and bootstraps full state.
+ */
+function writeFrame(res: ServerResponse, msg: string, clientId: string, streams: Map<string, ServerResponse>): void {
+  if (res.writableLength > MAX_SSE_BACKLOG_BYTES) {
+    log.userSession.warn(`SSE backlog ${res.writableLength}B, dropping client ${clientId.slice(0, 12)}`);
+    try { res.end(); } catch {}
+    streams.delete(clientId);
+    return;
+  }
+  try {
+    res.write(msg);
+  } catch (err) {
+    log.userSession.warn(`SSE write failed, dropping client ${clientId.slice(0, 12)}: ${err}`);
+    try { res.end(); } catch {}
+    streams.delete(clientId);
+  }
+}
+
 /** Write an SSE event to all of the user's clients viewing sessionFile */
 export function deliverToSession(user: string, sessionFile: string | null, data: any): void {
   if (!sessionFile) return;
@@ -83,13 +108,7 @@ export function deliverToSession(user: string, sessionFile: string | null, data:
   for (const [clientId, res] of streams) {
     if (bindings.get(clientId) !== sessionFile) continue;
     matched++;
-    try {
-      res.write(msg);
-    } catch (err) {
-      log.userSession.warn(`SSE write failed, dropping client ${clientId.slice(0, 12)}: ${err}`);
-      try { res.end(); } catch {}
-      streams.delete(clientId);
-    }
+    writeFrame(res, msg, clientId, streams);
   }
   // Signature of a silently lost event: clients are connected but none of
   // their bindings match the emitting session (bindings keep stale tab ids
@@ -104,15 +123,7 @@ export function broadcastToUser(user: string, data: any): void {
   const streams = streamsByUser.get(user);
   if (!streams) return;
   const msg = `data: ${JSON.stringify(data)}\n\n`;
-  for (const [clientId, res] of streams) {
-    try {
-      res.write(msg);
-    } catch (err) {
-      log.userSession.warn(`SSE write failed, dropping client ${clientId.slice(0, 8)}: ${err}`);
-      try { res.end(); } catch {}
-      streams.delete(clientId);
-    }
-  }
+  for (const [clientId, res] of streams) writeFrame(res, msg, clientId, streams);
 }
 
 /** All session files currently viewed by the user's clients */

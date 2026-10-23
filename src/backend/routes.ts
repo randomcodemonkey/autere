@@ -766,13 +766,13 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
   route({
     method: 'GET', path: RE.gitCommits, template: `${API_PREFIX}/git/commits`,
     role: 'chat', tag: 'Git', summary: 'Commit history for one file, max 100 (query: path)',
-    handler: async (c) => sendBrowse(c, fileLog(c.user, c.url.searchParams.get('path') || '')),
+    handler: async (c) => sendBrowse(c, await fileLog(c.user, c.url.searchParams.get('path') || '')),
   });
 
   route({
     method: 'GET', path: RE.gitDiff, template: `${API_PREFIX}/git/diff`,
     role: 'chat', tag: 'Git', summary: 'Unified diff for one working-tree file (query: path)',
-    handler: async (c) => sendBrowse(c, fileDiff(c.user, c.url.searchParams.get('path') || '')),
+    handler: async (c) => sendBrowse(c, await fileDiff(c.user, c.url.searchParams.get('path') || '')),
   });
 
   route({
@@ -782,9 +782,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // Same files-view ignores as the Files browser — repositories use
       // their own list endpoint, so node_modules etc. must be filtered here.
       const dir = c.url.searchParams.get('path') || '';
-      const filesIgnore = getFolderIgnores(c.user).filter((e) => e.files).map((e) => e.path);
-      const r = gitList(c.user, dir);
-      if ('data' in r) r.data = r.data.filter((e) => !pathIsIgnored(`${dir}/${e.name}`, filesIgnore));
+      const r = await gitList(c.user, dir);
+      if ('data' in r) r.data = notIgnored(dir, r.data, filesIgnoresFor(c.user));
       sendBrowse(c, r);
     },
   });
@@ -798,8 +797,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         const body = await readBody(c.req);
         const action = m![1];
         const r = action === 'init'
-          ? initRepo(c.user, body.path, body.remote)
-          : cloneRepo(c.user, body.path, body.remote);
+          ? await initRepo(c.user, body.path, body.remote)
+          : await cloneRepo(c.user, body.path, body.remote);
         sendBrowse(c, r);
       } catch (err: any) {
         sendBrowse(c, { error: err.message, status: err.statusCode || 400 });
@@ -999,7 +998,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       }
 
       // Spawn opts for the clone: requested workdirs (or the source's).
-      const sourceOpts = pm.getSpawnOpts(c.user, sess.sessionFile);
+      const sourceOpts = spawnOpts(c.user, sess.sessionFile);
       pm.persistSpawnOpts(c.user, st.sessionFile, {
         cwd: workdirs?.[0] ?? sourceOpts.cwd ?? sess.cwd ?? undefined,
         workdirs: workdirs?.length ? workdirs : (sourceOpts.workdirs?.length ? [...sourceOpts.workdirs] : undefined),
@@ -1035,29 +1034,12 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       const q = (c.url.searchParams.get('q') || '').trim().toLowerCase();
       const sessions = pm.listSessions(c.user, c.viewed);
       if (q.length < 2) { sendJSON(c.res, { success: true, data: sessions }); return; }
-      const scored: { s: SessionInfo; score: number; match: string }[] = [];
-      for (const sess of sessions) {
-        let score = 0;
-        let match = '';
-        if (sess.sessionName && sess.sessionName.toLowerCase().includes(q)) {
-          score = 30; match = 'name';
-        } else if (sess.id.toLowerCase().includes(q)) {
-          score = 20; match = 'id';
-        }
-        if (score < 30 && existsSync(sess.sessionFile)) {
-          try {
-            // Cap the read — huge session files shouldn't make typing laggy
-            const fd = openSync(sess.sessionFile, 'r');
-            const buf = Buffer.alloc(Math.min(1024 * 1024, statSync(sess.sessionFile).size));
-            readSync(fd, buf, 0, buf.length, 0);
-            closeSync(fd);
-            if (buf.toString('utf-8').toLowerCase().includes(q)) {
-              score = Math.max(score, 10); match = 'content';
-            }
-          } catch { /* unreadable file — skip content search */ }
-        }
-        if (score > 0) scored.push({ s: sess, score, match });
-      }
+      // Name/id matches never touch the disk; content hits are scored last.
+      const scored = (await Promise.all(sessions.map(async (sess) => {
+        if (sess.sessionName && sess.sessionName.toLowerCase().includes(q)) return { s: sess, score: 30, match: 'name' };
+        if (sess.id.toLowerCase().includes(q)) return { s: sess, score: 20, match: 'id' };
+        return (await tailContains(sess.sessionFile, q)) ? { s: sess, score: 10, match: 'content' } : null;
+      }))).filter((x): x is { s: SessionInfo; score: number; match: string } => x !== null);
       scored.sort((a, b) => b.score - a.score || b.s.lastActivity - a.s.lastActivity);
       sendJSON(c.res, { success: true, data: scored.map(({ s, match }) => ({ ...s, match })) });
     },
@@ -2129,6 +2111,8 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           return;
         }
         saveUserSettings(c.user, settings);
+        // Extension config may have changed — re-enrich on the next tick.
+        invalidateExtensionEnrichment();
         // Session-tab count is a UI preference; reserve-% and janitor sweep
         // policy apply live, and notification toggles are read by the backend
         // when needed. Skip restarting pi for these settings.
@@ -2252,10 +2236,10 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         if (typeof input.session === 'string' && input.session.trim()) {
           const sent = input.session.trim();
           const origin = pm.findSession(c.user, sent, new Set());
-          const file = origin?.sessionFile ?? pm.findSessionFile(c.user, sent);
+          const file = origin?.sessionFile ?? findSessionFileBySessionId(c.user, sent);
           if (file) {
             const live = pm.get(c.user, file);
-            const saved = live ? undefined : pm.getSpawnOpts(c.user, file);
+            const saved = live ? undefined : spawnOpts(c.user, file);
             const wds = live ? live.rpc.getWorkdirs() : (saved?.workdirs ?? origin?.workdirs ?? []);
             cwd = (live ? live.rpc.getCwd() : saved?.cwd) ?? origin?.cwd ?? undefined;
             // workdirs entry [0] doubles as the session cwd (same rule the
@@ -2447,8 +2431,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       const file = join(getPiEnvDir(c.user), 'uploads', name);
       if (!existsSync(file)) { sendJSON(c.res, { success: false, error: 'Not found' }, 404); return; }
       const ext = name.split('.').pop() || 'png';
-      c.res.writeHead(200, { 'Content-Type': IMAGE_MIME[ext] || 'application/octet-stream', 'Cache-Control': 'private, max-age=31536000, immutable' });
-      c.res.end(readFileSync(file));
+      sendFile(c.res, file, { 'Content-Type': IMAGE_MIME[ext] || 'application/octet-stream', 'Cache-Control': 'private, max-age=31536000, immutable' });
     },
   });
 
@@ -2466,8 +2449,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       const file = join(getPiEnvDir(c.user), 'images', name);
       if (!existsSync(file)) { sendJSON(c.res, { success: false, error: 'Not found' }, 404); return; }
       const ext = name.split('.').pop() || 'png';
-      c.res.writeHead(200, { 'Content-Type': IMAGE_MIME[ext] || 'application/octet-stream', 'Cache-Control': 'private, max-age=31536000, immutable' });
-      c.res.end(readFileSync(file));
+      sendFile(c.res, file, { 'Content-Type': IMAGE_MIME[ext] || 'application/octet-stream', 'Cache-Control': 'private, max-age=31536000, immutable' });
     },
   });
 
@@ -2490,13 +2472,12 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       // safe inside <img>: scripts/svg animation can't escape the image box.
       const ext = (origName.split('.').pop() || '').toLowerCase();
       const mime = IMAGE_MIME[ext] ?? STATIC_MIME[ext] ?? 'application/octet-stream';
-      c.res.writeHead(200, {
+      sendFile(c.res, file, {
         'Content-Type': mime,
-        'Content-Length': statSync(file).size,
+        'Content-Length': String(statSync(file).size),
         'Content-Disposition': `attachment; filename="${origName.replace(/"/g, '')}"`,
         'Cache-Control': 'private, max-age=31536000, immutable',
       });
-      c.res.end(readFileSync(file));
     },
   });
 

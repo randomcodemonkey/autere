@@ -9,7 +9,7 @@
  * - routes.ts: deduplication of freshly loaded history
  */
 
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, openSync, readSync, closeSync, readFileSync, statSync } from 'fs';
 
 // ── rm command detection ──
 
@@ -73,7 +73,9 @@ export function formatToolResult(
       if (rmSnapshots && p in rmSnapshots) {
         content = rmSnapshots[p];
       } else {
-        try { if (existsSync(p)) content = readFileSync(p, 'utf-8'); } catch {}
+        // History render: the file is usually gone already. Cap the read so a
+        // multi-MB log never turns one rm row into a full-file parse.
+        try { if (existsSync(p)) content = readFileSync(p, 'utf-8').slice(0, RM_SNAPSHOT_BYTES); } catch {}
       }
       const lines = content.split('\n');
       const diffLines = lines.map((line: string) => '- ' + line);
@@ -134,24 +136,59 @@ export function readMessageEntries(sessionFile: string, limit: number = 100): an
   } catch { return []; }
 }
 
+/** Keep only what the history builder consumes (messages + custom cards). */
+function entriesFromText(content: string): any[] {
+  const messages: any[] = [];
+  for (const line of content.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj.type === 'message' && obj.message) messages.push(obj);
+      // Custom entries (e.g. file_saved from pi-filetools) ride along so
+      // bootstrap rebuilds can render them as file cards.
+      if (obj.type === 'custom' && (obj.customType === 'file_saved' || obj.customType === 'file_change' || obj.customType === 'image_saved')) messages.push(obj);
+    } catch {}
+  }
+  return messages;
+}
+
 /**
  * Read ALL message entries from a session JSONL file, in order.
  */
 export function readAllMessageEntries(sessionFile: string): any[] {
+  try { return entriesFromText(readFileSync(sessionFile, 'utf-8')); } catch { return []; }
+}
+
+const RM_SNAPSHOT_BYTES = 64 * 1024;
+const TAIL_START_BYTES = 256 * 1024;
+const TAIL_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Last `limit` message entries without reading the whole file. Session logs
+ * grow to tens of MB, but history views only ever render the tail — read a
+ * window backwards and grow it only when the window holds too few entries.
+ */
+export function readTailMessageEntries(sessionFile: string, limit: number): any[] {
   try {
-    const content = readFileSync(sessionFile, 'utf-8');
-    const messages: any[] = [];
-    for (const line of content.split('\n')) {
-      if (!line.trim()) continue;
+    const size = statSync(sessionFile).size;
+    let window = Math.max(TAIL_START_BYTES, limit * 64 * 1024);
+    for (;;) {
+      const len = Math.min(size, window);
+      const fd = openSync(sessionFile, 'r');
+      let text: string;
       try {
-        const obj = JSON.parse(line);
-        if (obj.type === 'message' && obj.message) messages.push(obj);
-        // Custom entries (e.g. file_saved from pi-filetools) ride along so
-        // bootstrap rebuilds can render them as file cards.
-        if (obj.type === 'custom' && (obj.customType === 'file_saved' || obj.customType === 'file_change' || obj.customType === 'image_saved')) messages.push(obj);
-      } catch {}
+        const buf = Buffer.alloc(len);
+        readSync(fd, buf, 0, len, size - len);
+        text = buf.toString('utf-8');
+      } finally { closeSync(fd); }
+      // A window starting mid-line: drop the partial line (never the header
+      // line — that only matters when the whole file was read).
+      if (len < size) text = text.slice(text.indexOf('\n') + 1);
+      const entries = entriesFromText(text);
+      const enough = entries.filter((e) => e.type === 'message').length >= limit * 2;
+      if (enough || len >= size || len >= TAIL_MAX_BYTES) return entries;
+      window *= 2;
     }
-    return messages;
   } catch { return []; }
 }
 

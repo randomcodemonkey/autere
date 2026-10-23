@@ -6,7 +6,8 @@
  * helpers below directly from routes with an unvalidated path.
  */
 
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { existsSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { resolve } from 'path';
@@ -32,6 +33,8 @@ export function resolvedGitRepos(user: string): string[] {
 
 const isDir = (p: string) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
+const execFileAsync = promisify(execFile);
+
 function validateRepoRoot(user: string, path: string): BrowseResult<{ root: string; access: 'read' | 'rw' }> {
   const target = resolveInRoots(user, path);
   if ('error' in target) return target;
@@ -49,7 +52,7 @@ export function isGitRepo(p: string): boolean {
 }
 
 /** Unified worktree diff for one file (staged + unstaged; untracked → /dev/null diff) */
-export function fileDiff(user: string, path: string): BrowseResult<{ diff: string }> {
+export async function fileDiff(user: string, path: string): Promise<BrowseResult<{ diff: string }>> {
   const t = resolveInRepos(user, path);
   if ('error' in t) return t;
   const checked = validateRepoRoot(user, t.abs);
@@ -58,17 +61,17 @@ export function fileDiff(user: string, path: string): BrowseResult<{ diff: strin
   try {
     let out: string;
     try {
-      out = sync(root, ['diff', 'HEAD', '--', t.abs]);
+      out = await git(root, ['diff', 'HEAD', '--', t.abs]);
     } catch (e: any) {
       if (!String(e.stderr || e.message).includes("bad revision 'HEAD'")) throw e;
       out = ''; // empty repo — no commits yet, fall through to the untracked path
     }
-    if (!out.trim() && !sync(root, ['ls-tree', 'HEAD', '--', t.abs]).trim()) {
+    if (!out.trim() && !(await git(root, ['ls-tree', 'HEAD', '--', t.abs])).trim()) {
       // Untracked (bad-revision repo paths above also land here) → render as
       // an all-add patch. --no-index implies --exit-code (exit 1 = "has
       // differences", still output)
       try {
-        out = sync(root, ['diff', '--no-index', '--', '/dev/null', t.abs]);
+        out = await git(root, ['diff', '--no-index', '--', '/dev/null', t.abs]);
       } catch (e: any) {
         if (e.status === 1 || e.code === 1) out = e.stdout || '';
         else throw e;
@@ -80,8 +83,10 @@ export function fileDiff(user: string, path: string): BrowseResult<{ diff: strin
   }
 }
 
-const sync = (p: string, args: string[]) =>
-  execFileSync('git', ['-C', p, ...args], { maxBuffer: 8 * 1024 * 1024 }).toString();
+/** Run git off the event loop; rejects with stdout/stderr/code on failure
+ *  (callers inspect those, so no error wrapping here). */
+const git = async (p: string, args: string[]) =>
+  (await execFileAsync('git', ['-C', p, ...args], { maxBuffer: 8 * 1024 * 1024 })).stdout.toString();
 
 // ',' never appears inside git pretty fields we request (hash/author/date
 // are comma-free; %s subjects could theoretically contain one, but only the
@@ -114,7 +119,7 @@ function parseLog(out: string): Commit[] {
 }
 
 /** Full repository detail: status, remotes, last N commits. */
-export function repoDetail(user: string, path: string, commitCount: number): BrowseResult<RepoDetail> {
+export async function repoDetail(user: string, path: string, commitCount: number): Promise<BrowseResult<RepoDetail>> {
   const t = resolveInRoots(user, path);
   if ('error' in t) return t;
   if (!isDir(t.abs)) return { error: 'Not a directory', status: 400 };
@@ -123,7 +128,7 @@ export function repoDetail(user: string, path: string, commitCount: number): Bro
   const p = checked.data.root;
   const detail: RepoDetail = { root: p, isRepo: true, branch: '', changed: [], remotes: [], commits: [], hasMore: false };
   try {
-    const status = sync(p, ['status', '--porcelain=v1', '-b']);
+    const status = await git(p, ['status', '--porcelain=v1', '-b']);
     const lines = status.split('\n').filter(Boolean);
     // "## main...origin/main [ahead 1]" / "## No commits yet on main" (unborn branch — use its name, not "unknown")
     const head = (lines.find((l) => l.startsWith('## ')) || '').slice(3);
@@ -132,12 +137,12 @@ export function repoDetail(user: string, path: string, commitCount: number): Bro
     for (const l of lines.filter((l) => !l.startsWith('## ') && l.length > 3)) {
       detail.changed.push({ x: l[0], y: l[1], path: l.slice(3).replace(/^"|"$/g, '') });
     }
-    const remotes = sync(p, ['remote', '-v']).split('\n').filter((l) => l.endsWith('(fetch)'));
+    const remotes = (await git(p, ['remote', '-v'])).split('\n').filter((l) => l.endsWith('(fetch)'));
     for (const l of remotes) {
       const parts = l.split(/\s+/);
       detail.remotes.push({ name: parts[0], url: parts[1] });
     }
-    const log = sync(p, ['log', `--pretty=format:%H${SEP}%h${SEP}%aN${SEP}%at${SEP}%s`, '-n', String(commitCount + 1)]);
+    const log = await git(p, ['log', `--pretty=format:%H${SEP}%h${SEP}%aN${SEP}%at${SEP}%s`, '-n', String(commitCount + 1)]);
     const commits = parseLog(log);
     detail.hasMore = commits.length > commitCount;
     detail.commits = commits.slice(0, commitCount);
@@ -166,14 +171,14 @@ function repoRootFor(p: string): string | null {
 const LOG_FMT = `--pretty=format:%H${SEP}%h${SEP}%aN${SEP}%at${SEP}%s`;
 
 /** Commit history for a single file (max ~100). */
-export function fileLog(user: string, path: string): BrowseResult<Commit[]> {
+export async function fileLog(user: string, path: string): Promise<BrowseResult<Commit[]>> {
   const t = resolveInRepos(user, path);
   if ('error' in t) return t;
   const checked = validateRepoRoot(user, t.abs);
   if ('error' in checked) return checked;
   const root = checked.data.root;
   try {
-    const out = sync(root, ['log', '--follow', '-n', '100', LOG_FMT, '--', t.abs]);
+    const out = await git(root, ['log', '--follow', '-n', '100', LOG_FMT, '--', t.abs]);
     return { data: parseLog(out) };
   } catch (err: any) {
     if (/does not have any commits|unknown revision|unmerged/.test(err.message)) return { data: [] };
@@ -181,7 +186,7 @@ export function fileLog(user: string, path: string): BrowseResult<Commit[]> {
   }
 }
 
-export function initRepo(user: string, path: string, remote: unknown): BrowseResult<{ initialized: true }> {
+export async function initRepo(user: string, path: string, remote: unknown): Promise<BrowseResult<{ initialized: true }>> {
   const t = resolveInRoots(user, path);
   if ('error' in t) return t;
   if (t.access !== 'rw') return { error: 'Directory is read-only', status: 403 };
@@ -191,15 +196,15 @@ export function initRepo(user: string, path: string, remote: unknown): BrowseRes
     mkdirSync(t.abs, { recursive: true }); // also covers a configured but not-yet-existing folder
     const checked = resolveInRoots(user, t.abs);
     if ('error' in checked || checked.access !== 'rw' || checked.abs !== t.abs) return { error: 'Path changed or escaped its file root', status: 403 };
-    sync(t.abs, ['init', '-b', 'main']);
-    if (typeof remote === 'string' && remote.trim()) sync(t.abs, ['remote', 'add', 'origin', remote.trim()]);
+    await git(t.abs, ['init', '-b', 'main']);
+    if (typeof remote === 'string' && remote.trim()) await git(t.abs, ['remote', 'add', 'origin', remote.trim()]);
     return { data: { initialized: true } };
   } catch (err: any) {
     return { error: `git init failed: ${err.message}`, status: 500 };
   }
 }
 
-export function gitList(user: string, path: string): BrowseResult<DirEntry[]> {
+export async function gitList(user: string, path: string): Promise<BrowseResult<DirEntry[]>> {
   const t = resolveInRepos(user, path);
   if ('error' in t) return t;
   const checked = validateRepoRoot(user, t.abs);
@@ -207,14 +212,14 @@ export function gitList(user: string, path: string): BrowseResult<DirEntry[]> {
   const abs = t.abs;
   try {
     if (!isDir(abs)) return { error: 'Not a directory', status: 400 };
-    return { data: listDirectoryEntries(abs, 500) };
+    return { data: await listDirectoryEntries(abs, 500) };
   } catch (err: any) {
     if (err.code === 'ENOENT') return { error: 'Not found', status: 404 };
     return { error: `Listing failed: ${err.message}`, status: 500 };
   }
 }
 
-export function cloneRepo(user: string, path: string, remote: unknown): BrowseResult<{ cloned: true }> {
+export async function cloneRepo(user: string, path: string, remote: unknown): Promise<BrowseResult<{ cloned: true }>> {
   if (typeof remote !== 'string' || !remote.trim()) return { error: 'Remote URL is required', status: 400 };
   const url = remote.trim();
   // Trust-boundary validation: shell-safe charset, no option injection
@@ -232,7 +237,7 @@ export function cloneRepo(user: string, path: string, remote: unknown): BrowseRe
   const checked = resolveInRoots(user, parent);
   if ('error' in checked || checked.access !== 'rw' || checked.abs !== parent) return { error: 'Clone parent is outside your writable file roots', status: 403 };
   try {
-    sync(parent, ['clone', url, t.abs]);
+    await git(parent, ['clone', url, t.abs]);
     return { data: { cloned: true } };
   } catch (err: any) {
     return { error: `git clone failed: ${err.message}`, status: 500 };

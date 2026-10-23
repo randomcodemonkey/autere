@@ -31,6 +31,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, copyFileSync,
 import { randomUUID } from 'crypto';
 import { invalidateCache, setExtraEnabled, getAvailableExtras, ALWAYS_ENABLED_EXTRAS, RETIRED_EXTRAS, DEFAULT_ENABLED_EXTRAS, writeSavedExtras, desiredExtras, getAlwaysEnabledExtras } from './user-settings.js';
 import { execFileSync } from 'node:child_process';
+import { under } from './files.js';
 import { join } from 'path';
 import { PI_DIR, AUTERE_DIR } from './constants.js';
 import { log } from './logger.js';

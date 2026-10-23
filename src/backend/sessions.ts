@@ -275,11 +275,25 @@ export function findSessionFileBySessionId(user: string, sessionId: string): str
   if (byName) return byName;
   for (const f of files) {
     try {
-      const header = JSON.parse(readFileSync(f, 'utf-8').split('\n', 1)[0]) as { id?: string };
+      const header = JSON.parse(readFirstLine(f) ?? '') as { id?: string };
       if (header.id === sessionId) return f;
     } catch { /* skip unreadable */ }
   }
   return null;
+}
+
+/** First line of a file without reading the rest (session headers are tiny;
+ *  the id fallback above would otherwise read every session file whole). */
+function readFirstLine(file: string): string | null {
+  const buf = Buffer.alloc(4096);
+  let fd: number;
+  try { fd = openSync(file, 'r'); } catch { return null; }
+  try {
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    const text = buf.subarray(0, n).toString('utf-8');
+    return text.includes('\n') ? text.slice(0, text.indexOf('\n')) : text;
+  } catch { return null; }
+  finally { closeSync(fd); }
 }
 
 export function readSessions(user: string): SessionInfo[] {

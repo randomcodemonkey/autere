@@ -1,12 +1,12 @@
 import { ServerResponse } from 'http';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, createReadStream } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { StreamEntry, SessionUsageResult } from './types.js';
 import { getUserSetting } from './user-settings.js';
 import { log } from './logger.js';
 import { filterModelsByPatterns } from '../shared/format.js';
-import { buildStreamHistoryFromMessages, readAllMessageEntries } from './stream-history.js';
+import { buildStreamHistoryFromMessages, readTailMessageEntries } from './stream-history.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -53,6 +53,16 @@ export function getEnabledModelEntries(): any[] {
 export function sendJSON(res: ServerResponse, data: any, status = 200) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
+}
+
+/** Stream a file to the client instead of buffering it in memory
+ *  (multi-MB images/bundles, and a stale-length race would otherwise
+ *  truncate or overrun). */
+export function sendFile(res: ServerResponse, file: string, headers: Record<string, string>): void {
+  res.writeHead(200, headers);
+  createReadStream(file)
+    .on('error', () => { try { res.destroy(); } catch {} })
+    .pipe(res);
 }
 
 // ── HTML serving ──
