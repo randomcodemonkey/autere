@@ -4485,13 +4485,27 @@ body {
 }
 
 .scheduled-enabled-dot {
+  display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  vertical-align: middle;
 
   &.on { background: var(--c-success, var(--c-green-strong)); }
   &.off { background: var(--c-text-dimmest); }
+}
+
+.scheduled-disabled-label {
+  margin-left: 0.35rem;
+  padding: 0.08rem 0.32rem;
+  border: 1px solid var(--c-border);
+  border-radius: 3px;
+  background: var(--c-surface-2);
+  color: var(--c-text-dim);
+  font-size: 0.65rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .scheduled-task-name {

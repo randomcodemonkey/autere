@@ -117,12 +117,23 @@ describe('ScheduledTasksCard', () => {
       cy.get('.scheduled-task-schedule').should('contain', '0 9 * * *');
     });
 
+    it('shows one-off tasks instead of their cron schedule', () => {
+      stubFetch();
+      responseData = { tasks: [{ ...TASK, once: true }], runs: [] };
+      cy.mount(<ScheduledTasksCard sseConnected={true} />);
+      cy.get('.scheduled-task-schedule').should('have.text', 'one-off (runs once)');
+      cy.get('.scheduled-task-schedule').should('not.contain', '0 9 * * *');
+      cy.get('.scheduled-task-detail').should('not.contain', 'One-off (runs once)');
+    });
+
     it('shows enabled/disabled state', () => {
       stubFetch();
       responseData = { tasks: [TASK, DISABLED_TASK], runs: [] };
       cy.mount(<ScheduledTasksCard sseConnected={true} />);
       cy.get('.scheduled-enabled-dot.on').should('exist');
       cy.get('.scheduled-enabled-dot.off').should('exist');
+      cy.contains('.scheduled-task-name', 'Disabled task').closest('tr')
+        .find('.scheduled-disabled-label').should('have.text', 'Disabled');
     });
 
     it('shows seed and result script summaries only to admins', () => {
@@ -271,6 +282,8 @@ describe('ScheduledTasksCard', () => {
       cy.get('.scheduled-input-name').should('have.value', '');
       cy.get('.scheduled-input-schedule').should('have.value', '*/15 * * * *');
       cy.get('.scheduled-input-prompt').should('have.value', '');
+      cy.get('.scheduled-input-enabled').closest('.settings-field')
+        .next('.scheduled-form-actions').should('exist');
     });
 
     it('prefills the form when editing a task', () => {

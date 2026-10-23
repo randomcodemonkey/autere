@@ -359,19 +359,6 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
             </div>
           </>}
           <div className="settings-field">
-            <div className="settings-field-header">
-              <label className="settings-label">Enabled</label>
-              <label className="settings-toggle">
-                <input
-                  type="checkbox"
-                  checked={form.enabled}
-                  onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
-                />
-                <span className="settings-toggle-slider" />
-              </label>
-            </div>
-          </div>
-          <div className="settings-field">
             <label className="settings-label">Workdirs (optional)</label>
             <SortableList
               items={form.workdirs}
@@ -460,6 +447,20 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
               </div>
             )}
           </div>
+          <div className="settings-field">
+            <div className="settings-field-header">
+              <label className="settings-label">Enabled</label>
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  className="scheduled-input-enabled"
+                  checked={form.enabled}
+                  onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+                />
+                <span className="settings-toggle-slider" />
+              </label>
+            </div>
+          </div>
           <div className="scheduled-form-actions">
             <button className="btn btn-primary scheduled-save-btn" onClick={handleSave} disabled={saving || !!cronErrFor}>
               {saving ? 'Saving…' : 'Save Task'}
@@ -536,7 +537,6 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
               task.saveLastSession && 'Keeps only the last run session',
               task.reuseSession && (task.clearSession ? 'Reuses one session (cleared each run)' : 'Reuses one session'),
               Array.isArray(task.workdirs) && task.workdirs.length > 0 && `Workdirs: ${task.workdirs.join(', ')}`,
-              task.once && 'One-off (runs once)',
             ].filter(Boolean) as string[];
             return (
               <Fragment key={task.id}>
@@ -544,6 +544,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
                   <td data-label="State">
                     <span className={`scheduled-enabled-dot ${task.enabled ? 'on' : 'off'}`}
                           title={task.enabled ? 'Enabled' : 'Disabled'} />
+                    {!task.enabled && <span className="scheduled-disabled-label">Disabled</span>}
                   </td>
                   <td data-label="Task" className="scheduled-task-cell">
                     <span className="scheduled-task-name">{task.name}</span>
@@ -554,8 +555,10 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
                     )}
                   </td>
                   <td data-label="Schedule">
-                    <span className="scheduled-task-schedule" title={task.schedule}>
-                      {describeCron(task.schedule)} <span className="scheduled-cron-expr">({task.schedule})</span>
+                    <span className="scheduled-task-schedule" title={task.once ? undefined : task.schedule}>
+                      {task.once
+                        ? 'one-off (runs once)'
+                        : <>{describeCron(task.schedule)} <span className="scheduled-cron-expr">({task.schedule})</span></>}
                     </span>
                   </td>
                   <td data-label="Actions" className="data-table-actions">
