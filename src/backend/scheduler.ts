@@ -81,13 +81,40 @@ function runFile(user: string, taskId: string, runId: string): string {
   return join(userRunsDir(user), taskId, `${runId}.json`);
 }
 
-/** Atomic write of a run record (tmp file + rename in the same dir). */
+/** Sidecar with just the list-view fields (see TaskRunRecord). The full
+ *  record carries prompt/result/log and grows to hundreds of KB, so the runs
+ *  list must never parse those — it reads this instead. */
+const SUMMARY_SUFFIX = '.summary.json';
+
+function runSummaryFile(user: string, taskId: string, runId: string): string {
+  return join(userRunsDir(user), taskId, `${runId}${SUMMARY_SUFFIX}`);
+}
+
+function summaryOf(record: TaskRunLog): TaskRunRecord {
+  const { runId, taskId, taskName, trigger, startedAt, finishedAt, status, error } = record;
+  return { runId, taskId, taskName, trigger, startedAt, finishedAt, status, error };
+}
+
+function writeAtomic(file: string, data: string): void {
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = join(dirname(file), `.${randomUUID()}.tmp`);
+  writeFileSync(tmp, data, 'utf-8');
+  renameSync(tmp, file);
+}
+
+/** Summary JSON already on disk, per run — records are rewritten for every
+ *  log line, but the summary only changes on status/metadata changes. */
+const writtenSummaries = new Map<string, string>();
+
+/** Atomic write of a run record: full detail + the small list summary. */
 function writeRunRecord(user: string, record: TaskRunLog): void {
-  const f = runFile(user, record.taskId, record.runId);
-  mkdirSync(dirname(f), { recursive: true });
-  const tmp = join(dirname(f), `.${record.runId}.tmp-${randomUUID()}`);
-  writeFileSync(tmp, JSON.stringify(record, null, 2), 'utf-8');
-  renameSync(tmp, f);
+  writeAtomic(runFile(user, record.taskId, record.runId), JSON.stringify(record, null, 2));
+  const summaryJson = JSON.stringify(summaryOf(record), null, 2);
+  if (writtenSummaries.get(record.runId) === summaryJson) return;
+  writeAtomic(runSummaryFile(user, record.taskId, record.runId), summaryJson);
+  // Only in-flight runs need the memo; a finished record never changes again.
+  if (record.status === 'running') writtenSummaries.set(record.runId, summaryJson);
+  else writtenSummaries.delete(record.runId);
 }
 
 // ── Task store (per-user JSON files) ──
@@ -151,7 +178,9 @@ export function deleteTask(user: string, taskId: string): boolean {
 
 // ── Run records ──
 
-/** List run records for a user (optionally for one task), newest first */
+/** List run records for a user (optionally for one task), newest first.
+ *  Reads the small summary sidecar; a run written before summaries existed
+ *  falls back to parsing its full record. */
 export function listRuns(user: string, taskId?: string, limit = 100): TaskRunRecord[] {
   const base = userRunsDir(user);
   const out: TaskRunRecord[] = [];
@@ -163,9 +192,14 @@ export function listRuns(user: string, taskId?: string, limit = 100): TaskRunRec
       const dir = join(base, t);
       if (!existsSync(dir)) continue;
       for (const f of readdirSync(dir)) {
-        if (!f.endsWith('.json')) continue;
+        if (!f.endsWith('.json') || f.endsWith(SUMMARY_SUFFIX)) continue;
+        const runId = f.slice(0, -'.json'.length);
         try {
-          out.push(JSON.parse(readFileSync(join(dir, f), 'utf-8')));
+          const summary = runSummaryFile(user, t, runId);
+          const file = existsSync(summary) ? summary : join(dir, f);
+          const record = JSON.parse(readFileSync(file, 'utf-8')) as TaskRunRecord;
+          const { taskName, trigger, startedAt, finishedAt, status, error } = record;
+          out.push({ runId, taskId: t, taskName, trigger, startedAt, finishedAt, status, error });
         } catch (err) {
           log.scheduler.error(`Failed to read run file ${t}/${f}:`, err);
         }
@@ -176,6 +210,14 @@ export function listRuns(user: string, taskId?: string, limit = 100): TaskRunRec
   }
   out.sort((a, b) => b.startedAt - a.startedAt);
   return out.slice(0, limit);
+}
+
+/** Whether a task has ever produced a run — a directory listing, no parse. */
+export function hasRuns(user: string, taskId: string): boolean {
+  if (!isSafeId(taskId)) return false;
+  try {
+    return readdirSync(join(userRunsDir(user), taskId)).some((f) => f.endsWith('.json') && !f.endsWith(SUMMARY_SUFFIX));
+  } catch { return false; }
 }
 
 /** Read a full run log (with prompt/result details) */
@@ -353,7 +395,7 @@ export class Scheduler {
         if (!task.enabled) continue;
         // One-off tasks run at most once, ever — the first run disables
         // them; this also covers someone re-enabling the task afterwards.
-        if (task.once && listRuns(user, task.id, 1).length > 0) continue;
+        if (task.once && hasRuns(user, task.id)) continue;
         let fired = this.firedMinutes.get(task.id);
         if (!fired) { fired = new Set(); this.firedMinutes.set(task.id, fired); }
         if (fired.has(minuteKey)) continue;
@@ -400,7 +442,7 @@ export class Scheduler {
     if (!task) throw new Error('Task not found');
     // Same contract as the scheduler tick: a one-off task runs once, then
     // never again — not even by an explicit trigger.
-    if (task.once && listRuns(user, taskId, 1).length > 0) {
+    if (task.once && hasRuns(user, taskId)) {
       throw new Error('One-off task has already run');
     }
     return this.startRun(user, task, 'manual');
@@ -437,6 +479,9 @@ export class Scheduler {
     };
     addLog(`Run started (trigger: ${trigger})`);
     writeRecord();
+    // Push, don't poll: the tasks card refreshes on this event instead of
+    // re-fetching the task + run list every few seconds.
+    broadcastToUser(user, { type: 'tasks' });
 
     let aborted = false;
     let abortWaiter: (() => void) | null = null;
@@ -467,6 +512,7 @@ export class Scheduler {
       addLog(`Run failed to start: ${record.error}`);
       record.finishedAt = Date.now();
       writeRecord();
+      broadcastToUser(user, { type: 'tasks' });
       throw err;
     }
     const active: ActiveRun = {
@@ -670,6 +716,7 @@ export class Scheduler {
         record.finishedAt = Date.now();
         writeRecord();
         this.activeRuns.delete(key);
+        broadcastToUser(user, { type: 'tasks' });
       }
     })();
     runPromise.catch(err => log.scheduler.error('Unhandled run error:', err));

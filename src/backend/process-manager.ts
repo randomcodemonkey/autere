@@ -23,15 +23,31 @@ import { join } from 'path';
 interface SpawnOpts { cwd?: string; workdirs?: string[]; mountDockerSocket?: boolean }
 const SPAWN_OPTS_FILE = 'spawn-opts.json';
 
+/** Parsed spawn-opts per user, keyed by file mtime — the list route reads
+ *  them for every session, and the session list is rebuilt on every change
+ *  broadcast. Writing through saveSpawnOpts() refreshes this entry too. */
+const spawnOptsCache = new Map<string, { mtimeMs: number; data: Record<string, SpawnOpts> }>();
+
+function spawnOptsPath(user: string): string {
+  return join(getPiEnvDir(user), SPAWN_OPTS_FILE);
+}
+
 function loadSpawnOpts(user: string): Record<string, SpawnOpts> {
+  const file = spawnOptsPath(user);
+  let mtimeMs: number;
+  try { mtimeMs = statSync(file).mtimeMs; } catch { spawnOptsCache.delete(user); return {}; }
+  const cached = spawnOptsCache.get(user);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.data;
   try {
-    const raw = JSON.parse(readFileSync(join(getPiEnvDir(user), SPAWN_OPTS_FILE), 'utf-8'));
-    return raw && typeof raw === 'object' ? raw : {};
+    const raw = JSON.parse(readFileSync(file, 'utf-8'));
+    const data = raw && typeof raw === 'object' ? raw : {};
+    spawnOptsCache.set(user, { mtimeMs, data });
+    return data;
   } catch { return {}; }
 }
 
-/** Spawn opts of ONE session file (fresh read — used per-request). */
-function spawnOpts(user: string, sessionFile: string): SpawnOpts {
+/** Spawn opts of ONE session file (cached on the file's mtime). */
+export function spawnOpts(user: string, sessionFile: string): SpawnOpts {
   return loadSpawnOpts(user)[sessionFile] || {};
 }
 
@@ -39,7 +55,8 @@ function saveSpawnOpts(user: string, sessionFile: string, opts: SpawnOpts): void
   try {
     const all = loadSpawnOpts(user);
     all[sessionFile] = opts;
-    writeFileSync(join(getPiEnvDir(user), SPAWN_OPTS_FILE), JSON.stringify(all, null, 2));
+    writeFileSync(spawnOptsPath(user), JSON.stringify(all, null, 2));
+    spawnOptsCache.delete(user);
   } catch (err) {
     log.processMgr.warn?.(`Failed to persist spawn opts for (${user}): ${err}`);
   }
@@ -302,7 +319,10 @@ export class ProcessManager {
       this.syntheticCache.set(session.user, cache);
     }
     const prev = cache.get(file);
-    const merged = prev ? { ...prev, sessionName: info.sessionName ?? prev.sessionName, lastActivity: Math.max(prev.lastActivity, info.lastActivity) } : info;
+    // Keep createdAt/lastActivity stable across calls (they are the creation
+    // time): a ticking timestamp would make the identical session list look
+    // changed on every broadcast pass.
+    const merged = prev ? { ...prev, sessionName: info.sessionName ?? prev.sessionName } : info;
     cache.set(file, merged);
     return { ...merged };
   }
@@ -357,9 +377,10 @@ export class ProcessManager {
       s.compacting = running && session!.state.sessionState.compacting;
       // Spawn opts supply the workdirs (live process takes precedence) —
       // the Sessions view edits them for the current session.
+      const savedDirs = running ? [] : (spawnOpts(user, s.sessionFile).workdirs ?? []);
       s.workdirs = running
         ? (session!.rpc.getWorkdirs().length ? session!.rpc.getWorkdirs() : undefined)
-        : (spawnOpts(user, s.sessionFile).workdirs?.length ? [...spawnOpts(user, s.sessionFile).workdirs!] : undefined);
+        : (savedDirs.length ? [...savedDirs] : undefined);
     }
     return sessions;
   }

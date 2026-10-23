@@ -218,6 +218,20 @@ function findExtensionConfig(ext: DiscoveredExtension): { configPath: string | n
  *  refilled on every readExtensions, used by enabledExtensionsFor. */
 const localExtensionNames = new Set<string>();
 
+/** Handler enrichment is expensive (network probes, stats files) and was
+ *  being repeated on every poll tick with no client watching. Results are
+ *  reused for a short TTL; discovery itself stays cheap.
+ *  ponytail: a fixed TTL, no invalidation hook — a settings change shows up
+ *  within a minute, which is what the card polls at anyway. Add a per-name
+ *  invalidate call if that ever feels slow. */
+const ENRICH_TTL_MS = 60_000;
+const enrichCache = new Map<string, { at: number; info: ExtensionInfo }>();
+
+/** Drop enrichment results (e.g. after the extension settings changed). */
+export function invalidateExtensionEnrichment(): void {
+  enrichCache.clear();
+}
+
 export async function readExtensions(): Promise<void> {
   const extensions: ExtensionInfo[] = [];
 
@@ -227,8 +241,11 @@ export async function readExtensions(): Promise<void> {
   localExtensionNames.clear();
   for (const e of localExts) localExtensionNames.add(e.id);
   const allDiscovered = [...npmExts, ...localExts];
+  const now = Date.now();
+  const seen = new Set<string>();
 
   for (const ext of allDiscovered) {
+    seen.add(ext.id);
     const { configPath, config } = findExtensionConfig(ext);
 
     let info: ExtensionInfo = {
@@ -244,20 +261,29 @@ export async function readExtensions(): Promise<void> {
       details: config,
     };
 
-    // Apply handler enrichment if one exists
+    // Apply handler enrichment if one exists — cached for ENRICH_TTL_MS.
     const handler = getExtensionHandler(ext.id);
     if (handler) {
-      try {
-        info = await handler.enrich(info);
-      } catch (err) {
-        log.extensions.error(`Extension handler error for ${ext.id}:`, err);
-        info.status = 'error';
-        info.statusText = 'Error';
+      const cached = enrichCache.get(ext.id);
+      if (cached && now - cached.at < ENRICH_TTL_MS) {
+        info = { ...cached.info, configPath, hasConfig: configPath !== null, details: { ...config, ...cached.info.details } };
+      } else {
+        try {
+          info = await handler.enrich(info);
+        } catch (err) {
+          log.extensions.error(`Extension handler error for ${ext.id}:`, err);
+          info.status = 'error';
+          info.statusText = 'Error';
+        }
+        enrichCache.set(ext.id, { at: now, info });
       }
     }
 
     extensions.push(info);
   }
+
+  // Forget enrichment of extensions that are no longer installed
+  for (const name of [...enrichCache.keys()]) if (!seen.has(name)) enrichCache.delete(name);
 
   // Update the shared state array in place
   extensionsState.length = 0;

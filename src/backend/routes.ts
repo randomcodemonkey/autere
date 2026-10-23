@@ -660,6 +660,31 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
   // ── File browser (Edits/Files view). list/read are chat-level;
   // write/delete need control — plus path/allowedDirs checks inside the
   // file handlers themselves. ──
+  /** Does the tail of a session log contain `q`? One bounded async read per
+   *  session, in parallel — a content search must not block the event loop
+   *  (or read a 50 MB file) while the user types. */
+  const tailContains = async (file: string, q: string): Promise<boolean> => {
+    try {
+      const fh = await fsp.open(file, 'r');
+      try {
+        const { size } = await fh.stat();
+        const len = Math.min(size, SEARCH_TAIL_BYTES);
+        const buf = Buffer.alloc(len);
+        await fh.read(buf, 0, len, size - len);
+        return buf.toString('utf-8').toLowerCase().includes(q);
+      } finally { await fh.close(); }
+    } catch { return false; /* unreadable file — skip content search */ }
+  };
+
+  const SEARCH_TAIL_BYTES = 512 * 1024;
+
+  /** Folder ignores marked for the Files view, and the listing filter that
+   *  applies them (roots + browse/list + git/list share one rule). */
+  const filesIgnoresFor = (user: string) =>
+    getFolderIgnores(user).filter((e) => e.files).map((e) => e.path);
+  const notIgnored = <T extends { name: string }>(dir: string, entries: T[], ignores: string[]) =>
+    entries.filter((e) => !pathIsIgnored(`${dir}/${e.name}`, ignores));
+
   const sendBrowse = (c: Ctx, r: BrowseResult<any>) => {
     if ('error' in r) sendJSON(c.res, { success: false, error: r.error }, r.status);
     else sendJSON(c.res, { success: true, data: r.data });
