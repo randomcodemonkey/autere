@@ -188,14 +188,6 @@ export function matchModelMap<T>(
 
 // ── Session auto-naming helpers ──
 
-/** Date label used for auto-naming sessions, e.g. "2026-09-05" (local time) */
-export function sessionDateLabel(date: Date = new Date()): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
 export interface SessionStampOptions {
   /** BCP-47 locale tag, e.g. "fi-FI" */
   locale?: string;

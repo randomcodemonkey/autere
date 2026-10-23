@@ -796,17 +796,6 @@ export function getAlwaysEnabledExtras(): string[] {
   return isNineRouterProvider() ? ALWAYS_ENABLED_EXTRAS.filter(isBundledExtra) : [];
 }
 
-/** Extras currently linked into the user's env extensions dir. */
-export function getEnabledExtras(user: string): string[] {
-  const dir = join(getPiEnvDir(user), 'extensions');
-  const available = new Set(getAvailableExtras().map((s) => s.slice('local:'.length)));
-  try {
-    return readdirSync(dir, { withFileTypes: true })
-      .filter((e) => available.has(e.name))
-      .map((e) => `local:${e.name}`);
-  } catch { return []; }
-}
-
 /** extras toggle state = saved choices (env autere-extensions.json, names
  *  intersected with the currently bundled set), falling back to
  *  DEFAULT_ENABLED_EXTRAS before the user saved anything. */

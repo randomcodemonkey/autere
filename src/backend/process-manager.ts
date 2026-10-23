@@ -8,11 +8,11 @@
 
 import { UserSession } from './user-session.js';
 import { findSession } from '../shared/find-session.js';
-import { readSessions, findSessionFileBySessionId } from './sessions.js';
+import { readSessions } from './sessions.js';
 import { getPiEnvDir } from './pi-env.js';
 import { log } from './logger.js';
 import type { SessionInfo } from './types.js';
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 /** Spawn opts persisted per session file (in the user's pi env) so pi
@@ -262,11 +262,6 @@ export class ProcessManager {
     return out;
   }
 
-  /** Users that currently have at least one session process */
-  activeUsers(): string[] {
-    return [...this.sessions.keys()].filter((u) => (this.sessions.get(u)?.size || 0) > 0);
-  }
-
   /**
    * Refresh the user's session list from disk (their pi env sessions dir).
    * Stamps live flags from the running processes and keeps in-memory entries
@@ -337,11 +332,6 @@ export class ProcessManager {
    * and streaming (its turn is in flight). Disk entries carry the flags;
    * synthetic (file-less) entries are always active.
    */
-  /** Spawn opts of ONE session file (for route-level reads). */
-  getSpawnOpts(user: string, sessionFile: string): SpawnOpts {
-    return spawnOpts(user, sessionFile);
-  }
-
   /** Persist spawn opts for a session file without touching running processes */
   persistSpawnOpts(user: string, sessionFile: string, opts: SpawnOpts): void {
     saveSpawnOpts(user, sessionFile, opts);
@@ -390,21 +380,6 @@ export class ProcessManager {
     return findSession(sessionId, this.listSessions(user, viewed));
   }
 
-  /** Session file by id, even when the listing hides it (see sessions.ts) */
-  findSessionFile(user: string, sessionId: string): string | null {
-    return findSessionFileBySessionId(user, sessionId);
-  }
-
-
-  /** Register a just-created session so it is listable before pi writes the file */
-  registerSynthetic(user: string, info: SessionInfo): void {
-    let cache = this.syntheticCache.get(user);
-    if (!cache) {
-      cache = new Map();
-      this.syntheticCache.set(user, cache);
-    }
-    cache.set(info.sessionFile, info);
-  }
 
   readSessionsForUser(user: string): SessionInfo[] {
     const fresh = readSessions(user);

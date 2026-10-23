@@ -424,19 +424,22 @@ interface DedupSessionStat {
 	last: string;
 }
 
+/** One user-env stats file (dedup/janitor write these); {} when missing or
+ *  malformed — stats are decoration, never an error path. */
+function readStatsFile(user: string, file: string): Record<string, any> {
+	try {
+		const data = JSON.parse(readFileSync(join(PI_ENVS_DIR, sanitizeUserName(user), file), 'utf-8'));
+		return data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+	} catch { return {}; }
+}
+
 /**
  * Per-session dedup savings for ONE user's pi env. Each pi process writes
  * dedup-stats.json into its OWN env (PI_CODING_AGENT_DIR); this reads only
  * the requesting user's file — never another env's.
  */
 function dedupStatsFor(user: string): DedupSessionStat[] {
-	let data: any;
-	try {
-		data = JSON.parse(readFileSync(join(PI_ENVS_DIR, sanitizeUserName(user), 'dedup-stats.json'), 'utf-8'));
-	} catch {
-		return [];
-	}
-	if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+	const data = readStatsFile(user, 'dedup-stats.json');
 	const meta = sessionMetaFor(user);
 	return Object.entries<any>(data)
 		.map(([file, s]) => {
@@ -542,13 +545,7 @@ interface JanitorSessionStat {
  * the requesting user's file — never another env's.
  */
 function janitorStatsFor(user: string): JanitorSessionStat[] {
-	let data: any;
-	try {
-		data = JSON.parse(readFileSync(join(PI_ENVS_DIR, sanitizeUserName(user), 'janitor-stats.json'), 'utf-8'));
-	} catch {
-		return [];
-	}
-	if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+	const data = readStatsFile(user, 'janitor-stats.json');
 	const meta = sessionMetaFor(user);
 	return Object.entries<any>(data)
 		.map(([file, s]) => {

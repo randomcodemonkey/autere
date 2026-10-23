@@ -66,23 +66,6 @@ export interface StreamEntry {
   isError?: boolean;
 }
 
-// ── Message types ──
-
-export interface MessagePreview {
-  role: string;
-  timestamp: string;
-  preview: string;
-}
-
-// ── Tool types ──
-
-export interface ToolEntry {
-  name: string;
-  isError: boolean;
-  timestamp: number;
-  args: any;
-}
-
 // ── Stats types ──
 
 export interface TokenUsage {
