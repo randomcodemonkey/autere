@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { url } from '../base-path';
 import { API } from '../api-paths';
 import type { SettingSection } from '../types';
+import { apiJSON, apiSend } from '../api';
 
 interface NotificationsSectionProps {
   section?: SettingSection;
@@ -62,20 +62,13 @@ export const NotificationsSection: React.FC<NotificationsSectionProps> = ({ sect
       const reg = await navigator.serviceWorker.ready;
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
-        const key = await fetch(url(API.notifications.vapidPublicKey)).then((r) => r.json());
-        if (!key.success) throw new Error(key.error || 'Failed to read the push key');
+        const key = await apiJSON<{ publicKey: string }>(API.notifications.vapidPublicKey);
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: toApplicationServerKey(key.data.publicKey),
+          applicationServerKey: toApplicationServerKey(key.publicKey),
         });
       }
-      const res = await fetch(url(API.notifications.subscribe), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sub.toJSON()),
-      });
-      const json = await res.json();
-      if (!json.success) throw new Error(json.error || 'Failed to register this device');
+      await apiSend(API.notifications.subscribe, 'POST', sub.toJSON());
       setSubscribed(true);
       setNote('This device is now subscribed.');
     } catch (err) {
@@ -93,11 +86,7 @@ export const NotificationsSection: React.FC<NotificationsSectionProps> = ({ sect
       const reg = await navigator.serviceWorker.getRegistration();
       const sub = reg ? await reg.pushManager.getSubscription() : null;
       if (sub) {
-        await fetch(url(API.notifications.subscribe), {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ endpoint: sub.endpoint }),
-        });
+        await apiSend(API.notifications.subscribe, 'DELETE', { endpoint: sub.endpoint });
         await sub.unsubscribe();
       }
       setSubscribed(false);

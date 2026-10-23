@@ -1,9 +1,9 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { url } from '../base-path';
 import { API } from '../api-paths';
 import type { StreamMessage, AvailableModel } from '../types';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
+import { apiJSON, apiSend } from '../api';
 
 interface StreamCardProps {
   messages: StreamMessage[];
@@ -101,26 +101,17 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     // guards would skip the fetch forever.
     const onlyUnknown = modelsList.length === 1 && modelsList[0].id === 'unknown';
     if (modelsList.length === 0 || onlyUnknown) {
-      fetch(url(API.session.models))
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success && data.data?.length > 0) onModelsFetched?.(data.data);
-        })
+      apiJSON<any[]>(API.session.models)
+        .then((list) => { if (list?.length > 0) onModelsFetched?.(list); })
         .catch(() => {});
     }
   }, [modelsList, onModelsFetched]);
   const selectModel = useCallback(async (provider: string, modelId: string) => {
     setModelOpen(false);
     try {
-      const res = await fetch(url(API.session.model), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, modelId, sessionId }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!data?.success) onCommandError?.(data?.error || 'Failed to change model');
-    } catch {
-      onCommandError?.('Failed to change model');
+      await apiSend(API.session.model, 'PUT', { provider, modelId, sessionId });
+    } catch (err: any) {
+      onCommandError?.(err.message || 'Failed to change model');
     }
   }, [onCommandError, sessionId]);
 

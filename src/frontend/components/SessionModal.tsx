@@ -1,24 +1,17 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Modal } from './Modal';
 import { SortableList } from './SortableList';
-import { url } from '../base-path';
 import { API } from '../api-paths';
 import { uiSessionName } from '../session-name';
 import { PinIcon } from './PinIcon';
 import type { SessionSearchResult, Persona } from '../types';
+import { apiJSON, apiSend } from '../api';
 
 /** Navigational guard: WorkdirEditor raises this while it has unsaved
  *  edits; beforeunload and AppPage view switches consult it. */
 let workdirsDirty = false;
 export function workdirsUnsaved(): boolean { return workdirsDirty; }
 export function acknowledgeWorkdirsDirty(): void { workdirsDirty = false; }
-
-async function fetchJson(rel: string): Promise<any> {
-  const res = await fetch(url(rel));
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok || body.success === false) throw new Error(body.error || `HTTP ${res.status}`);
-  return body.data;
-}
 
 /** Resolve a workdir input like the backend does: '~/' → $HOME-relative,
  *  absolute kept, bare relative → $HOME/$name (home = the caller's first
@@ -47,7 +40,7 @@ function useWorkdirCheck(items: string[]): { errors: string[]; checking: boolean
       (async () => {
         const errors: string[] = [];
         try {
-          const roots: { path: string; access: string }[] = await fetchJson(API.browse.roots);
+          const roots: { path: string; access: string }[] = await apiJSON(API.browse.roots);
           if (!roots?.length) {
             if (itemsKey && !cancelled) setState({ errors: [], checking: false });
             return;
@@ -61,7 +54,7 @@ function useWorkdirCheck(items: string[]): { errors: string[]; checking: boolean
             const parent = abs.slice(0, abs.lastIndexOf('/')) || '/';
             const name = abs.slice(abs.lastIndexOf('/') + 1);
             try {
-              const entries = await fetchJson(API.browse.list(parent));
+              const entries = await apiJSON(API.browse.list(parent));
               const hit = (entries || []).find((e: { name: string; type: string }) => e.name === name);
               if (!hit) errors.push(`${abs} does not exist on the server`);
               else if (hit.type !== 'dir') errors.push(`${abs} is not a directory`);
@@ -168,12 +161,8 @@ export const SessionView: React.FC<SessionViewProps> = ({
 
   // Persona choices for the new-session form
   useEffect(() => {
-    fetch(url(API.personas.root))
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) { setPersonas(data.data || []); setPersonasStatus('ready'); }
-        else setPersonasStatus('error');
-      })
+    apiJSON<any[]>(API.personas.root)
+      .then((list) => { setPersonas(list || []); setPersonasStatus('ready'); })
       .catch(() => setPersonasStatus('error'));
   }, []);
 
@@ -182,15 +171,14 @@ export const SessionView: React.FC<SessionViewProps> = ({
     const seq = ++searchSeq.current;
     const timer = setTimeout(() => {
       const q = query.trim();
-      const fetchUrl = q.length >= 2
-        ? url(API.sessions.search(q))
-        : url(API.sessions.list);
+      const listPath = q.length >= 2
+        ? API.sessions.search(q)
+        : API.sessions.list;
       if (q.length >= 2) setSearching(true);
-      fetch(fetchUrl)
-        .then((res) => res.json())
-        .then((data) => {
-          if (seq === searchSeq.current && data.success) {
-            setResults(data.data || []);
+      apiJSON<any[]>(listPath)
+        .then((list) => {
+          if (seq === searchSeq.current) {
+            setResults(list || []);
             setLoaded(true);
           }
         })
@@ -204,13 +192,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
     const name = nameInput.trim();
     if (!sessionId) return;
     setNameSaving(true);
-    try {
-      await fetch(url(API.session.name), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, sessionId }),
-      });
-    } catch {}
+    try { await apiSend(API.session.name, 'PUT', { name, sessionId }); } catch {}
     setNameSaving(false);
   }, [nameInput, sessionId]);
 
@@ -219,7 +201,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
       return;
     }
     try {
-      await fetch(url(API.sessions.item(sid)), { method: 'DELETE' });
+      await apiSend(API.sessions.item(sid), 'DELETE');
       setResults((prev) => prev.filter((s) => s.id !== sid));
     } catch {}
   }, []);
@@ -248,16 +230,10 @@ export const SessionView: React.FC<SessionViewProps> = ({
     setCloneBusy(true);
     setCloneError(null);
     try {
-      const res = await fetch(url(API.sessions.clone(cloneTarget.id)), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionName: cloneName.trim(),
-          ...(canSetWorkdir && cloneWorkdirs.length ? { workdirs: cloneWorkdirs } : {}),
-        }),
+      await apiSend(API.sessions.clone(cloneTarget.id), 'POST', {
+        sessionName: cloneName.trim(),
+        ...(canSetWorkdir && cloneWorkdirs.length ? { workdirs: cloneWorkdirs } : {}),
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || body.success === false) throw new Error(body.error || `HTTP ${res.status}`);
       setCloneTarget(null);
     } catch (err: any) {
       setCloneError(err.message);
@@ -582,11 +558,10 @@ const WorkdirEditor: React.FC<{
     let cancelled = false;
     setWorkdirs(null);
     setSavedWorkdirs(null);
-    fetch(url(API.sessions.list))
-      .then((res) => res.json())
-      .then((data) => {
-        if (!cancelled && data.success) {
-          const cur = (data.data || []).find((s: { id: string }) => s.id === sessionId);
+    apiJSON<any[]>(API.sessions.list)
+      .then((list) => {
+        if (!cancelled) {
+          const cur = (list || []).find((s: { id: string }) => s.id === sessionId);
           const loadedWorkdirs = [...(cur?.workdirs || [])];
           setWorkdirs(loadedWorkdirs);
           setSavedWorkdirs(loadedWorkdirs);
@@ -624,22 +599,13 @@ const WorkdirEditor: React.FC<{
     if (wdCheck?.errors.length || wdCheck?.checking) return;
     setSaving(true);
     setError('');
-    fetch(url(API.session.workdirs), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, workdirs }),
-    })
-      .then(async (res) => {
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || body.success === false) {
-          setError(body.error || `Failed (${res.status})`);
-        } else {
-          setSavedWorkdirs([...workdirs]);
-          // pi respawned — rebind this client view (no-op when same id)
-          onSwitching(sessionId);
-        }
+    apiSend(API.session.workdirs, 'PUT', { sessionId, workdirs })
+      .then(() => {
+        setSavedWorkdirs([...workdirs]);
+        // pi respawned — rebind this client view (no-op when same id)
+        onSwitching(sessionId);
       })
-      .catch(() => setError('Network error'))
+      .catch((err: any) => setError(err?.message || 'Network error'))
       .finally(() => setSaving(false));
   }, [workdirs, sessionId, onSwitching, wdCheck]);
 

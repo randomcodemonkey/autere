@@ -3,6 +3,7 @@ import { url } from '../base-path';
 import { API } from '../../shared/api-paths';
 import type { SessionInfo } from '../types';
 import { PinIcon } from './PinIcon';
+import { apiJSON, apiSend } from '../api';
 
 export type ViewId = 'status' | 'sessions' | 'chat' | 'settings' | 'tasks' | 'edits' | 'users' | 'user';
 
@@ -211,10 +212,8 @@ export const Header: React.FC<HeaderProps> = ({
                   onClick={async () => {
                     if (!window.confirm(`Delete session "${label}"? It will be moved to deleted-sessions.`)) return;
                     try {
-                      await fetch(url(API.sessions.item(s.id)), { method: 'DELETE' });
-                      const res = await fetch(url(API.sessions.list));
-                      const d = await res.json();
-                      if (d.success) onSessionsRefreshed?.(d.data);
+                      await apiSend(API.sessions.item(s.id), 'DELETE');
+                      onSessionsRefreshed?.(await apiJSON(API.sessions.list));
                     } catch {}
                   }}
                 >

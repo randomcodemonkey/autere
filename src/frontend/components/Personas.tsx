@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Modal } from './Modal';
 import { useCardState } from '../hooks/useCardState';
-import { url } from '../base-path';
 import { API } from '../api-paths';
+import { apiJSON, apiSend } from '../api';
 import type { Persona } from '../types';
 
 /**
@@ -14,13 +14,10 @@ let personasCache: Persona[] = [];
 const personaSubscribers = new Set<(p: Persona[]) => void>();
 
 function reloadPersonas(): Promise<Persona[]> {
-  return fetch(url(API.personas.root))
-    .then((r) => r.json())
-    .then((d) => {
-      if (d.success) {
-        personasCache = d.data || [];
-        personaSubscribers.forEach((fn) => fn(personasCache));
-      }
+  return apiJSON<Persona[]>(API.personas.root)
+    .then((list) => {
+      personasCache = list || [];
+      personaSubscribers.forEach((fn) => fn(personasCache));
       return personasCache;
     })
     .catch(() => personasCache);
@@ -36,8 +33,6 @@ function usePersonas() {
   return { personas, reload: reloadPersonas };
 }
 
-const JSON_HEADERS = { 'Content-Type': 'application/json' };
-
 /**
  * Agent card section: shows the current session's persona and allows
  * changing it for the ACTIVE session. Changing PUTs the session/persona —
@@ -51,9 +46,7 @@ export const PersonaSection: React.FC<{ persona: { id: string; name: string } | 
 
   const change = useCallback(async (id: string) => {
     setChanging(true);
-    try {
-      await fetch(url(API.session.persona), { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ personaId: id || null }) });
-    } catch {}
+    try { await apiSend(API.session.persona, 'PUT', { personaId: id || null }); } catch {}
     setChanging(false);
   }, []);
 
@@ -122,16 +115,11 @@ export const PersonasSettingsSection: React.FC = () => {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(url(API.personas.root), { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ name, description, prompt }) });
-      const data = await res.json();
-      if (data.success) {
-        setCreating(false);
-        reload();
-      } else {
-        setError(data.error || 'Failed to save persona');
-      }
-    } catch {
-      setError('Failed to save persona');
+      await apiSend(API.personas.root, 'POST', { name, description, prompt });
+      setCreating(false);
+      reload();
+    } catch (err: any) {
+      setError(err.message || 'Failed to save persona');
     } finally {
       setSaving(false);
     }
@@ -140,7 +128,7 @@ export const PersonasSettingsSection: React.FC = () => {
   const remove = useCallback(async (id: string) => {
     if (!window.confirm('Delete this persona?')) return;
     try {
-      await fetch(url(API.personas.item(id)), { method: 'DELETE', headers: JSON_HEADERS });
+      await apiSend(API.personas.item(id), 'DELETE');
       reload();
     } catch {}
   }, [reload]);
@@ -148,21 +136,18 @@ export const PersonasSettingsSection: React.FC = () => {
   // Global system prompt: load once, save on demand (applies on the session's
   // next turn — the extension mtime-caches the file, no pi restart needed).
   useEffect(() => {
-    fetch(url(API.personas.globalPrompt))
-      .then((r) => r.json())
-      .then((d) => { if (d.success) { setGlobalPrompt(d.data?.prompt || ''); setGlobalDirty(false); } })
+    apiJSON<{ prompt?: string }>(API.personas.globalPrompt)
+      .then((d) => { setGlobalPrompt(d?.prompt || ''); setGlobalDirty(false); })
       .catch(() => {});
   }, []);
   const saveGlobal = useCallback(async () => {
     setGlobalSaving(true);
     setGlobalError(null);
     try {
-      const res = await fetch(url(API.personas.globalPrompt), { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ prompt: globalPrompt }) });
-      const data = await res.json();
-      if (data.success) setGlobalDirty(false);
-      else setGlobalError(data.error || 'Failed to save global prompt');
-    } catch {
-      setGlobalError('Failed to save global prompt');
+      await apiSend(API.personas.globalPrompt, 'PUT', { prompt: globalPrompt });
+      setGlobalDirty(false);
+    } catch (err: any) {
+      setGlobalError(err.message || 'Failed to save global prompt');
     } finally {
       setGlobalSaving(false);
     }
@@ -173,12 +158,11 @@ export const PersonasSettingsSection: React.FC = () => {
     setGenerating(true);
     setError(null);
     try {
-      const res = await fetch(url(API.personas.generate), { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ text }) });
-      const data = await res.json();
-      if (data.success && data.data?.prompt) onResult(data.data.prompt);
-      else setError(data.error || 'Failed to generate prompt');
-    } catch {
-      setError('Failed to generate prompt');
+      const data = await apiSend<{ prompt?: string }>(API.personas.generate, 'POST', { text });
+      if (data?.prompt) onResult(data.prompt);
+      else setError('Failed to generate prompt');
+    } catch (err: any) {
+      setError(err.message || 'Failed to generate prompt');
     } finally {
       setGenerating(false);
     }
@@ -194,20 +178,15 @@ export const PersonasSettingsSection: React.FC = () => {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(url(details.id ? API.personas.item(details.id) : API.personas.root), {
-        method: details.id ? 'PUT' : 'POST',
-        headers: JSON_HEADERS,
-        body: JSON.stringify({ name: details.name, description: details.description, prompt: detailsPrompt }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setDetails(null);
-        reload();
-      } else {
-        setError(data.error || 'Failed to save persona');
-      }
-    } catch {
-      setError('Failed to save persona');
+      await apiSend(
+        details.id ? API.personas.item(details.id) : API.personas.root,
+        details.id ? 'PUT' : 'POST',
+        { name: details.name, description: details.description, prompt: detailsPrompt },
+      );
+      setDetails(null);
+      reload();
+    } catch (err: any) {
+      setError(err.message || 'Failed to save persona');
     } finally {
       setSaving(false);
     }

@@ -5,9 +5,9 @@ import { PersonasSettingsSection } from './Personas';
 import { ApiTokensSection } from './ApiTokensSection';
 import { NotificationsSection } from './NotificationsSection';
 import { Modal } from './Modal';
-import { url } from '../base-path';
 import { API } from '../api-paths';
 import type { SettingSection, SettingField } from '../types';
+import { apiJSON, apiSend, apiBody, JSON_HEADERS } from '../api';
 
 interface FolderIgnoreEntry { path: string; edits: boolean; files: boolean }
 
@@ -401,12 +401,9 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected, onSess
     setModelsLoading(true);
     setModelsError(null);
     try {
-      const res = await fetch(url(API.modelsCatalog), { method: 'POST' });
-      const json = await res.json();
-      if (json.success) setCatalog(json.data as { provider: string; id: string; name: string }[]);
-      else setModelsError(json.error || 'Failed to load models from pi');
-    } catch {
-      setModelsError('Failed to load models from pi');
+      setCatalog(await apiSend<{ provider: string; id: string; name: string }[]>(API.modelsCatalog, 'POST'));
+    } catch (err: any) {
+      setModelsError(err.message || 'Failed to load models from pi');
     } finally {
       setModelsLoading(false);
     }
@@ -422,10 +419,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected, onSess
   const fetchSummaryPrompt = async () => {
     setSummaryPrompt(null);
     try {
-      const res = await fetch(url(API.settings.summaryPrompt));
-      const json = await res.json();
-      if (json.success) setSummaryPrompt(json.data);
-      else setSummaryPrompt({ extra: '', guardTokens: 0, fresh: null, update: null });
+      setSummaryPrompt(await apiJSON(API.settings.summaryPrompt));
     } catch {
       setSummaryPrompt({ extra: '', guardTokens: 0, fresh: null, update: null });
     }
@@ -457,19 +451,19 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected, onSess
 
   useEffect(() => {
     Promise.all([
-      fetch(url(API.settings.schema)).then(r => r.json()),
-      fetch(url(API.settings.root)).then(r => r.json()),
-      fetch(url(API.extensions.packages)).then(r => r.json()).catch(() => null),
-    ]).then(async ([schemaRes, settingsRes, pkgsRes]) => {
-      if (pkgsRes?.success) setAvailablePackages(pkgsRes.data.available || []);
-      if (schemaRes.success) {
+      apiJSON<any[]>(API.settings.schema),
+      apiJSON<any>(API.settings.root),
+      apiJSON<{ available?: string[] }>(API.extensions.packages).catch(() => null),
+    ]).then(async ([schema, loaded, pkgs]) => {
+      if (pkgs) setAvailablePackages(pkgs.available || []);
+      if (schema) {
         // Sort once here, before render: menu + validation effect + default
         // selection all see the same alphabetical order
-        setSchema([...schemaRes.data]);
+        setSchema([...schema]);
       }
-      if (settingsRes.success) {
-        setSettings(settingsRes.data);
-        baselineRef.current = JSON.stringify(settingsRes.data);
+      if (loaded) {
+        setSettings(loaded);
+        baselineRef.current = JSON.stringify(loaded);
       }
       fetchSummaryPrompt();
       setLoading(false);
@@ -499,33 +493,24 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected, onSess
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(url(API.settings.root), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
-      });
-      const data = await res.json();
-      if (data.success) {
-        const savedSettings = { ...settings };
-        if ('sessionTabLimit' in savedSettings) {
-          savedSettings.sessionTabLimit = normalizeSessionTabLimit(savedSettings.sessionTabLimit);
-          setSettings(savedSettings);
-          onSessionTabLimitChange?.(savedSettings.sessionTabLimit);
-        }
-        baselineRef.current = JSON.stringify(savedSettings);
-        setSaved(data.deferred ? 'deferred' : true);
-        // Refresh the effective prompt after saving, but only show it on request.
-        if ('summaryPromptExtra' in settings || 'summaryPromptGuardTokens' in settings) {
-          await fetchSummaryPrompt();
-        }
-        // Banner is transient — the SSE-reconnect reset below only covers
-        // backend restarts; a non-deferred save would otherwise stick forever.
-        setTimeout(() => setSaved(null), data.deferred ? 8000 : 4000);
-      } else {
-        setError(data.error || 'Failed to save settings');
+      const data = await apiBody(API.settings.root, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(settings) });
+      const savedSettings = { ...settings };
+      if ('sessionTabLimit' in savedSettings) {
+        savedSettings.sessionTabLimit = normalizeSessionTabLimit(savedSettings.sessionTabLimit);
+        setSettings(savedSettings);
+        onSessionTabLimitChange?.(savedSettings.sessionTabLimit);
       }
-    } catch {
-      setError('Failed to save settings');
+      baselineRef.current = JSON.stringify(savedSettings);
+      setSaved(data.deferred ? 'deferred' : true);
+      // Refresh the effective prompt after saving, but only show it on request.
+      if ('summaryPromptExtra' in settings || 'summaryPromptGuardTokens' in settings) {
+        await fetchSummaryPrompt();
+      }
+      // Banner is transient — the SSE-reconnect reset below only covers
+      // backend restarts; a non-deferred save would otherwise stick forever.
+      setTimeout(() => setSaved(null), data.deferred ? 8000 : 4000);
+    } catch (err: any) {
+      setError(err.message || 'Failed to save settings');
     } finally {
       setSaving(false);
     }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { url } from '../base-path';
 import { API } from '../api-paths';
 import { renderEditDiff } from './ChatMessage';
+import { apiJSON } from '../api';
 
 interface FileChange {
   ts: number;
@@ -126,18 +126,15 @@ export const ChangesPage: React.FC<ChangesPageProps> = ({ sessionId, initialFile
     if (!sessionId) return;
     setLoading(true);
     setError(null);
-    fetch(url(API.sessions.fileChanges(sessionId)))
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.success) {
-          setChanges(d.data);
-          if (d.data.length > 0) {
-            // Deep link first: the linked file if it still has changes,
-            // otherwise the newest change's file (default state fallback).
-            const linked = initialFile ? d.data.find((c: FileChange) => c.path === initialFile) : null;
-            setSelectedFile((linked ?? d.data[d.data.length - 1]).path);
-          }
-        } else setError(d.error || 'Failed to load');
+    apiJSON<FileChange[]>(API.sessions.fileChanges(sessionId))
+      .then((list) => {
+        setChanges(list);
+        if (list.length > 0) {
+          // Deep link first: the linked file if it still has changes,
+          // otherwise the newest change's file (default state fallback).
+          const linked = initialFile ? list.find((c) => c.path === initialFile) : null;
+          setSelectedFile((linked ?? list[list.length - 1]).path);
+        }
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));

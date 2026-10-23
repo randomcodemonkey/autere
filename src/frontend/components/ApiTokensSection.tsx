@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { url } from '../base-path';
 import { API } from '../api-paths';
 import { DataTable } from './DataTable';
+import { apiJSON, apiSend } from '../api';
 
 interface ApiToken {
   id: string;
@@ -26,16 +26,9 @@ export const ApiTokensSection: React.FC = () => {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(url(API.tokens.list));
-      if (!res.ok) {
-        setError(`Failed to load tokens (HTTP ${res.status})`);
-        return;
-      }
-      const json: any = await res.json();
-      if (json.success) setTokens(json.data || []);
-      else setError(json.error || 'Failed to load tokens');
-    } catch (err) {
-      setError(`Failed to load tokens: ${err}`);
+      setTokens(await apiJSON<any[]>(API.tokens.list) || []);
+    } catch (err: any) {
+      setError(`Failed to load tokens: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -48,20 +41,10 @@ export const ApiTokensSection: React.FC = () => {
     if (!n) return;
     setError(null);
     try {
-      const res = await fetch(url(API.tokens.list), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: n }),
-      });
-      if (!res.ok) { setError(`Failed to create token (HTTP ${res.status})`); return; }
-      const json = await res.json();
-      if (json.success) {
-        setCreated(json.data.token);
-        setName('');
-        await load();
-      } else {
-        setError(json.error || 'Failed to create token');
-      }
+      const created = await apiSend<{ token: string }>(API.tokens.list, 'POST', { name: n });
+      setCreated(created.token);
+      setName('');
+      await load();
     } catch (err) {
       setError(`Failed to create token: ${err}`);
     }
@@ -69,13 +52,10 @@ export const ApiTokensSection: React.FC = () => {
 
   const remove = async (id: string) => {
     try {
-      const res = await fetch(url(API.tokens.item(id)), { method: 'DELETE' });
-      if (!res.ok) { setError(`Failed to delete token (HTTP ${res.status})`); return; }
-      const json = await res.json();
-      if (json.success) await load();
-      else setError(json.error || 'Failed to delete token');
-    } catch (err) {
-      setError(`Failed to delete token: ${err}`);
+      await apiSend(API.tokens.item(id), 'DELETE');
+      await load();
+    } catch (err: any) {
+      setError(`Failed to delete token: ${err.message}`);
     }
   };
 

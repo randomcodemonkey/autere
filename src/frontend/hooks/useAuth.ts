@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
-import { url } from '../base-path';
 import { applyTheme } from '../theme';
 import { API } from '../api-paths';
+import { apiJSON, apiBody, apiSend, JSON_HEADERS } from '../api';
 
 export function useAuth() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -13,9 +13,8 @@ export function useAuth() {
 
   const checkAuthStatus = useCallback(async (): Promise<boolean> => {
     try {
-      const res = await fetch(url(API.auth.status));
-      const data = await res.json();
-      if (data.success && data.data.authEnabled && !data.data.authenticated) {
+      const data = await apiJSON<any>(API.auth.status);
+      if (data.authEnabled && !data.authenticated) {
         setAuthEnabled(true);
         setAuthenticated(false);
         setUserRole(null);
@@ -23,11 +22,11 @@ export function useAuth() {
         setMustChangePassword(false);
         return false;
       }
-      setAuthEnabled(data.data.authEnabled);
+      setAuthEnabled(data.authEnabled);
       setAuthenticated(true);
-      setUserRole(data.data.role || null);
-      setUsername(data.data.user || null);
-      setMustChangePassword(!!data.data.mustChangePassword);
+      setUserRole(data.role || null);
+      setUsername(data.user || null);
+      setMustChangePassword(!!data.mustChangePassword);
       applyTheme(data.data.theme); // per-user theme, persisted server-side
       return true;
     } catch {
@@ -46,39 +45,29 @@ export function useAuth() {
       return false;
     }
     try {
-      const res = await fetch(url(API.auth.login), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user, password }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setAuthenticated(true);
-        // Set the forced-change flag from the login response itself, in the
-        // same batch as `authenticated`. Otherwise App renders <Routes> for
-        // one tick with mustChangePassword still false, RootRedirect fires
-        // GET /sessions (403 under the change gate) and lands on the
-        // fallback /session/- — which then persists past the password change.
-        setMustChangePassword(!!data.mustChangePassword);
-        setLoginError('');
-        // The login response doesn't carry user info (username/role) —
-        // fetch it now, otherwise the status modal shows '—' after a
-        // logout-login cycle.
-        await checkAuthStatus();
-        return true;
-      } else {
-        setLoginError(data.error || 'Login failed');
-        return false;
-      }
-    } catch {
-      setLoginError('Connection error');
+      const data = await apiBody(API.auth.login, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ user, password }) });
+      setAuthenticated(true);
+      // Set the forced-change flag from the login response itself, in the
+      // same batch as `authenticated`. Otherwise App renders <Routes> for
+      // one tick with mustChangePassword still false, RootRedirect fires
+      // GET /sessions (403 under the change gate) and lands on the
+      // fallback /session/- — which then persists past the password change.
+      setMustChangePassword(!!data.mustChangePassword);
+      setLoginError('');
+      // The login response doesn't carry user info (username/role) —
+      // fetch it now, otherwise the status modal shows '—' after a
+      // logout-login cycle.
+      await checkAuthStatus();
+      return true;
+    } catch (err: any) {
+      setLoginError(err.message || 'Connection error');
       return false;
     }
   }, [checkAuthStatus]);
 
   const logout = useCallback(async () => {
     try {
-      await fetch(url(API.auth.logout), { method: 'POST' });
+      await apiSend(API.auth.logout, 'POST');
     } catch {}
     setAuthenticated(false);
   }, []);

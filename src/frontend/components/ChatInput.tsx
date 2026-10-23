@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useState, useRef, useCallback, useEffect } from 'react';
-import { url } from '../base-path';
 import { API } from '../api-paths';
+import { apiJSON, JSON_HEADERS } from '../api';
 
 // CodeMirror markdown editor loads as a separate chunk — it's only used on
 // desktop, and the initial bundle stays lean.
@@ -258,33 +258,27 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
       // the input stays disabled forever and only a UI reload recovers.
       const abort = new AbortController();
       const timeout = window.setTimeout(() => abort.abort(), 20_000);
-      let res: Response;
       try {
-        res = await fetch(url(API.session.messages), {
+        await apiJSON(API.session.messages, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: JSON_HEADERS,
           body: JSON.stringify({ message: text, type, sessionId, ...(images.length > 0 ? { images } : {}) }),
           signal: abort.signal,
         });
       } finally {
         window.clearTimeout(timeout);
       }
-      const data = await res.json();
-      if (data.success) {
-        updateValue('');
-        setImages([]);
-        onSent?.(text, type, sessionId);
-        // Collapse the expanded input and release focus so the UI returns to
-        // the compact one-row state after sending (Enter submit included).
-        setFocused(false);
-        if (USE_MARKDOWN_EDITOR) editorApiRef.current?.blur();
-        else editAreaRef.current?.blur();
-        if (editAreaRef.current) editAreaRef.current.style.height = '';
-        // On mobile, force the browser to recalculate layout after keyboard dismisses
-        requestAnimationFrame(() => window.scrollTo(0, 0));
-      } else {
-        onError?.(data.error || 'Failed to send message.');
-      }
+      updateValue('');
+      setImages([]);
+      onSent?.(text, type, sessionId);
+      // Collapse the expanded input and release focus so the UI returns to
+      // the compact one-row state after sending (Enter submit included).
+      setFocused(false);
+      if (USE_MARKDOWN_EDITOR) editorApiRef.current?.blur();
+      else editAreaRef.current?.blur();
+      if (editAreaRef.current) editAreaRef.current.style.height = '';
+      // On mobile, force the browser to recalculate layout after keyboard dismisses
+      requestAnimationFrame(() => window.scrollTo(0, 0));
     } catch (err) {
       console.error('Send error:', err);
       onError?.('Failed to send message.');
@@ -344,8 +338,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
     // Kick off the persona-name fetch for /persona tab completion
     if (e.key === 'Tab' && value.startsWith('/persona') && personaNamesRef.current === null) {
       personaNamesRef.current = []; // sentinel while loading
-      fetch(url(API.personas.root)).then((r) => r.json()).then((d) => {
-        personaNamesRef.current = (d?.data ?? []).map((x: { id: string; name: string }) => x.name);
+      apiJSON<{ name: string }[]>(API.personas.root).then((list) => {
+        personaNamesRef.current = (list ?? []).map((x) => x.name);
       }).catch(() => { personaNamesRef.current = []; });
     }
     if (e.key === 'Enter' && !e.shiftKey) {

@@ -10,8 +10,8 @@ import { renderEditDiff } from './ChatMessage';
 import * as monaco from 'monaco-editor/editor/editor.api.js';
 import 'monaco-editor/basic-languages/monaco.contribution.js';
 import editorWorker from 'monaco-editor/editor/editor.worker.js?worker';
-import { url } from '../base-path';
 import { API, API_PREFIX } from '../api-paths';
+import { apiJSON, apiJSON as api } from '../api';
 import { ChangesPage } from './ChangesPage';
 
 // Self-hosted monaco (no CDN). Language workers beyond the base editor
@@ -53,14 +53,12 @@ interface TreeRow {
   expanded: boolean;
 }
 
-async function api(rel: string, opts?: RequestInit): Promise<any> {
-  const res = await fetch(url(rel), opts);
-  const d = await res.json().catch(() => ({ success: false, error: `HTTP ${res.status}` }));
-  if (!res.ok || !d.success) throw new Error(d.error || `HTTP ${res.status}`);
-  return d.data;
-}
-
 const parentDir = (p: string) => p.slice(0, p.lastIndexOf('/')) || p;
+
+// Files search walk budget: one browse/list request per directory, so this is
+// really a request cap. Enough for a large monorepo, far from a keystroke storm.
+const SEARCH_MAX_DIRS = 1500;
+const SEARCH_MAX_MATCHES = 500;
 
 // Repositories mode lists through the git scope (configured folders are
 // reachable even outside the allowedDirs file roots), Files through browse.
@@ -818,9 +816,8 @@ export const EditsPage: React.FC<EditsPageProps> = ({ sessionId, userRole }) => 
   useEffect(() => {
     // Session-modified files → highlighted in the file tree
     if (!sessionId) { setChangedPaths([]); return; }
-    fetch(url(API.sessions.fileChanges(sessionId)))
-      .then((r) => r.json())
-      .then((d: any) => setChangedPaths((d.data ?? []).map((e: any) => e.path).filter(Boolean)))
+    apiJSON<any[]>(API.sessions.fileChanges(sessionId))
+      .then((list: any[]) => setChangedPaths((list ?? []).map((e) => e.path).filter(Boolean)))
       .catch(() => setChangedPaths([]));
   }, [sessionId]);
   return (

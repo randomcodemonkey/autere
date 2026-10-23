@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { API } from '../../shared/api-paths';
-import { url } from '../base-path';
 import { THEMES, applyTheme, activeTheme, type ThemeId } from '../theme';
+import { apiSend } from '../api';
 
 /**
  * Self-service card for non-admin users: change their UI theme and their
@@ -19,15 +19,10 @@ export function UserCard({ username }: { username: string | null }) {
     setTheme(id);
     applyTheme(id); // immediate visual feedback
     try {
-      const res = await fetch(url(API.auth.theme), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ theme: id }),
-      });
-      const data = await res.json();
-      setThemeMsg(data.success ? '' : data.error || 'Theme save failed');
-    } catch {
-      setThemeMsg('Theme save failed');
+      await apiSend(API.auth.theme, 'PUT', { theme: id });
+      setThemeMsg('');
+    } catch (err: any) {
+      setThemeMsg(err.message || 'Theme save failed');
     }
   };
 
@@ -35,20 +30,11 @@ export function UserCard({ username }: { username: string | null }) {
     setPwMsg('');
     if (newPw !== confirm) { setPwMsg('Passwords do not match'); return; }
     try {
-      const res = await fetch(url(API.auth.changePassword), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setPwMsg('Password updated');
-        setOldPw(''); setNewPw(''); setConfirm('');
-      } else {
-        setPwMsg(data.error || 'Password change failed');
-      }
-    } catch {
-      setPwMsg('Password change failed');
+      await apiSend(API.auth.changePassword, 'POST', { oldPassword: oldPw, newPassword: newPw });
+      setPwMsg('Password updated');
+      setOldPw(''); setNewPw(''); setConfirm('');
+    } catch (err: any) {
+      setPwMsg(err.message || 'Password change failed');
     }
   };
 

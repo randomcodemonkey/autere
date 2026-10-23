@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Modal } from './Modal';
-import { url } from '../base-path';
 import { API } from '../api-paths';
 import type { ManagedUser, AllowedDir, DirAccess } from '../types';
 import { DataTable } from './DataTable';
+import { apiJSON, apiSend } from '../api';
 
-const JSON_HEADERS = { 'Content-Type': 'application/json' };
 const ROLES: ManagedUser['role'][] = ['chat', 'control', 'admin'];
 
 interface DirEditorProps {
@@ -202,12 +201,9 @@ export const UsersCard: React.FC<{ username: string | null }> = ({ username }) =
 
   const reload = useCallback(async () => {
     try {
-      const res = await fetch(url(API.users.list));
-      const data = await res.json();
-      if (data.success) setUsers(data.data || []);
-      else setError(data.error || 'Failed to load users');
-    } catch {
-      setError('Failed to load users');
+      setUsers(await apiJSON<any[]>(API.users.list) || []);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load users');
     }
   }, []);
 
@@ -215,29 +211,21 @@ export const UsersCard: React.FC<{ username: string | null }> = ({ username }) =
 
   const save = useCallback(async (u: any, isNew: boolean): Promise<string | null> => {
     try {
-      const res = await fetch(url(isNew ? API.users.list : API.users.item(u.username)), {
-        method: isNew ? 'POST' : 'PUT',
-        headers: JSON_HEADERS,
-        body: JSON.stringify(u),
-      });
-      const data = await res.json();
-      if (!data.success) return data.error || 'Failed to save user';
+      await apiSend(isNew ? API.users.list : API.users.item(u.username), isNew ? 'POST' : 'PUT', u);
       await reload();
       return null;
-    } catch {
-      return 'Failed to save user';
+    } catch (err: any) {
+      return err.message || 'Failed to save user';
     }
   }, [reload]);
 
   const remove = useCallback(async (name: string) => {
     if (!confirm(`Delete user "${name}"? Their sessions will be stopped.`)) return;
     try {
-      const res = await fetch(url(API.users.item(name)), { method: 'DELETE' });
-      const data = await res.json();
-      if (!data.success) setError(data.error || 'Failed to delete user');
-      else await reload();
-    } catch {
-      setError('Failed to delete user');
+      await apiSend(API.users.item(name), 'DELETE');
+      await reload();
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete user');
     }
   }, [reload]);
 

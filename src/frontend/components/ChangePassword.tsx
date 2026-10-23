@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { url } from '../base-path';
 import { API } from '../api-paths';
+import { apiSend } from '../api';
 
 interface ChangePasswordProps {
   username: string | null;
@@ -25,19 +25,10 @@ export const ChangePasswordScreen: React.FC<ChangePasswordProps> = ({ username, 
     }
     setBusy(true);
     try {
-      const res = await fetch(url(API.auth.changePassword), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ oldPassword: current, newPassword: next }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        onSuccess();
-      } else {
-        setError(data.error || 'Failed to change password');
-      }
-    } catch {
-      setError('Connection error');
+      await apiSend(API.auth.changePassword, 'POST', { oldPassword: current, newPassword: next });
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message || 'Connection error');
     } finally {
       setBusy(false);
     }
