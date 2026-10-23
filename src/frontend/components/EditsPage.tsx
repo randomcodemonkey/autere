@@ -500,13 +500,15 @@ const FileBrowser: React.FC<{
       const matchedDirs = new Set<string>();
       const dirs = new Set<string>();
       let visited = 0, running = 0;
-      const CONC = 8, CAP = 10000;
+      // Bounded walk: one list request per directory, so the cap is really a
+      // request budget (SEARCH_MAX_DIRS / SEARCH_MAX_MATCHES, module-level).
+      const CONC = 6, CAP = SEARCH_MAX_DIRS, MAX_MATCHES = SEARCH_MAX_MATCHES;
       const isDirMatch = (p: string) => p.toLowerCase() === qd || p.toLowerCase().endsWith('/' + qd);
       const queue: string[] = roots.map((r) => r.path);
       await new Promise<void>((resolve) => {
         const pump = () => {
-          if (running === 0 && (queue.length === 0 || visited >= CAP)) return resolve();
-          while (running < CONC && queue.length > 0 && visited < CAP) {
+          if (running === 0 && (queue.length === 0 || visited >= CAP || found.size >= MAX_MATCHES)) return resolve();
+          while (running < CONC && queue.length > 0 && visited < CAP && found.size < MAX_MATCHES) {
             const dir = queue.shift()!;
             visited++; running++;
             fetchDir(dir);
@@ -599,7 +601,7 @@ const FileBrowser: React.FC<{
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          {scanning ? <span className="search-scan" /> : searching && matches!.size > 0 && <span className="changes-count">{matches!.size}</span>}
+          {scanning ? <span className="search-scan" /> : searching && matches!.size > 0 && <span className="changes-count">{matches!.size >= SEARCH_MAX_MATCHES ? `${SEARCH_MAX_MATCHES}+` : matches!.size}</span>}
         </div>
         <div className="files-tree-list">
           {roots.length === 0 && !searching && !error && (
