@@ -176,6 +176,7 @@ export type SSEEventType =
   | 'extensions'
   | 'models'
   | 'sessions'
+  | 'tasks'
   | 'new_session_creating'
   | 'navigate'
   | 'error'

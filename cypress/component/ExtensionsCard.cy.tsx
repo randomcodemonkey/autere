@@ -82,18 +82,17 @@ describe('ExtensionsCard', () => {
     cy.get('.card').should('have.class', 'collapsed');
   });
 
-  it('polls /api/v1/extensions while the detail modal is open, not when closed', () => {
+  it('refetches /api/v1/extensions on mount and when the detail modal opens, without polling', () => {
     cy.clock();
     const stub = cy.stub(window, 'fetch').callsFake(() =>
       Promise.resolve({ json: () => Promise.resolve({ success: true, data: [ext({})] }) } as any));
     cy.mount(<ExtensionsCard extensions={[ext({ status: 'neutral', statusText: '' })]} />);
+    cy.tick(7000);
+    cy.wrap(stub).its('callCount').should('eq', 1); // mount only — no interval
     cy.get('.ext-header').click();
-    cy.tick(7000); // initial fetch + ≥2 polls
-    cy.wrap(stub).its('callCount').should('be.gte', 3);
-    let afterClose = 0;
-    cy.get('.modal-close').click().then(() => { afterClose = stub.callCount; });
+    cy.wrap(stub).its('callCount').should('eq', 2); // opening the modal refetches
     cy.tick(9000);
-    cy.wrap(null).should(() => expect(stub.callCount).to.eq(afterClose));
+    cy.wrap(stub).its('callCount').should('eq', 2); // still no poll
   });
 
   it('shows per-user stats from /api/v1/extensions instead of the zero placeholders', () => {

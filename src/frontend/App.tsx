@@ -21,10 +21,14 @@ function App() {
   // Mutable ref for the active page's SSE handler.
   const pageHandlerRef = useRef<(msg: SSEMessage) => void>(() => {});
 
+  // Scheduler pushes 'tasks' when a run starts/finishes (payload-free marker);
+  // the counter lets the tasks card refetch instead of polling.
+  const [tasksVersion, setTasksVersion] = useState(0);
   const handleSSEMessage = useCallback((msg: SSEMessage) => {
     if (restartingRef.current && msg.type === 'status' && msg.data?.sessionId) {
       setRestarting(false);
     }
+    if (msg.type === 'tasks') setTasksVersion((v) => v + 1);
     pageHandlerRef.current(msg);
   }, []);
 
@@ -108,6 +112,7 @@ function App() {
             setRestarting={setRestarting}
             sseDisconnect={sseDisconnect}
             sseConnect={sseConnect}
+            tasksVersion={tasksVersion}
           />
         } />
         <Route path="/settings" element={<RootRedirect />} />

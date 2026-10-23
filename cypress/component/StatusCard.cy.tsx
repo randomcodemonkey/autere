@@ -17,6 +17,8 @@ function mountCard(props: Partial<Parameters<typeof StatusCard>[0]> = {}) {
   cy.mount(
     <StatusCard
       statusType="connected"
+      connected
+      sessionStartedAt={null}
       messageCount={3}
       requestCount={1}
       stats={{ tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, cost: 0, contextUsage: null }}

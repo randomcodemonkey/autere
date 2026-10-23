@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AgentCard } from './AgentCard';
 import { useCardState } from '../hooks/useCardState';
-import { url } from '../base-path';
 import { API } from '../api-paths';
+import { apiJSON } from '../api';
 import type {
   SessionStats,
   ExtensionInfo,
@@ -11,6 +11,10 @@ import type {
 
 interface StatusCardProps {
   statusType: string;
+  /** SSE connection — a (re)connect means the backend may have restarted */
+  connected: boolean;
+  /** Viewed pi process start time — changes when the process is respawned */
+  sessionStartedAt: number | null;
   // Stats / cards
   messageCount: number;
   requestCount: number;
@@ -86,6 +90,8 @@ function formatUptime(startedAt: number | null, now: number): string {
 export const StatusCard: React.FC<StatusCardProps> = ({
 
   statusType,
+  connected,
+  sessionStartedAt,
   messageCount,
   requestCount,
   stats,
@@ -114,30 +120,27 @@ export const StatusCard: React.FC<StatusCardProps> = ({
 
   const { collapsed: systemCollapsed, toggle: toggleSystem } = useCardState('system');
 
-  // ── Uptime (polled; computed locally between polls) ──
+  // ── Uptime (fetched on mount / reconnect / pi restart, ticked locally) ──
+  // No poll: the two timestamps only change when autere or the pi process
+  // restarts, and both of those are visible as an SSE transition here.
   const [uptime, setUptime] = useState<UptimeInfo>(EMPTY_UPTIME);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (!connected) return;
     let cancelled = false;
-    const fetchStatus = () => {
-      fetch(url(API.status))
-        .then((res) => res.json())
-        .then((data) => {
-          if (!cancelled && data.success && data.data) {
-            setUptime(data.data);
-            setNow(Date.now());
-          }
-        })
-        .catch((err) => console.error('Failed to fetch status:', err));
-    };
-    fetchStatus();
-    const poll = setInterval(fetchStatus, 5000);
+    apiJSON<UptimeInfo>(API.status)
+      .then((data) => {
+        if (!cancelled && data) {
+          setUptime(data);
+          setNow(Date.now());
+        }
+      })
+      .catch((err) => console.error('Failed to fetch status:', err));
+    return () => { cancelled = true; };
+  }, [connected, sessionStartedAt]);
+  useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(poll);
-      clearInterval(tick);
-    };
+    return () => clearInterval(tick);
   }, []);
 
   return (

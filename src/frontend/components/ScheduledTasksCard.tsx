@@ -1,12 +1,12 @@
-import React, { Fragment, useState, useEffect, useCallback, useRef } from 'react';
+import React, { Fragment, useState, useEffect, useCallback } from 'react';
 import { DataTable } from './DataTable';
 import { Modal } from './Modal';
 import { SortableList } from './SortableList';
-import { url } from '../base-path';
 import { API } from '../api-paths';
 import { validateCron, describeCron } from '../../shared/cron';
 import type { ScheduledTask, TaskRunRecord, TaskRunLog } from '../types';
 import { canRunTaskScripts } from '../../shared/tasks';
+import { apiJSON, apiSend } from '../api';
 
 interface TaskModelOption {
   provider: string;
@@ -17,6 +17,8 @@ interface TaskModelOption {
 interface ScheduledTasksCardProps {
   sseConnected: boolean;
   userRole: string | null;
+  /** Bumped by the scheduler's 'tasks' SSE event (run started/finished) */
+  tasksVersion?: number;
 }
 
 interface TaskFormState {
@@ -63,7 +65,7 @@ function formatDuration(rec: TaskRunRecord): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConnected, userRole = 'admin' }) => {
+export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConnected, userRole = 'admin', tasksVersion = 0 }) => {
   const canUseScripts = canRunTaskScripts(userRole);
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [runs, setRuns] = useState<TaskRunRecord[]>([]);
@@ -78,22 +80,15 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
   const [query, setQuery] = useState('');
   const [sortBy, setSortBy] = useState<'lastrun' | 'name' | 'created'>('lastrun');
 
-  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch(url(API.scheduler.tasks));
-      const data = await res.json();
-      if (data.success) {
-        setTasks(data.data.tasks || []);
-        setRuns(data.data.runs || []);
-        const active = new Set<string>(
-          (data.data.runs || [])
-            .filter((r: TaskRunRecord) => r.status === 'running')
-            .map((r: TaskRunRecord) => r.taskId),
-        );
-        setRunningTaskIds(active);
-      }
+      const data = await apiJSON<{ tasks?: ScheduledTask[]; runs?: TaskRunRecord[] }>(API.scheduler.tasks);
+      setTasks(data.tasks || []);
+      setRuns(data.runs || []);
+      const active = new Set<string>(
+        (data.runs || []).filter((r) => r.status === 'running').map((r) => r.taskId),
+      );
+      setRunningTaskIds(active);
     } catch (err) {
       console.error('Failed to load scheduled tasks:', err);
     } finally {
@@ -101,21 +96,17 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
     }
   }, []);
 
+  // Push-driven: the scheduler emits a 'tasks' event when a run starts or
+  // finishes (tasksVersion), and mount / reconnect fetches current state.
+  // No interval — an idle card costs nothing.
   useEffect(() => {
     refresh();
-    pollTimer.current = setInterval(refresh, 3000);
-    return () => {
-      if (pollTimer.current) clearInterval(pollTimer.current);
-    };
-  }, [refresh]);
+  }, [refresh, sseConnected, tasksVersion]);
 
   // Model options for the per-task model selector
   useEffect(() => {
-    fetch(url(API.session.models))
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.success && Array.isArray(data.data)) setModels(data.data);
-      })
+    apiJSON<any[]>(API.session.models)
+      .then((list) => { if (Array.isArray(list)) setModels(list); })
       .catch(() => {});
   }, [sseConnected]);
 
@@ -163,13 +154,10 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
     setError(null);
     const workdirs = form.workdirs.filter(Boolean);
     try {
-      const endpoint = form.id
-        ? url(API.scheduler.task(form.id))
-        : url(API.scheduler.tasks);
-      const res = await fetch(endpoint, {
-        method: form.id ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await apiSend(
+        form.id ? API.scheduler.task(form.id) : API.scheduler.tasks,
+        form.id ? 'PUT' : 'POST',
+        {
           name: form.name,
           schedule: form.schedule,
           prompt: form.prompt,
@@ -181,17 +169,12 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
           reuseSession: form.reuseSession,
           clearSession: form.reuseSession && form.clearSession,
           saveLastSession: form.saveLastSession,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setForm(null);
-        await refresh();
-      } else {
-        setError(data.error || 'Failed to save task');
-      }
-    } catch (err) {
-      setError(`Failed to save task: ${err}`);
+        },
+      );
+      setForm(null);
+      await refresh();
+    } catch (err: any) {
+      setError(`Failed to save task: ${err.message}`);
     } finally {
       setSaving(false);
     }
@@ -201,9 +184,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
     if (!confirm(`Delete scheduled task "${task.name}"? Its run logs are removed too.`)) return;
     setError(null);
     try {
-      const res = await fetch(url(API.scheduler.task(task.id)), { method: 'DELETE' });
-      const data = await res.json();
-      if (!data.success) setError(data.error || 'Failed to delete task');
+      await apiSend(API.scheduler.task(task.id), 'DELETE');
       await refresh();
     } catch (err) {
       setError(`Failed to delete task: ${err}`);
@@ -214,18 +195,17 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
     setError(null);
     setRunningTaskIds(prev => new Set(prev).add(task.id));
     try {
-      const res = await fetch(url(API.scheduler.taskRun(task.id)), { method: 'POST' });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.error || 'Failed to run task');
+      try {
+        await apiSend(API.scheduler.taskRun(task.id), 'POST');
+        setExpandedTaskId(task.id);
+        refresh();
+      } catch (err: any) {
+        setError(err.message || 'Failed to run task');
         setRunningTaskIds(prev => {
           const next = new Set(prev);
           next.delete(task.id);
           return next;
         });
-      } else {
-        setExpandedTaskId(task.id);
-        refresh();
       }
     } catch (err) {
       setError(`Failed to run task: ${err}`);
@@ -234,10 +214,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
 
   const handleViewLog = useCallback(async (rec: TaskRunRecord) => {
     try {
-      const res = await fetch(url(API.scheduler.runLog(rec.taskId, rec.runId)));
-      const data = await res.json();
-      if (data.success) setViewLog(data.data);
-      else setError(data.error || 'Failed to load run log');
+      setViewLog(await apiJSON(API.scheduler.runLog(rec.taskId, rec.runId)));
     } catch (err) {
       setError(`Failed to load run log: ${err}`);
     }
@@ -250,9 +227,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
     if (!confirm('Delete all one-off tasks older than 1 day?')) return;
     setError(null);
     try {
-      const res = await fetch(url(API.scheduler.purgeOneOff), { method: 'DELETE' });
-      const data = await res.json();
-      if (!data.success) setError(data.error || 'Failed to delete old one-off tasks');
+      await apiSend(API.scheduler.purgeOneOff, 'DELETE');
       await refresh();
     } catch (err) {
       setError(`Failed to delete old one-off tasks: ${err}`);

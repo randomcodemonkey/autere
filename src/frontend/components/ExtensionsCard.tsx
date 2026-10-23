@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useCardState } from '../hooks/useCardState';
 import { Modal } from './Modal';
-import { url } from '../base-path';
 import { API } from '../api-paths';
 import type { ExtensionInfo } from '../types';
 import type { ExtensionSection } from '../types';
 import { formatTimestamp } from './ChatMessage';
+import { apiJSON } from '../api';
 
 /** Clock time today, date + time otherwise — for last-active stamps. */
 const formatLastActive = (ts?: number): string => {
@@ -30,27 +30,15 @@ export const ExtensionsCard: React.FC<ExtensionsCardProps> = ({ extensions }) =>
   // per-request injection point for the real stats.
   const [patched, setPatched] = useState<ExtensionInfo[] | null>(null);
   const fetchPatched = useCallback(() => {
-    fetch(url(API.extensions.root))
-      .then((r) => r.json())
-      .then((res) => {
-        if (res?.success && Array.isArray(res.data)) setPatched(res.data);
-      })
+    apiJSON<ExtensionInfo[]>(API.extensions.root)
+      .then((list) => { if (Array.isArray(list)) setPatched(list); })
       .catch(() => { /* fall back to the state copy */ });
   }, []);
+  // The backend pushes the extension list when it changes, and re-enriches
+  // handler stats on a short TTL — refetching on open is enough, no poll.
   useEffect(() => {
     fetchPatched();
-  }, [extensions, fetchPatched]);
-
-  // Janitor sweeps / dedup elisions write their stats files server-side with
-  // no push event — poll while the detail modal is open so the numbers
-  // (and the session rows) update without a UI reload. Stats change on turn
-  // boundaries, so 3s granularity is plenty.
-  const modalOpen = modalIdx !== null;
-  useEffect(() => {
-    if (!modalOpen) return;
-    const t = setInterval(fetchPatched, 3000);
-    return () => clearInterval(t);
-  }, [modalOpen, fetchPatched]);
+  }, [extensions, fetchPatched, modalIdx]);
   const list = patched ?? extensions;
 
   // Extensions with a known runtime status — surfaced as counts in the

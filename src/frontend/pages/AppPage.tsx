@@ -13,8 +13,9 @@ import { StreamCard } from '../components/StreamCard';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { Modal } from '../components/Modal';
 import { SessionView, workdirsUnsaved, acknowledgeWorkdirsDirty } from '../components/SessionModal';
-import { url, basePath } from '../base-path';
+import { basePath } from '../base-path';
 import { API } from '../api-paths';
+import { apiJSON, apiBody, apiSend, JSON_HEADERS } from '../api';
 import { uiSessionName } from '../session-name';
 import { useSessionStream } from '../hooks/useSessionStream';
 import type { SSEMessage, SessionInfo } from '../types';
@@ -70,6 +71,8 @@ interface AppPageProps {
   setRestarting: (v: boolean) => void;
   sseDisconnect: () => void;
   sseConnect: () => void;
+  /** Counter bumped by the scheduler's 'tasks' SSE event */
+  tasksVersion: number;
 }
 
 export function AppPage({
@@ -85,6 +88,7 @@ export function AppPage({
   setRestarting,
   sseDisconnect,
   sseConnect,
+  tasksVersion,
 }: AppPageProps) {
   const { sessionId: urlSessionId, view } = useParams<{ sessionId?: string; view?: string }>();
   const navigate = useNavigate();
@@ -119,9 +123,9 @@ export function AppPage({
   useEffect(() => {
     if (!authenticated) return;
     let current = true;
-    fetch(url(API.settings.root)).then((res) => res.json()).then((data) => {
-      const limit = Number(data.data?.sessionTabLimit);
-      if (current && data.success && Number.isFinite(limit)) setSessionTabLimit(limit);
+    apiJSON<any>(API.settings.root).then((data) => {
+      const limit = Number(data?.sessionTabLimit);
+      if (current && Number.isFinite(limit)) setSessionTabLimit(limit);
     }).catch(() => {});
     return () => { current = false; };
   }, [authenticated]);
@@ -181,11 +185,7 @@ export function AppPage({
   const handleCancelPending = useCallback(async (text: string) => {
     setPendingUser((prev) => prev.filter((p) => p.text !== text || p.pendingSessionId !== currentSessionId));
     try {
-      await fetch(url(API.session.pending), {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, sessionId: targetSessionRef.current }),
-      });
+      await apiSend(API.session.pending, 'DELETE', { text, sessionId: targetSessionRef.current });
     } catch {}
   }, [setPendingUser, targetSessionRef, currentSessionId]);
 
@@ -201,52 +201,44 @@ export function AppPage({
   const handleActivateSession = useCallback(() => {
     const sid = urlSessionId || sessionState.sessionId;
     if (!sid) return;
-    fetch(url(API.sessions.activate(sid)), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: sid, spawn: true }),
-    }).then((r) => r.json()).then((d) => {
-      if (d.success && d.data) applyBootstrap(d.data);
-    }).catch(() => {});
+    apiSend(API.sessions.activate(sid), 'POST', { sessionId: sid, spawn: true })
+      .then((d) => { if (d) applyBootstrap(d); })
+      .catch(() => {});
   }, [urlSessionId, sessionState.sessionId, applyBootstrap]);
 
   const handleRestart = useCallback(async () => {
     setRestarting(true);
-    try { await fetch(url(API.session.restart), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) }); } catch {}
+    try { await apiSend(API.session.restart, 'POST', { sessionId: targetSessionRef.current }); } catch {}
   }, [setRestarting, targetSessionRef]);
 
   const handleRestartBackend = useCallback(async () => {
     if (!confirm('Restart the entire autere backend? All users will be disconnected.')) return;
     setRestartingBackend(true);
     sseDisconnect();
-    try { await fetch(url(API.backend.restart), { method: 'POST' }); } catch {}
+    try { await apiSend(API.backend.restart, 'POST'); } catch {}
     setTimeout(() => { sseConnect(); }, 4000);
   }, [setRestartingBackend, sseDisconnect, sseConnect]);
 
   const handleAbort = useCallback(async () => {
-    try { await fetch(url(API.session.abort), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) }); } catch {}
+    try { await apiSend(API.session.abort, 'POST', { sessionId: targetSessionRef.current }); } catch {}
   }, [targetSessionRef]);
 
   const handleCompact = useCallback(async () => {
     try {
-      const res = await fetch(url(API.session.compact), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) });
-      const data = await res.json();
-      if (!data.success) setSessionError(data.error || 'Failed to compact');
-    } catch (err) {
+      await apiSend(API.session.compact, 'POST', { sessionId: targetSessionRef.current });
+    } catch (err: any) {
       console.error('Failed to compact:', err);
-      setSessionError('Failed to compact');
+      setSessionError(err.message || 'Failed to compact');
     }
   }, [setSessionError, targetSessionRef]);
 
   const handleAbortCompaction = useCallback(async () => {
     // Confirm lives at the button (SessionModal) — this handler must fire directly.
     try {
-      const res = await fetch(url(API.session.compact), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: targetSessionRef.current }) });
-      const data = await res.json();
-      if (!data.success) setSessionError(data.error || 'Failed to abort compaction');
-    } catch (err) {
+      await apiSend(API.session.compact, 'POST', { sessionId: targetSessionRef.current });
+    } catch (err: any) {
       console.error('Failed to abort compaction:', err);
-      setSessionError('Failed to abort compaction');
+      setSessionError(err.message || 'Failed to abort compaction');
     }
   }, [setSessionError, targetSessionRef]);
 
@@ -264,37 +256,27 @@ export function AppPage({
       return;
     }
     try {
-      const res = await fetch(url(API.session.model), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: hits[0].provider, modelId: hits[0].id, sessionId: sessionState.sessionId }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!data?.success) setSessionError(data?.error || `Failed to switch model to ${name}`);
-    } catch { setSessionError(`Failed to switch model to ${name}`); }
+      await apiSend(API.session.model, 'PUT', { provider: hits[0].provider, modelId: hits[0].id, sessionId: sessionState.sessionId });
+    } catch (err: any) {
+      setSessionError(err.message || `Failed to switch model to ${name}`);
+    }
   }, [models, sessionState.sessionId, setSessionError]);
 
   // '/persona <name>': resolve persona by id or name on the server list and bind
   const handleCommandSetPersona = useCallback(async (name: string) => {
     try {
-      const res = await fetch(url(API.personas.root));
-      const data = await res.json().catch(() => null);
-      const list: { id: string; name: string }[] = data?.data ?? [];
+      const list = await apiJSON<{ id: string; name: string }[]>(API.personas.root);
       const q = name.toLowerCase();
-      const hits = list.filter((x) => x.id.toLowerCase() === q || x.name.toLowerCase() === q);
+      const hits = (list ?? []).filter((x) => x.id.toLowerCase() === q || x.name.toLowerCase() === q);
       if (hits.length !== 1) {
         setSessionError(hits.length === 0 ? `Unknown persona: ${name}` : `Ambiguous persona: ${name} — ${hits.length} matches`);
         return;
       }
-      const put = await fetch(url(API.session.persona), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ personaId: hits[0].id, sessionId: sessionState.sessionId }),
-      });
-      const d = await put.json().catch(() => null);
-      if (d?.success) setSessionState((s) => ({ ...s, persona: d.data?.persona ?? s.persona }));
-      else setSessionError(d?.error || `Failed to set persona to ${name}`);
-    } catch { setSessionError(`Failed to set persona to ${name}`); }
+      const d = await apiSend<any>(API.session.persona, 'PUT', { personaId: hits[0].id, sessionId: sessionState.sessionId });
+      setSessionState((s) => ({ ...s, persona: d?.persona ?? s.persona }));
+    } catch (err: any) {
+      setSessionError(err.message || `Failed to set persona to ${name}`);
+    }
   }, [sessionState.sessionId, setSessionError, setSessionState]);
 
   const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string) => {
@@ -302,9 +284,9 @@ export function AppPage({
     // against the autere backend container's $HOME before spawning.
     setCreatingSession(true);
     setSessionError(null);
-    fetch(url(API.sessions.list), {
+    apiBody(API.sessions.list, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: JSON_HEADERS,
       body: JSON.stringify({
         // The modal form prefills this — browser locale + timezone stay authoritative
         sessionName: (sessionName || '').trim() || uiSessionName(),
@@ -315,9 +297,8 @@ export function AppPage({
         ...(mountDockerSocket ? { mountDockerSocket: true } : {}),
       }),
     })
-      .then(res => res.json())
       .then(data => {
-        if (data.success && data.navigateUrl) {
+        if (data.navigateUrl) {
           const newId = data.navigateUrl.split('/').pop();
           // Navigate directly from the response — no SSE broadcast needed
           setCreatingSession(false);
@@ -335,16 +316,16 @@ export function AppPage({
           // "Clear" flow: the old session is deleted once the client is bound
           // to the new one (the backend refuses deleting the viewed session).
           if (clearSessionId && newId !== clearSessionId) {
-            fetch(url(API.sessions.item(clearSessionId)), { method: 'DELETE' }).catch(() => {});
+            apiSend(API.sessions.item(clearSessionId), 'DELETE').catch(() => {});
           }
-        } else if (!data.success) {
+        } else {
           setCreatingSession(false);
-          setSessionError(data.error || 'Failed to create session');
+          setSessionError('Failed to create session');
         }
       })
-      .catch(() => {
+      .catch((err: any) => {
         setCreatingSession(false);
-        setSessionError('Failed to create session');
+        setSessionError(err?.message || 'Failed to create session');
       });
   }, [navigate, resetSessionUI, setCreatingSession, setSessionError, setSessionState]);
 
@@ -414,6 +395,8 @@ export function AppPage({
         <div className="cards-scroll">
           <StatusCard
             statusType={statusType}
+            connected={sseConnected}
+            sessionStartedAt={sessionState.startTime ?? null}
             messageCount={sessionState.messageCount}
             requestCount={sessionState.requestCount}
             stats={stats}
@@ -471,7 +454,7 @@ export function AppPage({
           )}
           {activeView === 'tasks' && (
             <ErrorBoundary key="v-tasks" name="Scheduled tasks">
-              <ScheduledTasksCard sseConnected={sseConnected} userRole={userRole} />
+              <ScheduledTasksCard sseConnected={sseConnected} userRole={userRole} tasksVersion={tasksVersion} />
             </ErrorBoundary>
           )}
           {activeView === 'edits' && (

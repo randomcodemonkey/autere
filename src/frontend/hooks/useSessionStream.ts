@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { url } from '../base-path';
 import { API } from '../api-paths';
+import { apiJSON, apiSend } from '../api';
 import type {
   SessionState,
   SessionStats,
   StreamMessage,
-  ActiveTool,
-  RecentTool,
   ExtensionInfo,
   AvailableModel,
   SessionInfo,
@@ -70,8 +68,6 @@ export function useSessionStream(opts: {
   // Optimistic user messages: shown immediately after a successful send,
   // removed once the backend broadcast carries the same text.
   const [pendingUser, setPendingUser] = useState<StreamMessage[]>([]);
-  const [, setActiveTools] = useState<ActiveTool[]>([]);
-  const [, setRecentTools] = useState<RecentTool[]>([]);
   const [extensions, setExtensions] = useState<ExtensionInfo[]>([]);
   const [models, setModels] = useState<AvailableModel[]>([]);
   const [availableSessions, setAvailableSessions] = useState<SessionInfo[]>([]);
@@ -84,21 +80,6 @@ export function useSessionStream(opts: {
   // Label distinguishes a user-initiated switch ("Switching session…") from
   // a load-time restore via URL / reload ("Loading session…").
   const [switchLabel, setSwitchLabel] = useState('Switching session…');
-
-  // Header quick-switch tabs need fresh active/streaming flags; 'sessions'
-  // SSE broadcasts only fire on some actions, so poll the session list.
-  useEffect(() => {
-    if (!authenticated) return;
-    let timer: number | undefined;
-    const poll = () => {
-      fetch(url(API.sessions.list)).then(r => r.json()).then(d => {
-        if (d.success) { setAvailableSessions(d.data); setSessionsLoaded(true); }
-      }).catch(() => {});
-      timer = window.setTimeout(poll, 5000);
-    };
-    poll();
-    return () => clearTimeout(timer);
-  }, [authenticated]);
 
   // Correctness guard for backend-death staleness: when the SSE base status
   // settles on 'disconnected' (backend killed, restart pending), no one can
@@ -138,8 +119,6 @@ export function useSessionStream(opts: {
     setStreamHistory([]);
     setPendingUser([]);
     setStats(EMPTY_STATS);
-    setActiveTools([]);
-    setRecentTools([]);
   }, []);
 
   const flushPendingDelta = useCallback(() => {
@@ -345,16 +324,6 @@ export function useSessionStream(opts: {
         setAvailableSessions(msg.data || []);
         setSessionsLoaded(true);
         break;
-      case 'tool_start':
-        setActiveTools((prev) => {
-          const tool = msg.data;
-          return [...prev, { id: tool.id, name: tool.name, cmd: tool.cmd, args: {}, startTime: Date.now() }];
-        });
-        break;
-      case 'tool_end':
-        setActiveTools((prev) => prev.filter((t) => t.id !== msg.data.id));
-        if (msg.data.recentTools) setRecentTools(msg.data.recentTools);
-        break;
       case 'extensions':
         setExtensions(msg.data || []);
         break;
@@ -381,8 +350,6 @@ export function useSessionStream(opts: {
     // null stats (idle/disk payload) must clear stale numbers from the
     // previously viewed session, not keep them on screen.
     setStats(d.sessionStats ?? EMPTY_STATS);
-    setActiveTools(d.activeTools ?? []);
-    setRecentTools(d.recentTools ?? []);
     // Optimistic pending copies belong to the OUTGOING session — drop them
     // whenever a bootstrap applies, regardless of history ownership. Leaving
     // them tied to the history-ownership guard made A's un-retired optimistic
@@ -413,32 +380,23 @@ export function useSessionStream(opts: {
     const epoch = ++bootstrapEpochRef.current;
     const startedAt = Date.now();
     const sid = viewedSessionRef.current;
-    fetch(url(`${API.bootstrap}${sid ? `?sessionId=${encodeURIComponent(sid)}` : ''}`))
-      .then((res) => res.json())
-      .then((data) => {
-        if (epoch !== bootstrapEpochRef.current || !data.success || !data.data) return;
-        const d = data.data;
+    apiJSON<any>(`${API.bootstrap}${sid ? `?sessionId=${encodeURIComponent(sid)}` : ''}`)
+      .then((d) => {
+        if (epoch !== bootstrapEpochRef.current || !d) return;
         // Invalid snapshot: the backend hasn't loaded a session yet (race
         // after an idle respawn) — applying it would zero the UI and strand
         // pending messages. Don't apply; force a switch-by-id instead, whose
         // response is the same payload shape with state recomputed from the
         // session file. No loop: one recovery attempt per bootstrap.
         if (!d.sessionState?.sessionId && sid && sid !== '-') {
-          fetch(url(API.sessions.activate(sid)), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: sid }),
-          })
-            .then((r) => r.json())
+          apiSend<any>(API.sessions.activate(sid), 'POST', { sessionId: sid })
             .then((r) => {
-              if (r.success && r.data && epoch === bootstrapEpochRef.current) {
-                applyBootstrap(r.data);
-              }
+              if (r && epoch === bootstrapEpochRef.current) applyBootstrap(r);
             })
             .catch(() => {});
           return;
         }
-        applyBootstrap(data.data, lastLiveStatusAtRef.current >= startedAt);
+        applyBootstrap(d, lastLiveStatusAtRef.current >= startedAt);
         // A successful bootstrap means the backend is up — clear restart flags.
         // Unconditional: the callback is stable, so closures would go stale.
         setRestarting(false);
@@ -537,31 +495,23 @@ export function useSessionStream(opts: {
     // initial load, not a user-initiated switch.
     setSwitchLabel(sessionState.sessionId ? 'Switching session…' : 'Loading session…');
     setSwitchingSession(true);
-    fetch(url(API.sessions.activate(sid)), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: sid }),
-    }).then(res => res.json()).then(data => {
+    apiSend<any>(API.sessions.activate(sid), 'POST', { sessionId: sid }).then((data) => {
       // Stale-response guard: only apply if still viewing this session
       if (viewedSessionRef.current !== sid) return;
       // The switch response carries the same bootstrap payload shape as
       // GET /api/bootstrap — apply it with the exact same code path.
-      if (data.success && data.data) {
-        applyBootstrap(data.data);
-        setSwitchingSession(false);
-        // The backend may resolve an id alias (e.g. a stale filename id)
-        // to the canonical session id — sync the URL to it.
-        const resolved = data.data.sessionState?.sessionId;
-        if (resolved && resolved !== sid) {
-          navigate(`/session/${resolved}`, { replace: true });
-        }
-      } else if (!data.success) {
-        // Surface switch failures (e.g. session cwd vanished) instead of
-        // silently leaving the UI on the old session.
-        setSessionError(data.error || 'Failed to switch session');
-        setSwitchingSession(false);
+      applyBootstrap(data);
+      setSwitchingSession(false);
+      // The backend may resolve an id alias (e.g. a stale filename id)
+      // to the canonical session id — sync the URL to it.
+      const resolved = data?.sessionState?.sessionId;
+      if (resolved && resolved !== sid) {
+        navigate(`/session/${resolved}`, { replace: true });
       }
-    }).catch(() => {
+    }).catch((err: any) => {
+      // Surface switch failures (e.g. session cwd vanished) instead of
+      // silently leaving the UI on the old session.
+      setSessionError(err?.message || 'Failed to switch session');
       setSwitchingSession(false);
     });
   }, [authenticated, sseConnected, urlSessionId, sessionState.sessionId, applyBootstrap, navigate]);
