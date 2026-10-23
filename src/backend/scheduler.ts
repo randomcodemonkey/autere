@@ -55,6 +55,8 @@ export interface SchedulerOptions {
   tickMs?: number;
   /** Max duration of one agent run in ms (default 15 min) */
   runTimeoutMs?: number;
+  /** Persist spawn settings so retained run sessions resume with their workdirs. */
+  persistSpawnOpts?: (user: string, sessionFile: string, opts: { cwd?: string; workdirs?: string[] }) => void;
 }
 
 // ── Paths ──
@@ -268,11 +270,13 @@ export class Scheduler {
   private readonly tickMs: number;
   private readonly runTimeoutMs: number;
   private readonly spawnOptions: { model?: string; args?: string[] };
+  private readonly persistSpawnOpts?: SchedulerOptions['persistSpawnOpts'];
 
   constructor(options: SchedulerOptions = {}) {
     this.tickMs = options.tickMs ?? 20_000;
     this.runTimeoutMs = options.runTimeoutMs ?? 15 * 60 * 1000;
     this.spawnOptions = { model: options.model, args: options.args };
+    this.persistSpawnOpts = options.persistSpawnOpts;
   }
 
   start(): void {
@@ -544,6 +548,9 @@ export class Scheduler {
           const state = await rpc.getState();
           runSessionFile = state.sessionFile || '';
           active.piSessionId = state.sessionId || '';
+          if (runSessionFile) {
+            this.persistSpawnOpts?.(user, runSessionFile, { cwd: task.cwd, workdirs: task.workdirs });
+          }
           void sendNotification(user, 'taskStart', {
             title: runName || state.sessionName || task.name,
             body: `Scheduled task "${task.name}" started`,

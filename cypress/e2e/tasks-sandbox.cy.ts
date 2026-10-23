@@ -95,6 +95,16 @@ describe('autere — scheduled task sandbox workdirs', () => {
     });
   }
 
+  function pollTaskRunSession(previousIds: string[], remaining = 60): Cypress.Chainable<any> {
+    return cy.request('/api/v1/sessions').then((res) => {
+      const session = (res.body.data || []).find((entry: any) =>
+        String(entry.sessionName || '').startsWith('[task]') && !previousIds.includes(entry.id));
+      if (session) return session;
+      if (remaining <= 0) throw new Error('saved task run session did not appear');
+      return cy.wait(500, { log: false }).then(() => pollTaskRunSession(previousIds, remaining - 1));
+    });
+  }
+
   function assertTaskSandbox(beforeIds: string[], remaining = 120): void {
     cy.task('sandboxProbe', { beforeIds, markerPaths: SANDBOX_MARKERS }).then((found: { workdir: string; workMounts: string[]; markerContents: (string | null)[] }[]) => {
       if (found.length) {
@@ -140,13 +150,36 @@ describe('autere — scheduled task sandbox workdirs', () => {
         expect(task.cwd).to.eq(WORKDIRS[0]);
         expect(task.once).to.not.eq(true);
 
+        // Keep the run session so it can be reopened like the reported case.
+        cy.request('PUT', `/api/v1/scheduler/tasks/${task.id}`, { ...task, saveSession: true })
+          .its('body.data.saveSession').should('eq', true);
+
         // Run the recurring task manually so its dedicated sandbox process
         // can be inspected; only containers created after this point count.
-        cy.request('POST', `/api/v1/scheduler/tasks/${task.id}/run`).then((res) => {
-          expect(res.status).to.eq(202);
+        cy.request('/api/v1/sessions').then((sessionsRes) => {
+          const previousTaskSessionIds = (sessionsRes.body.data || [])
+            .filter((entry: any) => String(entry.sessionName || '').startsWith('[task]'))
+            .map((entry: any) => entry.id);
+          cy.request('POST', `/api/v1/scheduler/tasks/${task.id}/run`).then((res) => {
+            expect(res.status).to.eq(202);
+          });
+          assertTaskSandbox(beforeIds);
+          pollRuns(task.id, (run) => {
+            expect(run.status).to.eq('success');
+            pollTaskRunSession(previousTaskSessionIds).then((child) => {
+              expect(child.workdirs, 'saved task session workdirs').to.deep.eq(WORKDIRS);
+              cy.request('POST', `/api/v1/sessions/${child.id}/activate`, { spawn: true })
+                .its('body.success').should('eq', true);
+              cy.request('/api/v1/sessions').then((res) => {
+                const resumed = (res.body.data || []).find((entry: any) => entry.id === child.id);
+                expect(resumed?.workdirs, 'resumed task session workdirs').to.deep.eq(WORKDIRS);
+              });
+              // Leave the child idle and remove its retained test session.
+              cy.request('POST', `/api/v1/sessions/${sessionId}/activate`, { spawn: true });
+              cy.request('DELETE', `/api/v1/sessions/${child.id}`).its('body.success').should('eq', true);
+            });
+          });
         });
-        assertTaskSandbox(beforeIds);
-        pollRuns(task.id, (run) => expect(run.status).to.eq('success'));
       });
     });
   });
