@@ -31,10 +31,11 @@ import { MonitorRpcClient } from './rpc-client.js';
 import { cronMatches } from '../shared/cron.js';
 import { sanitizeUserName } from '../shared/format.js';
 import { log } from './logger.js';
-import { autoSessionName } from './utils.js';
+import { autoSessionName } from '../shared/format.js';
 import { getUserSetting } from './user-settings.js';
 import { sendNotification } from './notifications.js';
 import { getUserRole } from './users.js';
+import { broadcastToUser } from './client-hub.js';
 import { canRunTaskScripts } from '../shared/tasks.js';
 
 import type {

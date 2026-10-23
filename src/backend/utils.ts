@@ -156,17 +156,14 @@ export function readSessionUsage(
   return stats;
 }
 
-// Session auto-naming helpers live in shared/format.ts (pure, browser-safe —
-// component tests import them from there); re-exported for backend callers.
-export { sessionDateLabel, sessionLocaleStamp, autoSessionName } from '../shared/format.js';
-
 export function readSessionHistory(sessionFile: string, limit: number = 30): StreamEntry[] {
   try {
     if (!existsSync(sessionFile)) return [];
     // Rendering is shared with the live streaming path (stream-history.ts) so
     // file-loaded history always matches what live events produce — including
     // edit/write/rm tool rendering that this function used to reimplement.
-    return buildStreamHistoryFromMessages(readAllMessageEntries(sessionFile)).slice(-limit) as StreamEntry[];
+    // Only the tail of the file is read: history views never render more.
+    return buildStreamHistoryFromMessages(readTailMessageEntries(sessionFile, limit)).slice(-limit) as StreamEntry[];
   } catch (err) {
     log.utils.error('Failed to read session history:', err);
     return [];

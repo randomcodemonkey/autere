@@ -79,7 +79,7 @@ function piVersion(): string {
 import { getHistoryLimit } from './user-settings.js';
 import { getMcpServers, setMcpServer, deleteMcpServer } from './mcp-config.js';
 import { extensionsState } from './state.js';
-import { enabledExtensionsFor } from './extensions.js';
+import { enabledExtensionsFor, invalidateExtensionEnrichment } from './extensions.js';
 import { pathIsIgnored } from '../shared/edit-ignore.js';
 import { userFileRoots, resolveInRoots, browseList, browseRead, browseWrite, browseDelete, type BrowseResult } from './files.js';
 import { listRepos, repoDetail, fileLog, initRepo, cloneRepo, fileDiff, gitList } from './git.js';
@@ -697,7 +697,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // Files-view ignores: drop roots and entries matching [files] entries
       // so the tree (and the Files search walk) never sees them. Read and
       // delete stay unfiltered — hidden files remain reachable by path.
-      const filesIgnore = getFolderIgnores(c.user).filter((e) => e.files).map((e) => e.path);
+      const filesIgnore = filesIgnoresFor(c.user);
       sendBrowse(c, { data: userFileRoots(c.user).filter((r) => !pathIsIgnored(r.path, filesIgnore)) });
     },
   });
@@ -707,9 +707,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     role: 'chat', tag: 'Files', summary: 'List a directory (query: path)',
     handler: async (c) => {
       const dir = c.url.searchParams.get('path') || '';
-      const filesIgnore = getFolderIgnores(c.user).filter((e) => e.files).map((e) => e.path);
-      const r = browseList(c.user, dir);
-      if ('data' in r) r.data = r.data.filter((e) => !pathIsIgnored(`${dir}/${e.name}`, filesIgnore));
+      const r = await browseList(c.user, dir);
+      if ('data' in r) r.data = notIgnored(dir, r.data, filesIgnoresFor(c.user));
       sendBrowse(c, r);
     },
   });
@@ -718,7 +717,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     method: 'GET', path: `${API_PREFIX}/browse/read`, template: `${API_PREFIX}/browse/read`,
     role: 'chat', tag: 'Files', summary: 'Read a file (query: path)',
     handler: async (c) => {
-      sendBrowse(c, browseRead(c.user, c.url.searchParams.get('path') || ''));
+      sendBrowse(c, await browseRead(c.user, c.url.searchParams.get('path') || ''));
     },
   });
 
@@ -728,7 +727,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     handler: async (c) => {
       try {
         const { path, content } = await readBody(c.req);
-        sendBrowse(c, browseWrite(c.user, path, content));
+        sendBrowse(c, await browseWrite(c.user, path, content));
       } catch (err: any) {
         sendBrowse(c, { error: err.message, status: err.statusCode || 400 });
       }
@@ -739,7 +738,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     method: 'DELETE', path: RE.browseFile, template: `${API_PREFIX}/browse/file`,
     role: 'control', tag: 'Files', summary: 'Delete a file (query: path)',
     handler: async (c) => {
-      sendBrowse(c, browseDelete(c.user, c.url.searchParams.get('path') || ''));
+      sendBrowse(c, await browseDelete(c.user, c.url.searchParams.get('path') || ''));
     },
   });
 
@@ -757,7 +756,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     handler: async (c) => {
       const count = Math.min(100, Math.max(1, parseInt(c.url.searchParams.get('count') || '10', 10) || 10));
       const offset = Math.max(0, parseInt(c.url.searchParams.get('offset') || '0', 10) || 0);
-      const r = repoDetail(c.user, c.url.searchParams.get('path') || '', count + offset);
+      const r = await repoDetail(c.user, c.url.searchParams.get('path') || '', count + offset);
       if ('data' in r) r.data.commits = r.data.commits.slice(offset);
       sendBrowse(c, r);
     },
@@ -2561,8 +2560,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
           const cacheControl = url.pathname.startsWith('/assets/')
             ? 'public, max-age=31536000, immutable'
             : 'no-cache, no-store, must-revalidate';
-          res.writeHead(200, { 'Content-Type': STATIC_MIME[ext || ''] || 'application/octet-stream', 'Cache-Control': cacheControl });
-          res.end(readFileSync(staticPath));
+          sendFile(res, staticPath, { 'Content-Type': STATIC_MIME[ext || ''] || 'application/octet-stream', 'Cache-Control': cacheControl });
           return;
         }
         // SPA fallback: the dashboard serves unknown non-API paths
@@ -2641,18 +2639,24 @@ ${text.trim()}`).catch((err) => settle(err as Error));
     }
   });
 
-  // ── Periodic polling for extensions and sessions ──
+  // ── Periodic state sync (pushes, not client polls) ──
+  // Both payloads are compared against the last one sent and skipped when
+  // unchanged — sessions carry live active/streaming flags and lastActivity,
+  // so a real change still reaches every client within one tick.
+  const lastSent = { extensions: '', sessions: new Map<string, string>() };
   readExtensions();
   sessionRefreshInterval = setInterval(async () => {
-    const prevExt = JSON.stringify(extensionsState);
+    const users = hubUsers();
     await readExtensions();
-    if (JSON.stringify(extensionsState) !== prevExt) {
+    const extJson = JSON.stringify(extensionsState);
+    if (extJson !== lastSent.extensions) {
+      lastSent.extensions = extJson;
       // Push the updated extension list to every running process's state
       // and broadcast to all connected clients of all users.
       for (const session of pm.allSessions()) {
         session.state.extensionsState = enabledExtensionsFor(session.user);
       }
-      for (const u of hubUsers()) {
+      for (const u of users) {
         broadcastToUser(u, { type: 'extensions', data: enabledExtensionsFor(u) });
       }
     }
@@ -2660,9 +2664,14 @@ ${text.trim()}`).catch((err) => settle(err as Error));
     // brand-new sessions stay listable (pi only writes the file on the first
     // message) while their process runs or a client views them, so a
     // subsequent activation doesn't 404 with "Session not found".
-    for (const u of hubUsers()) {
-      broadcastToUser(u, { type: 'sessions', data: pm.listSessions(u, viewedSessions(u)) });
+    for (const u of users) {
+      const list = pm.listSessions(u, viewedSessions(u));
+      const sig = JSON.stringify(list);
+      if (lastSent.sessions.get(u) === sig) continue;
+      lastSent.sessions.set(u, sig);
+      broadcastToUser(u, { type: 'sessions', data: list });
     }
+    for (const u of lastSent.sessions.keys()) if (!users.includes(u)) lastSent.sessions.delete(u);
   }, 2000);
 
   // ── Heartbeat ──

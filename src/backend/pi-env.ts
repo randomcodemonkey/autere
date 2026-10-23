@@ -534,7 +534,7 @@ export function planSandboxMounts(user: string, cwd: string | undefined, agentDi
   if (cwd) {
     // longest matching root wins
     const hit = [...workRoots].sort((a, b) => b.host.length - a.host.length)
-      .find((w) => cwd === w.host || cwd.startsWith(w.host.endsWith('/') ? w.host : w.host + '/'));
+      .find((w) => under(w.host, cwd));
     if (hit) containerCwd = hit.dst + (cwd === hit.host ? '' : cwd.slice(hit.host.replace(/\/$/, '').length));
   }
   return { mounts: out, cwd: containerCwd };
