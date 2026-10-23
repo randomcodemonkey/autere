@@ -131,9 +131,9 @@ describe('ScheduledTasksCard', () => {
       responseData = { tasks: [TASK, DISABLED_TASK], runs: [] };
       cy.mount(<ScheduledTasksCard sseConnected={true} />);
       cy.get('.scheduled-enabled-dot.on').should('exist');
-      cy.get('.scheduled-enabled-dot.off').should('exist');
-      cy.contains('.scheduled-task-name', 'Disabled task').closest('tr')
-        .find('.scheduled-disabled-label').should('have.text', 'Disabled');
+      cy.get('.scheduled-enabled-dot.off')
+        .should('exist')
+        .and('have.attr', 'title', 'Disabled');
     });
 
     it('shows seed and result script summaries only to admins', () => {

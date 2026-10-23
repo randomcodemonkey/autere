@@ -495,7 +495,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
         <DataTable
           className="scheduled-table"
           columns={[
-            { key: 'state', label: 'State' },
+            { key: 'state', label: '' },
             { key: 'task', label: 'Task' },
             { key: 'schedule', label: 'Schedule' },
             { key: 'actions', label: '' },
@@ -519,7 +519,6 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
                   <td data-label="State">
                     <span className={`scheduled-enabled-dot ${task.enabled ? 'on' : 'off'}`}
                           title={task.enabled ? 'Enabled' : 'Disabled'} />
-                    {!task.enabled && <span className="scheduled-disabled-label">Disabled</span>}
                   </td>
                   <td data-label="Task" className="scheduled-task-cell">
                     <span className="scheduled-task-name">{task.name}</span>
