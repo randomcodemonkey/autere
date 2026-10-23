@@ -151,7 +151,10 @@ src/backend/
                         # Boot marks run records a previous backend left
                         # 'running' as error (interrupted) — in-memory runs
                         # never survive a restart, so they would otherwise be
-                        # shown as running forever.
+                        # shown as running forever. A live run ends on pi's
+                        # agent_settled (NOT on an assistant message_end with
+                        # text: tool-only/empty final messages exist) and fails
+                        # fast when its pi process exits.
                         # Runs inherit cwd/workdirs from the creating session
                         # (`session` id passed by schedule_task, resolved by the
                         # backend) or use task-form/API workdirs (which force

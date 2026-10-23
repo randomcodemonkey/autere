@@ -65,6 +65,16 @@ function streamWhitespace(res: ServerResponse): void {
     res.end();
 }
 
+// A turn whose final assistant message carries NO text (empty response) —
+// real models do this after a tool call or on an empty completion. Consumers
+// must treat pi's agent_settled as the end of the run, not assistant text.
+function streamSilent(res: ServerResponse): void {
+    chunk(res, { choices: [{ index: 0, delta: { role: 'assistant' } }] });
+    chunk(res, { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 25, completion_tokens: 0, total_tokens: 25 } });
+    res.write('data: [DONE]\n\n');
+    res.end();
+}
+
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     res.setHeader('Content-Type', 'application/json');
     if (req.url === '/v1/models') {
@@ -110,6 +120,10 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
             }
             if (/2 \+ 2/i.test(lastUserText)) {
                 streamText(res, parsed.model, '4');
+                return;
+            }
+            if (/silent turn/i.test(lastUserText) && lastRole !== 'tool') {
+                streamSilent(res);
                 return;
             }
             if (/whitespace/i.test(lastUserText) && lastRole !== 'tool') {

@@ -645,7 +645,9 @@ export class Scheduler {
           throw new Error(agentResult.slice('__AGENT_ERROR__:'.length));
         }
         record.agentResult = agentResult;
-        addLog(`Agent finished (${agentResult.length} chars)`);
+        addLog(agentResult.trim()
+          ? `Agent finished (${agentResult.length} chars)`
+          : 'Agent finished without text output');
 
         // 4. Run the result script against the agent output (optional)
         if (runScripts && task.resultScript?.trim()) {
@@ -726,8 +728,15 @@ export class Scheduler {
   }
 
   /**
-   * Resolves with the final assistant text of the next agent turn on the
-   * given RPC client. Agent errors resolve as "__AGENT_ERROR__:<message>".
+   * Resolves with the final assistant text of this run once the agent has
+   * settled, `__AGENT_ERROR__:<message>` on an agent error, and rejects when
+   * the run is aborted, times out, or its pi process dies.
+   *
+   * The completion signal is pi's `agent_settled` (no automatic work left),
+   * NOT an assistant message: a run can legitimately end with a text-less
+   * final message (tool-only or empty model response), and pi also emits
+   * interim assistant messages mid-turn. Waiting for "an assistant
+   * message_end with text" left such runs 'running' for the whole timeout.
    */
   private waitForAgentResult(
     rpc: MonitorRpcClient,
@@ -735,30 +744,41 @@ export class Scheduler {
   ): Promise<string> {
     return new Promise((resolve, reject) => {
       let settled = false;
+      let lastText = '';
       let off: () => void = () => {};
+      let offExit: () => void = () => {};
       const finish = (fn: () => void) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
         off();
+        offExit();
         fn();
       };
       const timeout = setTimeout(() => {
         finish(() => reject(new Error(`Agent run timed out after ${this.runTimeoutMs}ms`)));
       }, this.runTimeoutMs);
       off = rpc.onEvent((event: any) => {
-        if (event.type !== 'message_end' || event.message?.role !== 'assistant') return;
-        const text = (event.message.content || [])
-          .filter((c: any) => c.type === 'text')
-          .map((c: any) => c.text)
-          .join('');
-        if (event.message.stopReason === 'error' || event.message.errorMessage) {
-          finish(() => resolve(`__AGENT_ERROR__:${event.message.errorMessage || 'Agent returned an error'}`));
+        if (event.type === 'message_end' && event.message?.role === 'assistant') {
+          const msg = event.message;
+          if (msg.stopReason === 'error' || msg.errorMessage) {
+            finish(() => resolve(`__AGENT_ERROR__:${msg.errorMessage || 'Agent returned an error'}`));
+            return;
+          }
+          const content = Array.isArray(msg.content) ? msg.content : [];
+          const text = content
+            .filter((c: any) => c?.type === 'text')
+            .map((c: any) => c.text || '')
+            .join('');
+          if (text.trim()) lastText = text;
           return;
         }
-        if (text) {
-          finish(() => resolve(text));
+        if (event.type === 'agent_settled') {
+          finish(() => resolve(lastText));
         }
+      });
+      offExit = rpc.onProcessExit((error) => {
+        finish(() => reject(new Error(`pi exited before the run finished: ${error.message}`)));
       });
       registerAbort(() => {
         finish(() => reject(new Error('Run aborted')));

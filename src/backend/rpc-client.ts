@@ -130,6 +130,7 @@ export class MonitorRpcClient {
   private process: ChildProcess | null = null;
   private stopReadingStdout: (() => void) | null = null;
   private eventListeners: RpcEventListener[] = [];
+  private exitListeners: Array<(error: Error) => void> = [];
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private requestId = 0;
   private stderr = '';
@@ -374,6 +375,9 @@ export class MonitorRpcClient {
       const error = this.createProcessExitError(code, signal);
       this.exitError = error;
       this.rejectPendingRequests(error);
+      for (const listener of this.exitListeners.splice(0)) {
+        try { listener(error); } catch (err) { log.rpc.error('Exit listener error:', err); }
+      }
     });
 
     childProcess.once('error', (error: Error) => {
@@ -460,6 +464,18 @@ export class MonitorRpcClient {
     return () => {
       const index = this.eventListeners.indexOf(listener);
       if (index !== -1) this.eventListeners.splice(index, 1);
+    };
+  }
+
+  /**
+   * Subscribe to the pi process exiting (crash, OOM kill, stop). Callers that
+   * are waiting on a turn must bail out — a dead process emits no events.
+   */
+  onProcessExit(listener: (error: Error) => void): () => void {
+    this.exitListeners.push(listener);
+    return () => {
+      const index = this.exitListeners.indexOf(listener);
+      if (index !== -1) this.exitListeners.splice(index, 1);
     };
   }
 

@@ -310,6 +310,21 @@ cli task-run "$ONE_ID" --wait
 assert_exit 1 "a one-off task refuses to run a second time"
 assert_in "already run" "refusal states the one-off contract"
 
+section "task run: agent ends without text"
+# The mock turns this prompt into an empty assistant message. Completion must
+# come from pi's agent_settled — waiting for assistant text left such runs
+# 'running' until the 15 min timeout.
+cli task-create "silent $$" "0 0 1 1 *" "This is a silent turn" --once
+assert_exit 0 "silent task created"
+SILENT_ID=$(printf '%s' "$OUT" | node -e 'try{console.log(JSON.parse(require("fs").readFileSync(0)).id)}catch{}')
+cli task-run "$SILENT_ID" --wait
+assert_exit 0 "a run whose agent ends without text completes"
+assert_in '"status": "success"' "text-less run is a success"
+SILENT_RUN_ID=$(printf '%s' "$OUT" | node -e 'try{console.log(JSON.parse(require("fs").readFileSync(0)).runId)}catch{}')
+cli run-log "$SILENT_ID" "$SILENT_RUN_ID"
+assert_in "without text output" "run log notes the missing text"
+cli task-delete "$SILENT_ID" > /dev/null
+
 # --wait exists for one-off tasks only, and the refusal must come BEFORE a run starts
 cli task-create "repeat $$" "0 0 1 1 *" "say hi" --enabled false
 assert_exit 0 "repeating task created"
