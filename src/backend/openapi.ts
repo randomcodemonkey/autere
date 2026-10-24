@@ -114,6 +114,8 @@ export function buildOpenApiSpec(routes: RouteDoc[]) {
         'Real-time dashboard API for pi agent sessions. All endpoints (except /auth/*) '
         + 'require authentication via the autere-token session cookie or '
         + '`Authorization: Bearer <token>` (API token created via POST /tokens). '
+        + 'When AUTERE_OIDC_ISSUER (alias AUTERE_OAUTH2_SERVER) is configured, an OIDC '
+        + 'JWT is accepted as the bearer as well and validated against that provider. '
         + 'Roles form a hierarchy: chat < control < admin. The /events endpoint is '
         + 'a Server-Sent-Events stream carrying {type, data, sessionId?} frames.',
     },

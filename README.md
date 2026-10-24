@@ -59,6 +59,32 @@ The fixed `admin` account is created on first start from `INITIAL_PASSWORD` (def
 
 The CLI authenticates with the same accounts (`autere login admin <password>`), storing its token in `~/.autere/cli-config.json`.
 
+#### OIDC / OAuth2 bearer tokens
+
+Set `AUTERE_OIDC_ISSUER` (alias: `AUTERE_OAUTH2_SERVER`) to your OpenID
+Provider's issuer URL and autere also accepts `Authorization: Bearer <jwt>`:
+
+- Discovery: `<issuer>/.well-known/openid-configuration` (falls back to
+  RFC 8414 `/.well-known/oauth-authorization-server[/<path>]`). The env value
+  may also be the discovery URL itself.
+- Signatures are verified against the provider JWKS (`RS*`, `PS*`, `ES256/384/512`,
+  `EdDSA`); `iss`, `exp`/`nbf`/`iat` (60 s leeway) and, when
+  `AUTERE_OIDC_AUDIENCE` is set, `aud` are checked. JWKS/discovery are cached
+  for an hour (a stale copy keeps working through provider blips).
+- Identity: `AUTERE_OIDC_USER_CLAIM` (default chain `preferred_username` ->
+  `email` -> `sub`), sanitized like any username. Roles stay autere's own: a
+  token user that exists in Users gets that account's role. Unknown IdP users
+  are rejected by default — set `AUTERE_OIDC_AUTO_PROVISION=true` to accept
+  them with the default `chat` role (they are not added to Users and cannot
+  be given roles there until created). **Only trust an IdP whose usernames
+  you control**, since a username matching `admin` authenticates as autere's
+  admin.
+- Opaque autere tokens (login cookies, CLI/API tokens) keep working unchanged.
+  Tokens from an IdP with a private CA need `NODE_EXTRA_CA_CERTS=/path/ca.pem`.
+
+Cross-origin browser clients still need to send the token as a bearer header
+(see [AG-UI protocol](#ag-ui-protocol)); the login cookie is same-origin only.
+
 ### Running behind a proxy
 
 Autere can be ran behind a proxy and supports the standard `x-forwarded-prefix` header to allow Autere to be proxied behind a non-root path.
@@ -75,6 +101,10 @@ Autere can be ran behind a proxy and supports the standard `x-forwarded-prefix` 
 | `AUTERE_IDLE_TIMEOUT` | 30 | Minutes before idle pi sessions are terminated |
 | `AUTERE_NINE_ROUTER_URL` | `http://localhost:20128` | Backend-managed 9router URL |
 | `AUTERE_SANDBOX_IMAGE` | ghcr.io/randomcodemonkey/autere:latest | Docker image for sandboxed pi sessions (`off` disables sandbox mode) |
+| `AUTERE_OIDC_ISSUER` | - | OIDC issuer (or discovery URL) for JWT bearer validation; alias `AUTERE_OAUTH2_SERVER` |
+| `AUTERE_OIDC_AUDIENCE` | - | Required `aud` claim value for OIDC tokens (unset = any audience) |
+| `AUTERE_OIDC_USER_CLAIM` | - | Claim used as the autere username (default `preferred_username` -> `email` -> `sub`) |
+| `AUTERE_OIDC_AUTO_PROVISION` | false | Accept IdP users that are not in autere's Users (with the default `chat` role) |
 
 ## Architecture
 

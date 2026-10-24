@@ -19,6 +19,7 @@ import { AUTH_TOKENS_FILE, AUTH_TOKEN_EXPIRY_MS } from './constants.js';
 import { log } from './logger.js';
 import { getPiEnvDir } from './pi-env.js';
 import { writePrivateFile } from './private-file.js';
+import { getOidcConfig, isJwtShaped, resolveOidcUser, warmOidc } from './oidc.js';
 import { parseCookies } from '../shared/format.js';
 import {
   initUserRegistry,
@@ -159,14 +160,63 @@ function findValidToken(req: IncomingMessage): TokenEntry | null {
 
 // ── Auth checking ──
 
+/**
+ * OIDC bearer results are per-request: a JWT is validated once at the start
+ * of dispatch (async: discovery + JWKS may need a network fetch) and the
+ * outcome is attached here so the rest of the auth surface stays sync.
+ * `tokenKey` is a stable non-secret key: a JWT must never be persisted as
+ * the token key in last-session state.
+ */
+interface OidcAuth {
+  user: string;
+  tokenKey: string;
+}
+
+const oidcAuth = new WeakMap<IncomingMessage, OidcAuth>();
+
+/** Unknown IdP identities are rejected unless explicitly allowed: autere is a
+ *  single-host dashboard and every accepted identity can read the user's
+ *  files/sessions, so IdP membership alone is not an authorization decision. */
+function oidcAutoProvision(): boolean {
+  return process.env.AUTERE_OIDC_AUTO_PROVISION === 'true';
+}
+
+/**
+ * Validate an `Authorization: Bearer <jwt>` against the configured OIDC
+ * provider. No-op when OIDC is not configured, auth is disabled, or the
+ * bearer is an opaque autere token. Call once per request before requireAuth.
+ */
+export async function authenticateOidc(req: IncomingMessage): Promise<void> {
+  if (!authEnabled) return;
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return;
+  const token = auth.slice(7).trim();
+  if (!getOidcConfig() || !isJwtShaped(token)) return;
+  const resolved = await resolveOidcUser(token);
+  if (!resolved) return;
+  if (!registryHasUser(resolved.user) && !oidcAutoProvision()) {
+    log.auth.debug(`OIDC user "${resolved.user}" is not registered in autere; rejecting (AUTERE_OIDC_AUTO_PROVISION=true allows such users with the default role)`);
+    return;
+  }
+  oidcAuth.set(req, { user: resolved.user, tokenKey: `oidc:${resolved.user}` });
+}
+
 export function checkAuth(req: IncomingMessage): boolean {
   if (!authEnabled) return true;
-  return findValidToken(req) !== null;
+  return oidcAuth.has(req) || findValidToken(req) !== null;
+}
+
+/** True when this request was authenticated by an OIDC bearer token (not a
+ *  password login / API token). Used to skip password-specific policies. */
+export function isOidcAuthenticated(req: IncomingMessage): boolean {
+  return oidcAuth.has(req) && authEnabled;
 }
 
 /** Get the auth token from the request, or null */
 export function getTokenFromRequest(req: IncomingMessage): string | null {
   if (!authEnabled) return 'noauth'; // single session when auth is disabled
+  const oidc = oidcAuth.get(req);
+  if (oidc) return oidc.tokenKey;
   const cookies = parseCookies(req.headers.cookie || '');
   const cookieToken = cookies['autere-token'];
   if (cookieToken && findValidToken(req)) return cookieToken;
@@ -178,6 +228,8 @@ export function getTokenFromRequest(req: IncomingMessage): string | null {
 /** Get the authenticated user from the request, or null */
 export function getUser(req: IncomingMessage): string | null {
   if (!authEnabled) return 'admin'; // default user when auth is disabled
+  const oidc = oidcAuth.get(req);
+  if (oidc) return oidc.user;
   const entry = findValidToken(req);
   return entry?.user || null;
 }
@@ -236,6 +288,9 @@ export function resolveAuth(pi: { getFlag: (name: string) => any }) {
   loadAuthTokens();
   if (!authEnabled) {
     log.auth.info('Authentication disabled (--autere-auth false)');
+  } else if (getOidcConfig()) {
+    // Fire-and-forget: discovery/JWKS cache warming must never block boot.
+    void warmOidc();
   }
 }
 

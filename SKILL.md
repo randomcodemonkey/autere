@@ -141,7 +141,16 @@ src/backend/
                         # pi agent session (user+sessionFile keyed), idle timeout
   client-hub.ts         # Per-user clientId → viewed-session registry; routes
                         # SSE events and API calls to the right session's process
-  auth.ts               # Token auth, users, roles, last-session tracking
+  auth.ts               # Token auth, users, roles, last-session tracking.
+                        # Optional OIDC JWT bearer validation (oidc.ts): the
+                        # token is validated once per request in the dispatcher
+                        # (authenticateOidc) and cached per-request so the rest
+                        # of the auth surface stays synchronous
+  oidc.ts               # OIDC discovery + JWKS + JWT verification (RS/PS/ES/
+                        # EdDSA), claim checks, claim->username mapping. Env:
+                        # AUTERE_OIDC_ISSUER (alias AUTERE_OAUTH2_SERVER),
+                        # AUTERE_OIDC_AUDIENCE, AUTERE_OIDC_USER_CLAIM. Self-check:
+                        # npx tsx src/backend/oidc.check.ts
   state.ts              # Global mutable state (extensions, sessions)
   sessions.ts           # Session file listing
   personas.ts           # Persona library + per-session bindings (JSON files)
@@ -463,7 +472,10 @@ npx tsx src/backend/index.ts \
 
 Env: `PI_MONITOR_PASSWORD`, `PI_MONITOR_AUTH`, `PI_IMAGES_MODEL`,
 `AUTERE_ADMIN_USER` (default `admin`), `AUTERE_ADMIN_PASSWORD` (default
-`admin`).
+`admin`), `AUTERE_OIDC_ISSUER` / `AUTERE_OAUTH2_SERVER` (OIDC issuer for JWT
+bearer auth), `AUTERE_OIDC_AUDIENCE`, `AUTERE_OIDC_USER_CLAIM`,
+`AUTERE_OIDC_AUTO_PROVISION` (default false: IdP users must exist in the
+users registry).
 
 **Roles** (hierarchy: chat < control < admin, enforced per API call in
 `requiredRole()` / `hasRole()` in auth.ts):
@@ -577,7 +589,15 @@ These rules apply to EVERY new endpoint, rename, or behavior change:
 7. **Auth model**: `POST /api/v1/auth/login` sets an HttpOnly cookie AND
    returns a bearer token (non-browser clients); API requests authenticate
    with cookie or `Authorization: Bearer`. CORS allows the
-   `Authorization` + `X-Autere-Client-Id` headers.
+   `Authorization` + `X-Autere-Client-Id` headers. When
+   `AUTERE_OIDC_ISSUER` (alias `AUTERE_OAUTH2_SERVER`) is set, a
+   JWT-shaped bearer is validated against that OIDC provider instead:
+   discovery + JWKS are cached, roles still come from the users registry
+   (unknown token users are rejected unless `AUTERE_OIDC_AUTO_PROVISION=true`,
+   which grants the default `chat` role), and the per-request result is
+   kept in a WeakMap keyed by the request (`authenticateOidc` runs before
+   both the public and the protected dispatch). Opaque tokens are
+   unaffected; `c.token` for OIDC requests is `oidc:<user>` (never the JWT).
 8. **Tests**: update cypress specs through the same constants (import from
    `src/shared/api-paths` where possible) and adjust methods
    (`PUT`/`DELETE`) alongside the frontend.

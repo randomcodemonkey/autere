@@ -25,7 +25,7 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { isDeepStrictEqual } from 'node:util';
 import { ProcessManager, spawnOpts } from './process-manager.js';
-import { getUser, getUserRole, hasRole, verifyCredentials, checkAuth, requireAuth, parseCookies, generateToken, addAuthToken, removeAuthToken, removeUserTokens, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, getLastSession, isRegisteredUser, userMustChangePassword, listApiTokens, createApiToken, deleteApiToken } from './auth.js';
+import { getUser, getUserRole, hasRole, verifyCredentials, checkAuth, requireAuth, authenticateOidc, isOidcAuthenticated, parseCookies, generateToken, addAuthToken, removeAuthToken, removeUserTokens, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, getLastSession, isRegisteredUser, userMustChangePassword, listApiTokens, createApiToken, deleteApiToken } from './auth.js';
 import { getClientSession, setClientSession, registerClient, broadcastToUser, viewedSessions, hubUsers } from './client-hub.js';
 import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword, getUserMountDockerSocket, getUserTheme, setUserTheme } from './users.js';
 import { withDedupSections, withJanitorSections } from './extension-handlers.js';
@@ -542,7 +542,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           authenticated: checkAuth(c.req),
           user,
           role: user ? getUserRole(user) : null,
-          mustChangePassword: user && getAuthEnabled() ? userMustChangePassword(user) : false,
+          mustChangePassword: user && getAuthEnabled() && !isOidcAuthenticated(c.req) ? userMustChangePassword(user) : false,
           theme: user ? getUserTheme(user) : null,
         },
       });
@@ -2600,6 +2600,11 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       }
 
       // ── Unauthenticated routes ──
+      // OIDC bearer (JWT) validation runs before both the public and the
+      // protected dispatch so /auth/status and the API see the same identity.
+      // No-op unless a JWT-shaped bearer is present and OIDC is configured.
+      await authenticateOidc(req);
+
       const pub = matchRoute(publicRoutes, req.method || 'GET', url.pathname);
       if (pub) {
         await runHandler(pub.route, pub.match, {
@@ -2620,8 +2625,9 @@ ${text.trim()}`).catch((err) => settle(err as Error));
 
       // ── Forced password change: block everything but logout and
       // change-password until the user picks a new password (first login /
-      // admin reset). ──
-      if (getAuthEnabled() && userMustChangePassword(user)) {
+      // admin reset). OIDC identities have no autere password to change —
+      // the IdP already proved who they are. ──
+      if (getAuthEnabled() && !isOidcAuthenticated(req) && userMustChangePassword(user)) {
         const path = url.pathname;
         const isChange = req.method === 'POST' && path === API.auth.changePassword;
         const isLogout = req.method === 'POST' && path === API.auth.logout;
