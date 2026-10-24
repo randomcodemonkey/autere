@@ -268,10 +268,12 @@ extras/pi-9router-ext/ # pi extension: the 9router provider. Autere FORK of
                        # required) — this replaced extras/pi-combo-reasoning,
                        # which had to re-register the provider after async
                        # discovery to avoid racing it. ALWAYS INSTALLED and
-                       # hidden from users when AUTERE_PROVIDER is unset or
-                       # 9router (ALWAYS_ENABLED_EXTRAS in user-settings.ts):
-                       # absent from getAvailableExtras (Settings → Extensions),
-                       # filtered out of enabledExtensionsFor (dashboard card),
+                       # hidden from Settings → Extensions when AUTERE_PROVIDER is
+                       # unset or 9router (ALWAYS_ENABLED_EXTRAS in
+                       # user-settings.ts): absent from getAvailableExtras (not
+                       # user-toggleable) but still listed on the Agent card's
+                       # Extensions row while enabled, so its 9router status and
+                       # recent-request detail modal stay available;
                        # reinstalled per env by reconcileExtraExtensions, and
                        # applied to sandboxed sessions too (the env extensions
                        # dir is mounted). Non-9router providers: not installed,

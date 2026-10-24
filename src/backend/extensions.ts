@@ -16,7 +16,7 @@ import { PI_DIR, NPM_EXTENSIONS_DIR, EXTENSIONS_DIR } from './constants.js';
 import { extensionsState } from './state.js';
 import { PI_ENVS_DIR } from './pi-env.js';
 import { getExtensionHandler } from './extension-handlers.js';
-import { getUserSetting, getEnabledPackages, ALWAYS_ENABLED_EXTRAS } from './user-settings.js';
+import { getUserSetting, getEnabledPackages } from './user-settings.js';
 import { log } from './logger.js';
 
 // ── Extension discovery ──
@@ -300,11 +300,12 @@ export async function readExtensions(): Promise<void> {
 export function enabledExtensionsFor(user: string): ExtensionInfo[] {
   // Strip both package-source schemes ('npm:x' from settings packages,
   // 'local:x' bundled extras) — the set must hold bare extension names.
-  // Always-on extras (infrastructure, not user choices) are hidden from the
-  // Extensions card: they cannot be toggled, so listing them is noise.
+  // Always-on extras (pi-9router-ext) are NOT filtered out here: the card
+  // shows what is actually enabled, and handler enrichment (9router status /
+  // request details) is only useful when the row is visible. Settings →
+  // Extensions still hides them via getAvailableExtras (not toggleable).
   const enabled = new Set(getEnabledPackages(user)
-    .map((p) => p.replace(/^npm:/, '').replace(/^local:/, ''))
-    .filter((name) => !ALWAYS_ENABLED_EXTRAS.includes(name)));
+    .map((p) => p.replace(/^npm:/, '').replace(/^local:/, '')));
   // Bundled extras (pi-ext-extra) show as active iff in the user's saved
   // choice set — desiredExtras merges the autere-extensions.json file with
   // the bundled availability. Note: pi also loads whatever is linked in the

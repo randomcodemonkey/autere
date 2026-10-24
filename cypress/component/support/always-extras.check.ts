@@ -45,6 +45,12 @@ try {
   ensurePiEnv('admin');
   assert.equal(installed('pi-9router-ext'), true, 'always-on extra is copied into the env');
 
+  // The Agent card lists it (status/modal enrichment) while it is enabled.
+  const { readExtensions, enabledExtensionsFor } = await import('../../../src/backend/extensions.js');
+  await readExtensions();
+  const onCard = () => enabledExtensionsFor('admin').some((e) => e.name === 'pi-9router-ext');
+  assert.equal(onCard(), true, 'enabled always-on extra is listed on the Agent card');
+
   // Legacy npm package and retired extras are cleaned out of the env.
   writeFileSync(join(envDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-9router-ext', 'npm:pi-memory'] }));
   mkdirSync(join(envExtensions, 'pi-combo-reasoning'), { recursive: true });
@@ -60,6 +66,8 @@ try {
   assert.equal(desiredExtras('admin').includes('local:pi-9router-ext'), false, 'not wanted for another provider');
   ensurePiEnv('admin');
   assert.equal(installed('pi-9router-ext'), false, 'copy removed when the provider changes');
+  await readExtensions();
+  assert.equal(onCard(), false, 'card hides an always-on extra the env no longer loads');
 
   // Bundled source missing (deployment/image built without extras): nothing is
   // always-on, and the legacy npm package is left in place so the env still has
