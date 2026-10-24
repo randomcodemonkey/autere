@@ -147,9 +147,11 @@ src/backend/
                         # (authenticateOidc) and cached per-request so the rest
                         # of the auth surface stays synchronous
   cors.ts               # Browser CORS policy: same-host origins plus the
-                        # AUTERE_CORS_ORIGINS allowlist (`*` = any). Never
-                        # sends Access-Control-Allow-Credentials: cross-origin
-                        # browser clients use bearer tokens. Self-check:
+                        # AUTERE_CORS_ORIGINS allowlist (`*` = any).
+                        # AUTERE_CORS_CREDENTIALS=true lets a listed origin
+                        # send the login cookie (then /agui accepts cookie
+                        # auth from it too); methods/headers are settable via
+                        # AUTERE_CORS_METHODS / AUTERE_CORS_HEADERS. Self-check:
                         # npx tsx src/backend/cors.check.ts
   oidc.ts               # OIDC discovery + JWKS + JWT verification (RS/PS/ES/
                         # EdDSA), claim checks, claim->username mapping. Env:
@@ -483,7 +485,9 @@ Env: `PI_MONITOR_PASSWORD`, `PI_MONITOR_AUTH`, `PI_IMAGES_MODEL`,
 bearer auth), `AUTERE_OIDC_AUDIENCE`, `AUTERE_OIDC_USER_CLAIM`,
 `AUTERE_OIDC_AUTO_PROVISION` (default false: IdP users must exist in the
 users registry), `AUTERE_CORS_ORIGINS` (comma-separated browser origins, `*`
-= any; bearer auth only, never `Access-Control-Allow-Credentials`).
+= any), `AUTERE_CORS_CREDENTIALS` (true = listed origins may send cookies;
+default bearer-only), `AUTERE_CORS_METHODS` / `AUTERE_CORS_HEADERS`
+(preflight allow-lists).
 
 **Roles** (hierarchy: chat < control < admin, enforced per API call in
 `requiredRole()` / `hasRole()` in auth.ts):
@@ -599,7 +603,8 @@ These rules apply to EVERY new endpoint, rename, or behavior change:
    with cookie or `Authorization: Bearer`. CORS allows the
    `Authorization` + `X-Autere-Client-Id` headers; same-host origins are
    always allowed, `AUTERE_CORS_ORIGINS` adds explicit cross-origin browser
-   origins (cors.ts, self-check `npx tsx src/backend/cors.check.ts`). When
+   origins and `AUTERE_CORS_CREDENTIALS=true` lets them send the cookie
+   (cors.ts, self-check `npx tsx src/backend/cors.check.ts`). When
    `AUTERE_OIDC_ISSUER` (alias `AUTERE_OAUTH2_SERVER`) is set, a
    JWT-shaped bearer is validated against that OIDC provider instead:
    discovery + JWKS are cached, roles still come from the users registry

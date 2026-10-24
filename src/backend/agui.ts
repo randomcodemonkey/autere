@@ -505,6 +505,9 @@ export interface AguiRunOptions {
   body: unknown;
   /** The request authenticated with `Authorization: Bearer` (CORS/CSRF gate) */
   bearer: boolean;
+  /** Origin is allowlisted with AUTERE_CORS_CREDENTIALS=true, so a cookie from
+   *  it is an intentional cross-origin setup, not CSRF. */
+  trustedOrigin?: boolean;
   pm: ProcessManager;
   /** Same validation the new-session route uses (admin-only workdirs) */
   validateWorkdirs?: (user: string, raw: unknown[]) => { list?: string[]; error?: string; status?: number };
@@ -537,9 +540,10 @@ export async function handleAguiRun(opts: AguiRunOptions): Promise<void> {
   const { user, req, res, pm } = opts;
 
   // Cross-origin browser clients must use a bearer token: a cookie-authed
-  // cross-site POST would be CSRF-able.
+  // cross-site POST would be CSRF-able. Exception: an origin the operator
+  // allowlisted with AUTERE_CORS_CREDENTIALS=true.
   const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
-  if (origin && !opts.bearer && originHost(origin) !== (req.headers.host || '')) {
+  if (origin && !opts.bearer && !opts.trustedOrigin && originHost(origin) !== (req.headers.host || '')) {
     json(res, 403, 'Cross-origin AG-UI requests require a bearer token');
     return;
   }

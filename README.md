@@ -87,18 +87,30 @@ Cross-origin browser clients still need to send the token as a bearer header
 
 ### CORS (cross-origin browser clients)
 
-The dashboard is same-origin and needs no CORS configuration. To let a chat
-client / SPA on another origin call the API from a browser, list its origins:
+The dashboard is same-origin and needs no CORS configuration. Browser clients
+on another origin (a chat UI, a CopilotKit/AG-UI frontend) are configured with
+env vars:
 
 ```bash
-AUTERE_CORS_ORIGINS=https://chat.example.com,http://localhost:5173
-AUTERE_CORS_ORIGINS=*   # any origin
+# exact page origins; `*` allows any origin
+AUTERE_CORS_ORIGINS=http://localhost:21080,https://chat.example.com
+# let those origins send the login cookie (Access-Control-Allow-Credentials)
+AUTERE_CORS_CREDENTIALS=true
+# preflight answer (defaults shown)
+AUTERE_CORS_METHODS="GET, POST, PUT, DELETE, OPTIONS"
+AUTERE_CORS_HEADERS="Content-Type, Accept, Authorization, X-Autere-Client-Id"
 ```
 
-Allowed origins must authenticate with a bearer token (OIDC JWT or an autere
-API token) — responses never include `Access-Control-Allow-Credentials`, so
-the login cookie is not usable cross-origin. Same-host origins are always
-allowed; the wildcard is not combined with credentials.
+- The response always echoes the **exact** origin (`*` only when the wildcard
+  is configured, and never together with credentials).
+- `AUTERE_CORS_CREDENTIALS=true` enables `Access-Control-Allow-Credentials: true`
+  for origins listed in `AUTERE_CORS_ORIGINS`, which makes cookie
+  authentication usable from that origin and also lets `/api/v1/agui` accept
+  cookie-authenticated runs from it. Only list origins you trust with the
+  user's session: a cross-site request from one of them carries the cookie.
+- Without credentials, allowed origins authenticate with a bearer token (OIDC
+  JWT or autere API token).
+- Same-host origins are always allowed; anything else gets no CORS headers.
 
 ### Running behind a proxy
 
@@ -120,7 +132,10 @@ Autere can be ran behind a proxy and supports the standard `x-forwarded-prefix` 
 | `AUTERE_OIDC_AUDIENCE` | - | Required `aud` claim value for OIDC tokens (unset = any audience) |
 | `AUTERE_OIDC_USER_CLAIM` | - | Claim used as the autere username (default `preferred_username` -> `email` -> `sub`) |
 | `AUTERE_OIDC_AUTO_PROVISION` | false | Accept IdP users that are not in autere's Users (with the default `chat` role) |
-| `AUTERE_CORS_ORIGINS` | - | Comma-separated browser origins allowed to call the API cross-origin (`*` = any; bearer auth only) |
+| `AUTERE_CORS_ORIGINS` | - | Comma-separated browser origins allowed to call the API cross-origin (`*` = any) |
+| `AUTERE_CORS_CREDENTIALS` | false | Allow listed origins to send cookies (`Access-Control-Allow-Credentials: true`) |
+| `AUTERE_CORS_METHODS` | GET, POST, PUT, DELETE, OPTIONS | `Access-Control-Allow-Methods` for preflight |
+| `AUTERE_CORS_HEADERS` | Content-Type, Accept, Authorization, X-Autere-Client-Id | `Access-Control-Allow-Headers` for preflight |
 
 ## Architecture
 

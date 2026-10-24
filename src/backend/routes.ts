@@ -40,7 +40,7 @@ import { listPersonas, savePersonas, validatePersona, setActivePersona, getActiv
 import { readMessageEntries } from './stream-history.js';
 import { appendSessionInfo, findSessionFileBySessionId } from './sessions.js';
 import { handleAguiRun } from './agui.js';
-import { corsAllowOrigin } from './cors.js';
+import { corsAllowOrigin, corsHeaders, corsMethods } from './cors.js';
 
 // pi --version, resolved once per backend process (cached — the binary does
 // not change mid-process). Empty string on failure so the UI shows '—'.
@@ -1563,6 +1563,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         res: c.res,
         body,
         bearer: /^Bearer\s+/i.test(String(c.req.headers.authorization || '')),
+        // Operator-allowlisted origin with credentials: cookie auth is intended.
+        trustedOrigin: corsAllowOrigin(c.req.headers.origin, c.req.headers.host)?.credentials === true,
         pm,
         validateWorkdirs,
       });
@@ -2557,15 +2559,17 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       if (cors) {
         res.setHeader('Access-Control-Allow-Origin', cors.origin);
         if (cors.vary) res.setHeader('Vary', 'Origin');
+        if (cors.credentials) res.setHeader('Access-Control-Allow-Credentials', 'true');
       } else if (origin && (aguiPreflight || aguiBearer)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
       }
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      // Configurable allow-lists (AUTERE_CORS_METHODS / AUTERE_CORS_HEADERS).
+      res.setHeader('Access-Control-Allow-Methods', corsMethods().join(', '));
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('X-Frame-Options', 'DENY');
       res.setHeader('Referrer-Policy', 'same-origin');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Autere-Client-Id');
+      res.setHeader('Access-Control-Allow-Headers', corsHeaders().join(', '));
       if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
       // ── Base path (reverse-proxy prefix) detection/stripping ──
