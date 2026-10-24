@@ -40,6 +40,7 @@ import { listPersonas, savePersonas, validatePersona, setActivePersona, getActiv
 import { readMessageEntries } from './stream-history.js';
 import { appendSessionInfo, findSessionFileBySessionId } from './sessions.js';
 import { handleAguiRun } from './agui.js';
+import { corsAllowOrigin } from './cors.js';
 
 // pi --version, resolved once per backend process (cached — the binary does
 // not change mid-process). Empty string on failure so the UI shows '—'.
@@ -259,12 +260,6 @@ const IMAGE_MIME: Record<string, string> = {
 /** Read the session target selector from body or query string */
 function targetParam(c: Ctx, body?: any): string | undefined {
   return body?.sessionId ?? c.url.searchParams.get('sessionId') ?? undefined;
-}
-
-/** True when an Origin header points at the host this request arrived for. */
-function isSameHostOrigin(origin: string, host: string | undefined): boolean {
-  if (!host) return false;
-  try { return new URL(origin).host === host; } catch { return false; }
 }
 
 /** Route params are percent-decoded; a malformed escape is a bad request,
@@ -2545,12 +2540,24 @@ ${text.trim()}`).catch((err) => settle(err as Error));
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
-      // CORS: the dashboard is same-origin, so only echo an Origin that
-      // matches this host (proxies keep the public Host header). A wildcard
-      // would let any site read authenticated API responses. Non-browser
-      // clients (TUI, scripts) never send Origin and are unaffected.
+      // CORS: same-host origins plus AUTERE_CORS_ORIGINS (see cors.ts). A
+      // wildcard is never combined with credentials, so cross-origin browser
+      // clients authenticate with a bearer token, not the login cookie.
       const origin = req.headers.origin;
-      if (origin && isSameHostOrigin(origin, req.headers.host)) {
+      const cors = corsAllowOrigin(origin, req.headers.host);
+      // AG-UI without a configured allowlist: browser clients (CopilotKit dev
+      // servers) may read the run stream when they authenticate with a bearer
+      // token; the preflight carries no credentials, so allow it when the
+      // caller declares Authorization. agui.ts still rejects cookie auth
+      // cross-origin.
+      const aguiRequest = (req.url || '').includes(API.agui);
+      const aguiPreflight = aguiRequest && req.method === 'OPTIONS'
+        && /authorization/i.test(String(req.headers['access-control-request-headers'] || ''));
+      const aguiBearer = aguiRequest && /^Bearer\s+/i.test(String(req.headers.authorization || ''));
+      if (cors) {
+        res.setHeader('Access-Control-Allow-Origin', cors.origin);
+        if (cors.vary) res.setHeader('Vary', 'Origin');
+      } else if (origin && (aguiPreflight || aguiBearer)) {
         res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Vary', 'Origin');
       }

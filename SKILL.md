@@ -146,6 +146,11 @@ src/backend/
                         # token is validated once per request in the dispatcher
                         # (authenticateOidc) and cached per-request so the rest
                         # of the auth surface stays synchronous
+  cors.ts               # Browser CORS policy: same-host origins plus the
+                        # AUTERE_CORS_ORIGINS allowlist (`*` = any). Never
+                        # sends Access-Control-Allow-Credentials: cross-origin
+                        # browser clients use bearer tokens. Self-check:
+                        # npx tsx src/backend/cors.check.ts
   oidc.ts               # OIDC discovery + JWKS + JWT verification (RS/PS/ES/
                         # EdDSA), claim checks, claim->username mapping. Env:
                         # AUTERE_OIDC_ISSUER (alias AUTERE_OAUTH2_SERVER),
@@ -475,7 +480,8 @@ Env: `PI_MONITOR_PASSWORD`, `PI_MONITOR_AUTH`, `PI_IMAGES_MODEL`,
 `admin`), `AUTERE_OIDC_ISSUER` / `AUTERE_OAUTH2_SERVER` (OIDC issuer for JWT
 bearer auth), `AUTERE_OIDC_AUDIENCE`, `AUTERE_OIDC_USER_CLAIM`,
 `AUTERE_OIDC_AUTO_PROVISION` (default false: IdP users must exist in the
-users registry).
+users registry), `AUTERE_CORS_ORIGINS` (comma-separated browser origins, `*`
+= any; bearer auth only, never `Access-Control-Allow-Credentials`).
 
 **Roles** (hierarchy: chat < control < admin, enforced per API call in
 `requiredRole()` / `hasRole()` in auth.ts):
@@ -589,7 +595,9 @@ These rules apply to EVERY new endpoint, rename, or behavior change:
 7. **Auth model**: `POST /api/v1/auth/login` sets an HttpOnly cookie AND
    returns a bearer token (non-browser clients); API requests authenticate
    with cookie or `Authorization: Bearer`. CORS allows the
-   `Authorization` + `X-Autere-Client-Id` headers. When
+   `Authorization` + `X-Autere-Client-Id` headers; same-host origins are
+   always allowed, `AUTERE_CORS_ORIGINS` adds explicit cross-origin browser
+   origins (cors.ts, self-check `npx tsx src/backend/cors.check.ts`). When
    `AUTERE_OIDC_ISSUER` (alias `AUTERE_OAUTH2_SERVER`) is set, a
    JWT-shaped bearer is validated against that OIDC provider instead:
    discovery + JWKS are cached, roles still come from the users registry
