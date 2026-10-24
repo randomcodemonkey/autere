@@ -240,7 +240,11 @@ export async function readExtensions(): Promise<void> {
   const localExts = discoverLocalExtensions();
   localExtensionNames.clear();
   for (const e of localExts) localExtensionNames.add(e.id);
-  const allDiscovered = [...npmExts, ...localExts];
+  // Local (bundled/env) copies win over npm packages with the same id: a
+  // stale legacy `npm:pi-9router-ext` entry and the bundled fork both resolve
+  // to this name, and only the copy pi actually loads should be listed.
+  const localIds = new Set(localExts.map((e) => e.id));
+  const allDiscovered = [...npmExts.filter((e) => !localIds.has(e.id)), ...localExts];
   const now = Date.now();
   const seen = new Set<string>();
 

@@ -46,10 +46,18 @@ try {
   assert.equal(installed('pi-9router-ext'), true, 'always-on extra is copied into the env');
 
   // The Agent card lists it (status/modal enrichment) while it is enabled.
+  // A stale legacy npm entry (admin settings packages + module on disk) must
+  // not show up as a second row next to the bundled fork.
+  mkdirSync(join(root, '.autere', 'users', 'admin'), { recursive: true });
+  writeFileSync(join(root, '.autere', 'users', 'admin', 'settings.json'),
+    JSON.stringify({ packages: ['npm:pi-9router-ext'] }));
+  const legacyModule = join(root, '.pi', 'agent', 'npm', 'node_modules', 'pi-9router-ext');
+  mkdirSync(legacyModule, { recursive: true });
+  writeFileSync(join(legacyModule, 'index.ts'), 'export default function () {}\n');
   const { readExtensions, enabledExtensionsFor } = await import('../../../src/backend/extensions.js');
   await readExtensions();
-  const onCard = () => enabledExtensionsFor('admin').some((e) => e.name === 'pi-9router-ext');
-  assert.equal(onCard(), true, 'enabled always-on extra is listed on the Agent card');
+  const onCard = () => enabledExtensionsFor('admin').filter((e) => e.name === 'pi-9router-ext');
+  assert.equal(onCard().length, 1, 'bundled copy wins over the stale npm entry, one card row');
 
   // Legacy npm package and retired extras are cleaned out of the env.
   writeFileSync(join(envDir, 'settings.json'), JSON.stringify({ packages: ['npm:pi-9router-ext', 'npm:pi-memory'] }));
@@ -67,7 +75,7 @@ try {
   ensurePiEnv('admin');
   assert.equal(installed('pi-9router-ext'), false, 'copy removed when the provider changes');
   await readExtensions();
-  assert.equal(onCard(), false, 'card hides an always-on extra the env no longer loads');
+  assert.deepEqual(onCard(), [], 'card hides an always-on extra the env no longer loads');
 
   // Bundled source missing (deployment/image built without extras): nothing is
   // always-on, and the legacy npm package is left in place so the env still has
