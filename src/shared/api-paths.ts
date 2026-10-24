@@ -52,6 +52,9 @@ export const API = {
   bootstrap: `${P}/bootstrap`,
   status: `${P}/status`,
 
+  /** AG-UI protocol endpoint: POST a RunAgentInput, get the run as SSE. */
+  agui: `${P}/agui`,
+
   sessions: {
     list: `${P}/sessions`,
     search: (q: string) => `${P}/sessions/search?q=${encodeURIComponent(q)}`,

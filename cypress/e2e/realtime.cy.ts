@@ -13,8 +13,15 @@ describe('autere — realtime', () => {
     it('updates status in real-time via SSE', function() {
       this.timeout(60000);
 
-      // Send a message to trigger status change
-      cy.get('.chat-input').type('Hello');
+      // The SSE stream must be open before the turn starts: agent_start's
+      // status is the only 'streaming' broadcast, and a run that starts
+      // before the EventSource connects is never seen as streaming.
+      cy.get('.status-badge', { timeout: 30000 }).should('have.class', 'status-connected');
+
+      // Send a message to trigger status change. The mock streams "essays"
+      // over several seconds — an instant reply finishes before the badge
+      // can be observed at all.
+      cy.get('.chat-input').type('essays');
       cy.get('.chat-send-btn:not(.chat-steer-btn):not(.chat-followup-btn)').click({ force: true });
 
       // Status should change to Working

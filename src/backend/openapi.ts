@@ -12,6 +12,8 @@ export interface RouteDoc {
   tag: string;
   summary: string;
   status?: number;
+  /** Response is an SSE stream (AG-UI), not the JSON envelope */
+  sse?: boolean;
 }
 
 const envelope = (dataSchema: any) => ({
@@ -74,13 +76,19 @@ export function buildOpenApiSpec(routes: RouteDoc[]) {
       schema: { type: 'string' },
     })) as any[];
     const success = r.status && r.status !== 200 ? String(r.status) : '200';
+    const successResponse = r.sse
+      ? {
+          description: 'Server-Sent-Events stream of AG-UI run events',
+          content: { 'text/event-stream': { schema: { type: 'string' } } },
+        }
+      : OK({});
     const op: any = {
       operationId: opId(r.template, r.method),
       summary: r.summary,
       tags: [r.tag],
       'x-required-role': r.role,
       responses: {
-        [success]: OK({}),
+        [success]: successResponse,
         '400': ERR('Invalid input', '400'),
         '401': ERR('Unauthenticated', '401'),
         '403': ERR('Insufficient role', '403'),

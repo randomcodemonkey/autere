@@ -39,6 +39,7 @@ import { getPiEnvDir, ensurePiEnv, validateSandboxImage } from './pi-env.js';
 import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
 import { appendSessionInfo, findSessionFileBySessionId } from './sessions.js';
+import { handleAguiRun } from './agui.js';
 
 // pi --version, resolved once per backend process (cached — the binary does
 // not change mid-process). Empty string on failure so the UI shows '—'.
@@ -214,6 +215,8 @@ interface RouteDef {
   summary: string;
   /** Success status code (default 200) */
   status?: number;
+  /** Response is a Server-Sent-Events stream, not a JSON envelope (OpenAPI) */
+  sse?: boolean;
   handler: Handler;
 }
 
@@ -467,7 +470,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
   const route = (r: RouteDef & { isPublic?: boolean }) => {
     routes.push(r);
     if (r.isPublic) publicRoutes.push(r);
-    docRoutes.push({ method: r.method, template: r.template, role: r.role, tag: r.tag, summary: r.summary, status: r.status });
+    docRoutes.push({ method: r.method, template: r.template, role: r.role, tag: r.tag, summary: r.summary, status: r.status, sse: r.sse });
   };
 
   // ── Public routes (no auth) ──
@@ -1543,6 +1546,31 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       } catch (err: any) {
         sendJSON(c.res, { success: false, error: `Failed to cancel pending message: ${err.statusCode ? err.message : err}` }, err.statusCode || 400);
       }
+    },
+  });
+
+  // ── AG-UI protocol endpoint ──
+  route({
+    method: 'POST', path: API.agui, template: `${API_PREFIX}/agui`,
+    role: 'chat', tag: 'AG-UI', sse: true,
+    summary: 'AG-UI protocol (RunAgentInput in, SSE run-event stream out). An unseen threadId creates a pi session and later runs resume it; the trailing user message is sent to pi, inline file parts are saved as attachments, and context entries are injected into the prompt as ambient client context. Client-defined tools and interrupts are not supported.',
+    handler: async (c) => {
+      let body: any;
+      try {
+        body = await readBody(c.req);
+      } catch (err: any) {
+        sendJSON(c.res, { success: false, error: err?.message || 'Invalid JSON body' }, err?.statusCode || 400);
+        return;
+      }
+      await handleAguiRun({
+        user: c.user,
+        req: c.req,
+        res: c.res,
+        body,
+        bearer: /^Bearer\s+/i.test(String(c.req.headers.authorization || '')),
+        pm,
+        validateWorkdirs,
+      });
     },
   });
 

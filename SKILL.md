@@ -128,6 +128,13 @@ src/backend/
                         # validation
   openapi.ts            # OpenAPI 3 spec generated from the route table,
                         # served at GET /api/v1/openapi.json
+  agui.ts               # AG-UI protocol adapter (POST /api/v1/agui):
+                        # RunAgentInput -> pi prompt, UserSession events ->
+                        # AG-UI SSE events. threadId -> session file registry
+                        # (~/.autere/users/<user>/agui-threads.json). Context
+                        # entries + inline file parts are relayed to the
+                        # agent; client-defined tools/interrupts are not
+                        # supported (pi has no frontend-tool callback)
   rpc-client.ts         # pi RPC wrapper (prompt/steer/followUp, image blocks)
   user-session.ts       # Per-user pi process, state, history buffers, SSE fanout
   process-manager.ts    # Spawning/stopping/tracking pi processes — ONE per
@@ -303,6 +310,34 @@ extras/pi-autere/      # pi extension: agent-facing autere API — schedule/list
                        # a clear error.
 SKILL.md               # This file — canonical, in-repo
 ```
+
+## AG-UI adapter (src/backend/agui.ts)
+
+`POST /api/v1/agui` speaks the AG-UI protocol to external frontends
+(CopilotKit etc.): `RunAgentInput` in, SSE run events out.
+
+- `threadId` -> pi session file, persisted in
+  `~/.autere/users/<user>/agui-threads.json`; an unknown id creates a session
+  (the dashboard lists it), a known one resumes it. Conversation state is the
+  pi session, so only the trailing `user` message is sent to pi.
+- Translations live in `AguiTranslator` (pure, covered by
+  `npx tsx src/backend/agui.check.ts`): `stream_delta` -> TEXT/REASONING
+  message events (cumulative text -> deltas), `tool_start`/`tool_end` +
+  `toolResult` history entries -> TOOL_CALL_START/ARGS/END/RESULT, `status`/
+  `stats` -> STATE_SNAPSHOT (deduped). `turn_settled` (internal, emitted on
+  agent_settled) -> RUN_FINISHED; `agent_end` cannot be used because it also
+  fires between auto-retries.
+- Runs subscribe via `UserSession.subscribe()` (in-process listener that also
+  sees events when no dashboard client views the session). Ends on
+  `turn_settled`; a 2 s fallback finishes if an old pi never sends it.
+- Client `context` entries go to the prompt inside `<agui-run-context>`;
+  inline base64 content parts are saved into the env `uploads/` dir and
+  referenced by path (images also inline to the model). Client-defined tools
+  and interrupts stay unsupported: pi has no frontend-tool callback.
+- Concurrent runs on one thread answer `RUN_ERROR` code `agent_busy`; client
+  disconnect aborts the turn (`forwardedProps.abortOnDisconnect: false` opts
+  out). Cross-origin browser callers must use a bearer token — the CORS path
+  refuses cookie auth to avoid CSRF.
 
 ## Streaming & Image Pipeline (important invariants)
 

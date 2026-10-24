@@ -283,6 +283,26 @@ export class UserSession {
    */
   broadcast(data: any) {
     deliverToSession(this.user, this.routedSessionFile(), data);
+    this.emitLocal(data);
+  }
+
+  /**
+   * In-process listener for every broadcast event plus internal-only
+   * lifecycle events (`turn_settled`). Used by the AG-UI adapter, which must
+   * see events even when no dashboard client views this session. Returns an
+   * unsubscribe function.
+   */
+  subscribe(listener: (event: any) => void): () => void {
+    this.localListeners.add(listener);
+    return () => { this.localListeners.delete(listener); };
+  }
+
+  private localListeners = new Set<(event: any) => void>();
+
+  private emitLocal(event: any): void {
+    for (const listener of this.localListeners) {
+      try { listener(event); } catch (err) { log.userSession.error('local session listener failed:', err); }
+    }
   }
 
   /**
@@ -885,6 +905,10 @@ export class UserSession {
             // agent_end without a queued model change — restart as before.
             this.onTurnEnd?.();
           }
+          // Internal-only signal for in-process consumers (AG-UI adapter):
+          // the run is fully over, including queued model changes and retries.
+          // `agent_end` alone fires between auto-retries, so it cannot be used.
+          if (event.type === 'agent_settled') this.emitLocal({ type: 'turn_settled' });
           break;
         }
         case 'queue_update':
@@ -1168,7 +1192,7 @@ export class UserSession {
       // Delta events send ONLY the streaming entry's text — never the full
       // history buffer. Re-broadcasting history (with multi-MB base64 images)
       // on every token caused multi-GB memory churn and client jank.
-      this.broadcast({ type: 'stream_delta', sessionId, data: { role: 'thinking', text: s.currentThinkingText } });
+      this.broadcast({ type: 'stream_delta', sessionId, data: { role: 'thinking', id: s.activeThinkingId, text: s.currentThinkingText } });
     } else if (evt.type === 'thinking_end') {
       s.isThinking = false;
       const text = evt.content || s.currentThinkingText;
@@ -1200,7 +1224,7 @@ export class UserSession {
       // withheld until real content arrives, then revealed in one shot.
       if (s.currentStreamText.trim() !== '') {
         if (!wasRevealed) this.broadcastHistoryUpsert([cur]);
-        this.broadcast({ type: 'stream_delta', sessionId, data: { role: 'assistant', text: s.currentStreamText } });
+        this.broadcast({ type: 'stream_delta', sessionId, data: { role: 'assistant', id: cur.id, text: s.currentStreamText } });
       }
     }
 
@@ -1426,7 +1450,7 @@ export class UserSession {
     }
 
     s.activeTools.set(event.toolCallId, toolEntry);
-    this.broadcast({ type: 'tool_start', data: { id: event.toolCallId, name: event.toolName, cmd } });
+    this.broadcast({ type: 'tool_start', data: { id: event.toolCallId, name: event.toolName, cmd, args: event.args } });
 
     // Show the tool call directly in the chat as a streaming toolCall entry;
     // handleToolEnd replaces it with the connected toolResult.

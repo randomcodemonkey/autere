@@ -125,7 +125,7 @@ Stream: `GET /api/v1/events` (per-user, scoped to the viewed session where appli
 | `stream_history` | full history snapshot (connect/reload) |
 | `history_upsert` | entries appended or replaced by stable id |
 | `history_remove` | entry ids removed |
-| `stream_delta` | `{role, text}` of the streaming entry (throttled client-side) |
+| `stream_delta` | `{role, id, text}` of the streaming entry (cumulative text; throttled client-side) |
 | `tool_start` / `tool_end` | tool lifecycle |
 | `models` / `sessions` / `extensions` | resource lists |
 | `navigate` | server-commanded frontend navigation |
@@ -134,6 +134,43 @@ Stream: `GET /api/v1/events` (per-user, scoped to the viewed session where appli
 | `heartbeat` | keep-alive |
 
 History entry `role` values: `user`, `assistant`, `thinking`, `toolCall`, `toolResult`, `edit`, `file`, `image`. Non-renderable pi roles (e.g. `model_change`) are dropped.
+
+### AG-UI protocol
+
+AG-UI clients (CopilotKit, `HttpAgent`, any SDK) can talk to autere over
+`POST /api/v1/agui`: the request body is a `RunAgentInput`
+(`threadId`, `runId`, `messages`, `context`, `forwardedProps`) and the response
+is an SSE stream of AG-UI events (`RUN_STARTED`, text/reasoning/tool-call
+deltas, `STATE_SNAPSHOT`, optional `MESSAGES_SNAPSHOT`, `RUN_FINISHED` or
+`RUN_ERROR`).
+
+- **threadId is the conversation.** autere maps it to a pi session file
+  (`~/.autere/users/<user>/agui-threads.json`). An unseen `threadId` creates a
+  new session; later runs resume the same session (respawned on demand after
+  the idle timeout). History lives in the session, so only the trailing `user`
+  message of `messages` is sent to pi.
+- **Client context never lives in browser-only state.** `context` entries are
+  appended to the prompt inside `<agui-run-context>`; inline `data` content
+  parts (images/documents) are saved into the session's uploads dir and
+  referenced by path (images are also shown to the model), so pi's tools can
+  use them.
+- **forwardedProps** supported for new threads: `personaId`, `sessionName`,
+  `workdir`/`workdirs` (admin), `model` (`provider/id`), plus
+  `sessionFile` (adopt an existing session), `historySnapshot: true` (emit a
+  `MESSAGES_SNAPSHOT` of the stored conversation), and
+  `abortOnDisconnect: false` (keep the turn running when the client aborts).
+- **Not supported:** client-defined `tools` (pi has no frontend-tool callback)
+  and human-in-the-loop interrupts. These are protocol-level gaps in pi, not
+  in autere.
+
+```bash
+curl -N http://localhost:3456/api/v1/agui \
+  -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json' \
+  -d '{"threadId":"my-thread","runId":"r1","messages":[{"id":"m1","role":"user","content":"Hello"}],"tools":[],"context":[],"forwardedProps":{}}'
+```
+
+Browser clients on another origin must use the bearer token (cookie auth is
+rejected cross-origin on purpose).
 
 ## Troubleshooting
 
