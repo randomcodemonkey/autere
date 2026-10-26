@@ -2158,7 +2158,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         // applied at their own turn end, idle ones restart immediately.
         let deferred = false;
         for (const s of pm.allSessions()) {
-          if (s.user !== c.user) continue;
+          if (s.user !== c.user || !s.restartable) continue;
           if (s.state.sessionState.isStreaming || s.state.sessionState.compacting) { deferred = true; continue; }
           const f = s.routedSessionFile();
           try { await pm.terminate(c.user, f); await pm.getOrCreate(c.user, f); } catch (err) {

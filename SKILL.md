@@ -138,7 +138,11 @@ src/backend/
   rpc-client.ts         # pi RPC wrapper (prompt/steer/followUp, image blocks)
   user-session.ts       # Per-user pi process, state, history buffers, SSE fanout
   process-manager.ts    # Spawning/stopping/tracking pi processes — ONE per
-                        # pi agent session (user+sessionFile keyed), idle timeout
+                        # pi agent session (user+sessionFile keyed), idle timeout.
+                        # adopt()/release() register scheduler-owned task-run
+                        # sessions so they list as active and stream like any
+                        # other session (restartable=false — a settings save
+                        # never restarts a run mid-flight)
   client-hub.ts         # Per-user clientId → viewed-session registry; routes
                         # SSE events and API calls to the right session's process
   auth.ts               # Token auth, users, roles, last-session tracking.
@@ -182,6 +186,12 @@ src/backend/
                         # (`session` id passed by schedule_task, resolved by the
                         # backend) or use task-form/API workdirs (which force
                         # sandboxing even when user/global sandboxing is off).
+                        # Each run's pi process is a UserSession adopted into the
+                        # ProcessManager (adopted after start, released when the
+                        # run ends), so the run's session shows as active in the
+                        # dashboard and streams to clients viewing it — the run
+                        # prompt is committed to its history buffer like a
+                        # normal user message.
                         # DELETE /scheduler/one-off-tasks removes one-off tasks
                         # older than 24h; scheduled/manual runs are refused
                         # after that age. CLI `task-run <id> --wait` blocks on

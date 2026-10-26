@@ -122,6 +122,15 @@ function createInitialState(): UserSessionState {
 const ALL_DONE_SETTLE_MS = 3000;
 const TURN_END_DEDUPE_MS = 15_000;
 
+export interface UserSessionOptions {
+  /** Auto-name a brand-new session "[ui] - <date>" on start (default true).
+   *  Externally-owned sessions (scheduler runs) name themselves. */
+  autoName?: boolean;
+  /** Whether a settings save may restart this process (default true).
+   *  Scheduler-owned runs must never be restarted mid-run. */
+  restartable?: boolean;
+}
+
 export class UserSession {
   /** The user this session (and its pi env) belongs to */
   readonly user: string;
@@ -129,6 +138,9 @@ export class UserSession {
   sessionFile: string | null;
   /** Chat history buffer size (messages) — from the user's settings */
   readonly historyLimit: number;
+  /** False for processes another owner (scheduler) manages and stops itself */
+  readonly restartable: boolean;
+  private readonly autoNameSession: boolean;
   readonly rpc: MonitorRpcClient;
   readonly state: UserSessionState;
   // Stream-health tracking: a turn whose provider stream hangs (upstream stall,
@@ -200,9 +212,11 @@ export class UserSession {
     this.broadcast({ type: 'stats', data: { ...this.state.sessionStats } });
   }
 
-  constructor(user: string, sessionFile: string | null, rpcOptions: { provider?: string; model?: string; args?: string[]; cwd?: string; workdirs?: string[]; mountDockerSocket?: boolean }, idleTimeoutMs: number = 30 * 60 * 1000) {
+  constructor(user: string, sessionFile: string | null, rpcOptions: { provider?: string; model?: string; args?: string[]; cwd?: string; workdirs?: string[]; mountDockerSocket?: boolean }, idleTimeoutMs: number = 30 * 60 * 1000, opts: UserSessionOptions = {}) {
     this.user = user;
     this.sessionFile = sessionFile;
+    this.autoNameSession = opts.autoName !== false;
+    this.restartable = opts.restartable !== false;
     // Chat history buffer size (messages). Settings saves restart the pi
     // process, so snapshotting here always reflects the current setting.
     this.historyLimit = getHistoryLimit(user);
@@ -669,7 +683,7 @@ export class UserSession {
     // "[ui] - <user locale + timezone date+time>". Locale and IANA time zone
     // were persisted by /api/new-session (setUserSetting); Intl performs the
     // zone conversion — the backend never guesses the user's offset.
-    if (!this.resumedExistingSession && !this.state.sessionState.sessionName) {
+    if (this.autoNameSession && !this.resumedExistingSession && !this.state.sessionState.sessionName) {
       try {
         const locale = getUserSetting(this.user, 'locale', '');
         const timeZone = getUserSetting(this.user, 'timeZone', '');

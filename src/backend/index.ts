@@ -171,6 +171,7 @@ async function main() {
   const scheduler = new Scheduler({
     model: config.piModel,
     args: config.piArgs,
+    processManager: pm,
     persistSpawnOpts: (user, sessionFile, opts) => pm.persistSpawnOpts(user, sessionFile, opts),
   });
   scheduler.start();

@@ -91,6 +91,7 @@ export class ProcessManager {
     const map = this.sessions.get(user);
     if (!map) return;
     for (const [sessionFile, session] of map) {
+      if (!session.restartable) continue;
       if (session.state.sessionState.isStreaming || session.state.sessionState.compacting) {
         this.pendingRestarts.add(`${user}::${sessionFile}`);
       }
@@ -214,6 +215,29 @@ export class ProcessManager {
     if (!sessionFile) return undefined;
     const session = this.sessions.get(user)?.get(sessionFile);
     return session && session.isRunning ? session : undefined;
+  }
+
+  /**
+   * Register a process another owner (scheduler task runs) spawned and
+   * manages: it lists/streams like any session, but the owner stops it and
+   * calls release() — terminate() would resurrect it via getOrCreate.
+   */
+  adopt(user: string, session: UserSession): void {
+    const file = session.routedSessionFile();
+    if (!file) return;
+    let map = this.sessions.get(user);
+    if (!map) {
+      map = new Map();
+      this.sessions.set(user, map);
+    }
+    map.set(file, session);
+  }
+
+  /** Detach an adopted session after its owner stopped it */
+  release(user: string, session: UserSession): void {
+    const file = session.routedSessionFile();
+    const map = this.sessions.get(user);
+    if (map && file && map.get(file) === session) map.delete(file);
   }
 
   /** Any RUNNING pi process belonging to the user (settings model catalog) */

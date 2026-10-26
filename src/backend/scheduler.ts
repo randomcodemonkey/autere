@@ -24,9 +24,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFile
 import { join, dirname } from 'path';
 import { randomUUID } from 'crypto';
 import { USER_SETTINGS_DIR } from './constants.js';
-import { ensurePiEnv } from './pi-env.js';
-import { sandboxSpawnOptions } from './user-session.js';
-import { getEditIgnorePaths, getSendImagesToChatModel, getImagePreviewQuality, getImageStreamFix } from './user-settings.js';
+import { UserSession } from './user-session.js';
+import type { ProcessManager } from './process-manager.js';
 import { MonitorRpcClient } from './rpc-client.js';
 import { cronMatches } from '../shared/cron.js';
 import { sanitizeUserName } from '../shared/format.js';
@@ -58,6 +57,9 @@ export interface SchedulerOptions {
   runTimeoutMs?: number;
   /** Persist spawn settings so retained run sessions resume with their workdirs. */
   persistSpawnOpts?: (user: string, sessionFile: string, opts: { cwd?: string; workdirs?: string[] }) => void;
+  /** Process manager the runs register with, so their sessions list as active
+   *  and stream to the dashboard like any other session. */
+  processManager?: ProcessManager;
 }
 
 // ── Paths ──
@@ -298,7 +300,6 @@ interface ActiveRun {
   user: string;
   taskId: string;
   runId: string;
-  rpc: MonitorRpcClient;
   /** pi session id of this run — set once the run's agent reports state;
    *  lets the delivery route recognize messages coming from a task run. */
   piSessionId: string;
@@ -314,12 +315,22 @@ export class Scheduler {
   private readonly runTimeoutMs: number;
   private readonly spawnOptions: { model?: string; args?: string[] };
   private readonly persistSpawnOpts?: SchedulerOptions['persistSpawnOpts'];
+  private readonly processManager?: ProcessManager;
 
   constructor(options: SchedulerOptions = {}) {
     this.tickMs = options.tickMs ?? 20_000;
     this.runTimeoutMs = options.runTimeoutMs ?? 15 * 60 * 1000;
     this.spawnOptions = { model: options.model, args: options.args };
     this.persistSpawnOpts = options.persistSpawnOpts;
+    this.processManager = options.processManager;
+  }
+
+  /** Stop a run's pi process and detach it from the process manager */
+  private async endSession(user: string, session: UserSession): Promise<void> {
+    this.processManager?.release(user, session);
+    try { await session.stop(); } catch (err) {
+      log.scheduler.error('Failed to stop task run process:', err);
+    }
   }
 
   start(): void {
@@ -486,25 +497,25 @@ export class Scheduler {
 
     let aborted = false;
     let abortWaiter: (() => void) | null = null;
-    let rpc: MonitorRpcClient;
+    // Reuse: a persistent task session, loaded by pi from the start so its
+    // history is streamed like any resumed session. A missing file (deleted
+    // externally) self-heals into a fresh session.
+    const reuseFile = task.reuseSession && task.reusedSessionFile && existsSync(task.reusedSessionFile)
+      ? task.reusedSessionFile
+      : null;
+    let session: UserSession;
     try {
-      const piEnvDir = ensurePiEnv(user);
-      rpc = new MonitorRpcClient({
+      session = new UserSession(user, reuseFile, {
         // Per-task model override wins over the scheduler default; when unset
         // the user's pi default model applies.
         model: task.model || this.spawnOptions.model,
         args: this.spawnOptions.args,
-        agentDir: piEnvDir,
         // Runs inherit the creating session's environment (spawn settings,
         // sandbox image/mounts) and workdirs — resolved from backend state at
         // task creation. No sandbox/workdirs = host spawn like any session.
-        editIgnorePaths: getEditIgnorePaths(user),
-        sendImagesToChatModel: getSendImagesToChatModel(user),
-        imagePreviewQuality: getImagePreviewQuality(user),
-        imageStreamFix: getImageStreamFix(user),
-        ...(task.cwd ? { cwd: task.cwd } : {}),
-        ...sandboxSpawnOptions(user, piEnvDir, task.cwd, task.workdirs),
-      });
+        cwd: task.cwd,
+        workdirs: task.workdirs,
+      }, this.runTimeoutMs + 5 * 60_000, { autoName: false, restartable: false });
     } catch (err: any) {
       // The record exists already — finalize it, or it stays 'running' on
       // disk forever and the task can never look idle again.
@@ -516,16 +527,16 @@ export class Scheduler {
       broadcastToUser(user, { type: 'tasks' });
       throw err;
     }
+    const rpc = session.rpc;
     const active: ActiveRun = {
       user,
       taskId: task.id,
       runId,
-      rpc,
       piSessionId: '',
       abort: () => {
         aborted = true;
         abortWaiter?.();
-        rpc.stop().catch(() => {});
+        void this.endSession(user, session);
       },
     };
     this.activeRuns.set(key, active);
@@ -558,18 +569,14 @@ export class Scheduler {
     // immediately and polls the run record for status/log.
     const runPromise = (async () => {
       try {
-        // 1. Start a dedicated pi agent for this run
+        // 1. Start a dedicated pi agent for this run — a UserSession, so the
+        // run lists as active and streams to the dashboard like any session.
         addLog('Starting pi agent for scheduled run');
-        await rpc.start();
+        if (reuseFile) addLog('Switching into the task session');
+        await session.start();
         if (aborted) throw new Error('Run aborted');
-
-        // Reuse: switch into the task's persistent session before naming or
-        // notifying, so the run's session id/file ARE the reused ones. A
-        // missing file (deleted externally) self-heals into a fresh session.
-        if (task.reuseSession && task.reusedSessionFile && existsSync(task.reusedSessionFile)) {
-          addLog('Switching into the task session');
-          await rpc.switchSession(task.reusedSessionFile);
-        }
+        // pi has reported its (possibly brand-new) session file by now.
+        this.processManager?.adopt(user, session);
 
         // Auto-name task-run sessions: "[task] - <user locale + timezone date+time>".
         // Uses the user's persisted locale/IANA timezone so the name matches
@@ -592,16 +599,16 @@ export class Scheduler {
         // Fire-and-forget: SMTP/push can take seconds (timeouts on a dead
         // server) — the task's prompt must not wait for a notification.
         try {
-          const state = await rpc.getState();
-          runSessionFile = state.sessionFile || '';
-          active.piSessionId = state.sessionId || '';
+          const st = session.state.sessionState;
+          runSessionFile = st.sessionFile || '';
+          active.piSessionId = st.sessionId || '';
           if (runSessionFile) {
             this.persistSpawnOpts?.(user, runSessionFile, { cwd: task.cwd, workdirs: task.workdirs });
           }
           void sendNotification(user, 'taskStart', {
-            title: runName || state.sessionName || task.name,
+            title: runName || st.sessionName || task.name,
             body: `Scheduled task "${task.name}" started`,
-            path: state.sessionId ? `session/${state.sessionId}` : null,
+            path: st.sessionId ? `session/${st.sessionId}` : null,
           });
         } catch (err) {
           log.scheduler.error(`Task-start notification for "${task.name}" failed:`, err);
@@ -639,6 +646,9 @@ export class Scheduler {
         const agentResultP = this.waitForAgentResult(rpc, (hook) => { abortWaiter = hook; });
         addLog(`Sending prompt (${prompt.length} chars)`);
         await rpc.prompt(prompt);
+        // Commit the task prompt into the streamed history (pi emits no
+        // message_end for user messages).
+        session.addUserEntry(prompt);
         addLog('Prompt sent — waiting for agent to finish');
         const agentResult = await agentResultP;
         if (agentResult.startsWith('__AGENT_ERROR__:')) {
@@ -670,7 +680,7 @@ export class Scheduler {
         log.scheduler.error(`Run ${runId} of task "${task.name}" failed:`, err);
       } finally {
         // 5. Always stop the pi agent started for this run
-        try { await rpc.stop(); } catch {}
+        await this.endSession(user, session);
         addLog('pi agent stopped');
         // 6. The run's session is disposable unless the task opted in — with
         //    saveSession/reuseSession/saveLastSession off the file is removed
