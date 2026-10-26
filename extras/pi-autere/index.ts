@@ -7,6 +7,7 @@
  *   autere_set_task_enabled   — stop/resume a task (the "goal reached" step)
  *   autere_find_sessions      — sessions and their latest messages
  *   autere_send_to_session    — deliver a message to another session
+ *   autere_persona            — list personas / bind one to this session
  *   send_notification         — OS-level notification on the user's devices
  *
  * Transport: HTTP against the autere backend, authenticated with the token
@@ -393,6 +394,46 @@ export default function (pi: ExtensionAPI) {
 				throw err;
 			}
 			return ok(`Delivered to session "${target.sessionName ?? target.id}" (${target.id}) as a user message.`, { delivered: true, sessionId: target.id });
+		},
+	});
+
+	pi.registerTool({
+		name: "autere_persona",
+		label: "Persona",
+		promptSnippet: "autere_persona — list personas, or switch this session's persona",
+		description:
+			"Personas are named system prompts the autere user keeps; a session can bind one. Call without `persona` to list the available ones (name, id, description) and to see which persona this session currently uses.\n\n" +
+			"Pass a name or id to bind it to THIS session — it applies from the next turn. Pass \"none\" to clear it. Only the personas of this session's autere user exist; an unknown name fails with the list of valid ones.",
+		parameters: Type.Object({
+			persona: Type.Optional(Type.String({ description: "Persona name or id to bind; \"none\" clears the binding; omit to list" })),
+		}),
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const sessionId = currentSessionId(ctx);
+			const ref = String(params.persona ?? "").trim();
+			const personas: any[] = (await api("GET", "/personas", undefined, signal)) ?? [];
+
+			if (!ref) {
+				const state: any = await api("GET", `/session/state${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`, undefined, signal)
+					.catch(() => null);
+				const active = state?.persona ?? null;
+				if (personas.length === 0) return ok("No personas are defined for this user.", { personas: [], active });
+				const lines = personas.map((p) =>
+					`- ${p.name} (id: ${p.id})${p.description ? ` — ${clip(p.description, 120)}` : ""}`);
+				return ok(
+					`${personas.length} persona(s); this session uses ${active ? `"${active.name}"` : "none"}:\n${lines.join("\n")}`,
+					{ personas: personas.map((p) => ({ id: p.id, name: p.name })), active },
+				);
+			}
+
+			const res = await api("PUT", "/session/persona", {
+				sessionId: sessionId ?? undefined,
+				personaId: ref.toLowerCase() === "none" ? null : ref,
+			}, signal);
+			const bound = res?.persona ?? null;
+			return ok(
+				bound ? `Persona for this session is now "${bound.name}".` : "Persona binding cleared for this session.",
+				{ persona: bound },
+			);
 		},
 	});
 

@@ -27,7 +27,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFil
 import { join, sep } from 'path';
 import { USER_SETTINGS_DIR } from './constants.js';
 import { getPiEnvDir } from './pi-env.js';
-import { listPersonas, setActivePersona } from './personas.js';
+import { findPersona, listPersonas, setActivePersona } from './personas.js';
 import type { ProcessManager } from './process-manager.js';
 import type { RpcImage } from './rpc-client.js';
 import type { UserSession } from './user-session.js';
@@ -595,11 +595,14 @@ export async function handleAguiRun(opts: AguiRunOptions): Promise<void> {
     }
   }
 
-  // Validate the persona before spawning anything.
-  const personaId = typeof props.personaId === 'string' ? props.personaId.trim() : '';
-  const persona = personaId ? listPersonas(user).find((p) => p.id === personaId) : undefined;
-  if (personaId && !persona) {
-    json(res, 400, `Unknown persona: ${personaId}`);
+  // Validate the persona before spawning anything. `personaId` takes the id or
+  // the name: AG-UI clients have no way to know the generated UUIDs.
+  const personaRef = typeof props.personaId === 'string' ? props.personaId.trim() : '';
+  const personas = personaRef ? listPersonas(user) : [];
+  const persona = personaRef ? findPersona(personas, personaRef) : undefined;
+  if (personaRef && !persona) {
+    const available = personas.map((p) => p.name).join(', ') || 'none';
+    json(res, 400, `Unknown persona: ${personaRef} (available: ${available})`);
     return;
   }
 
@@ -650,13 +653,14 @@ export async function handleAguiRun(opts: AguiRunOptions): Promise<void> {
 
   bindThread(user, input.threadId, { sessionFile: file, sessionId });
 
-  // First-run setup (persona/name only for a session this thread created);
-  // an explicit model applies to both new and resumed threads.
+  // An explicit persona/model applies to new and resumed threads; the name is
+  // first-run only (it is the session's identity, not a per-run setting).
+  if (persona) {
+    setActivePersona(user, file, persona);
+    session.state.sessionState.persona = { id: persona.id, name: persona.name };
+    session.broadcast({ type: 'status', data: { ...session.state.sessionState } });
+  }
   if (newSession) {
-    if (persona) {
-      setActivePersona(user, file, persona);
-      session.state.sessionState.persona = { id: persona.id, name: persona.name };
-    }
     if (typeof props.sessionName === 'string' && props.sessionName.trim()) {
       try { await session.rpc.setSessionName(props.sessionName.trim().slice(0, 200)); }
       catch (err) { log.http.error('AG-UI setSessionName failed:', err); }

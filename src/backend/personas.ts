@@ -64,6 +64,14 @@ export function listPersonas(user: string): Persona[] {
   return Array.isArray(list) ? list.filter((p: any) => p && typeof p.id === 'string') : [];
 }
 
+/** Look up by id, then by name (case-insensitive) — clients send either. */
+export function findPersona(personas: Persona[], ref: string): Persona | undefined {
+  const wanted = ref.trim().toLowerCase();
+  if (!wanted) return undefined;
+  return personas.find((p) => p.id === ref.trim())
+    ?? personas.find((p) => p.name.trim().toLowerCase() === wanted);
+}
+
 export function savePersonas(user: string, personas: Persona[]): void {
   writeJson(libraryPath(user), personas);
 }

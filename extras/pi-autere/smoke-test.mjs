@@ -15,7 +15,7 @@ process.env.AUTERE_PI_ENVS_DIR = join(root, "pi-envs");
 process.env.PI_CODING_AGENT_DIR = envDir;
 
 // ── Stub autere backend ──
-const state = { tasks: [], runs: [], sessions: [], sent: [], notified: [], notifyDisabled: false, busy: false, auth: new Set(), calls: [] };
+const state = { tasks: [], runs: [], sessions: [], sent: [], notified: [], notifyDisabled: false, busy: false, auth: new Set(), calls: [], persona: null };
 let taskSeq = 0;
 let runSeq = 0;
 
@@ -71,6 +71,27 @@ const server = createServer((req, res) => {
         ? [{ role: "user", text: "hello there" }, { role: "assistant", text: "hi, what can I do" }]
         : [{ role: "user", text: "other session" }]);
     }
+    if (req.method === "GET" && path === "/personas") {
+      return data(res, [
+        { id: "p1", name: "BPMN Agent", description: "diagram mapper", prompt: "You map BPMN." },
+        { id: "p2", name: "Reviewer", description: "", prompt: "You review." },
+      ]);
+    }
+    if (req.method === "GET" && path === "/session/state") return data(res, { persona: state.persona });
+    if (req.method === "PUT" && path === "/session/persona") {
+      // mirrors the real route: id or name, null clears, unknown lists the names
+      if (body.personaId == null) {
+        state.persona = null;
+        return data(res, { persona: null });
+      }
+      const ref = String(body.personaId).trim().toLowerCase();
+      const all = [{ id: "p1", name: "BPMN Agent" }, { id: "p2", name: "Reviewer" }];
+      const hit = all.find((p) => p.id === ref || p.name.toLowerCase() === ref);
+      if (!hit) return json(res, 400, { success: false, error: `Unknown persona: ${body.personaId} (available: BPMN Agent, Reviewer)` });
+      state.persona = hit;
+      state.personaSession = body.sessionId;
+      return data(res, { persona: hit });
+    }
     if (req.method === "POST" && path === "/session/messages") {
       if (state.busy) return json(res, 500, { success: false, error: "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message." });
       state.sent.push(body);
@@ -121,7 +142,7 @@ try {
   const tools = {};
   const { default: factory } = await import("./index.ts");
   factory({ registerTool: (t) => (tools[t.name] = t) });
-  for (const name of ["autere_schedule_task", "autere_list_tasks", "autere_set_task_enabled", "autere_find_sessions", "autere_send_to_session", "send_notification"]) {
+  for (const name of ["autere_schedule_task", "autere_list_tasks", "autere_set_task_enabled", "autere_find_sessions", "autere_send_to_session", "autere_persona", "send_notification"]) {
     assert.ok(tools[name], `${name} registered`);
   }
   const run = (name, params, ctx) => tools[name].execute("call-1", params, undefined, undefined, ctx);
@@ -245,6 +266,20 @@ try {
   assert.strictEqual(state.tasks[state.tasks.length - 1].model, undefined, "no model stored when unset");
   const listedWithModel = text(await run("autere_list_tasks", {}, ctx));
   assert.ok(listedWithModel.includes("model: 9router/glm-5.3-flash"), "list shows the task's model");
+
+  // 8d. persona — list, bind by name, bind by id, clear, unknown
+  const listed = await run("autere_persona", {}, ctx);
+  assert.ok(text(listed).includes("BPMN Agent (id: p1) — diagram mapper"), "personas listed with ids and descriptions");
+  assert.ok(text(listed).includes("this session uses none"), "no bound persona reported");
+  const bound = await run("autere_persona", { persona: "bpmn agent" }, ctx);
+  assert.strictEqual(bound.details.persona.name, "BPMN Agent", "bound by name, case-insensitive");
+  assert.strictEqual(state.personaSession, "s1", "binding targets the calling session");
+  assert.ok(text(await run("autere_persona", {}, ctx)).includes('this session uses "BPMN Agent"'), "list now shows the active persona");
+  assert.strictEqual((await run("autere_persona", { persona: "p2" }, ctx)).details.persona.name, "Reviewer", "bound by id");
+  const cleared = await run("autere_persona", { persona: "none" }, ctx);
+  assert.strictEqual(cleared.details.persona, null, "cleared");
+  assert.strictEqual(state.persona, null, "cleared server-side");
+  await assert.rejects(run("autere_persona", { persona: "ghost" }, ctx), /available: BPMN Agent, Reviewer/, "unknown persona names the valid ones");
 
   // 9. every call authenticated with the minted token
   assert.deepStrictEqual([...state.auth], [`Bearer ${token}`], "backend saw exactly the agent token");

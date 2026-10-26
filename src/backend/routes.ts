@@ -36,7 +36,7 @@ import { sendJSON, sendFile, getDashboardHTML, readSessionHistory } from './util
 import { getEnabledModelEntries, scopeModelsForSession } from './utils.js';
 import { isPiImagesInstalled } from './image-models.js';
 import { getPiEnvDir, ensurePiEnv, validateSandboxImage } from './pi-env.js';
-import { listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
+import { findPersona, listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
 import { appendSessionInfo, findSessionFileBySessionId } from './sessions.js';
 import { handleAguiRun } from './agui.js';
@@ -1347,17 +1347,23 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
 
   route({
     method: 'PUT', path: API.session.persona, template: `${API_PREFIX}/session/persona`,
-    role: 'chat', tag: 'Session', summary: 'Bind a persona to the viewed session (body: sessionId?, personaId — null clears)',
+    role: 'chat', tag: 'Session', summary: 'Bind a persona to a session (body: sessionId?, personaId = id or name; null clears)',
     handler: async (c) => {
       try {
         const body = await readBody(c.req);
         const t = await resolveTarget(c, body.sessionId);
         if (!t) { sendTargetMissing(c); return; }
+        // personaId takes the id or the name (agents/clients know names).
         const { personaId } = body;
         let persona: Persona | null = null;
         if (personaId) {
-          persona = listPersonas(c.user).find((p) => p.id === personaId) || null;
-          if (!persona) { sendJSON(c.res, { success: false, error: 'Unknown persona' }, 400); return; }
+          const library = listPersonas(c.user);
+          persona = findPersona(library, String(personaId)) || null;
+          if (!persona) {
+            const available = library.map((p) => p.name).join(', ') || 'none';
+            sendJSON(c.res, { success: false, error: `Unknown persona: ${personaId} (available: ${available})` }, 400);
+            return;
+          }
         }
         if (!t.state.sessionState.sessionFile) {
           sendJSON(c.res, { success: false, error: 'No active session' }, 400);

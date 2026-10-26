@@ -2,6 +2,7 @@
 // Run: npx tsx src/backend/agui.check.ts
 import assert from 'node:assert';
 import { AguiInputError, AguiTranslator, formatContextBlock, formatPrompt, parseRunInput, toAguiMessages } from './agui.js';
+import { findPersona } from './personas.js';
 
 // ── parseRunInput: trailing user message, text parts, attachments ──
 const input = parseRunInput({
@@ -122,5 +123,18 @@ const tr3 = new AguiTranslator(() => state);
 const snap = tr3.onEvent({ type: 'status' });
 assert.equal(snap[0].snapshot.streaming, false);
 assert.deepEqual(tr3.onEvent({ type: 'stats' }), []);
+
+// ── personaId accepts the id or the name ──
+const library = [
+  { id: '19fa4fdc-3034-490f-91b6-639efa7f4505', name: 'bpmn-agent', description: '', prompt: 'p' },
+  { id: 'db417d8f-a3d9-42f2-8798-9b86b1a021e9', name: 'Repowarden', description: '', prompt: 'p' },
+];
+assert.equal(findPersona(library, 'bpmn-agent')?.name, 'bpmn-agent', 'name lookup');
+assert.equal(findPersona(library, 'BPMN-Agent')?.name, 'bpmn-agent', 'name lookup is case-insensitive');
+assert.equal(findPersona(library, 'db417d8f-a3d9-42f2-8798-9b86b1a021e9')?.name, 'Repowarden', 'id lookup');
+assert.equal(findPersona(library, '  repowarden  ')?.name, 'Repowarden', 'trimmed');
+assert.equal(findPersona(library, 'nope'), undefined);
+assert.equal(findPersona(library, ''), undefined);
+
 
 console.log('agui.check: OK');

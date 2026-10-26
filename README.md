@@ -215,11 +215,13 @@ deltas, `STATE_SNAPSHOT`, optional `MESSAGES_SNAPSHOT`, `RUN_FINISHED` or
   parts (images/documents) are saved into the session's uploads dir and
   referenced by path (images are also shown to the model), so pi's tools can
   use them.
-- **forwardedProps** supported for new threads: `personaId`, `sessionName`,
-  `workdir`/`workdirs` (admin), `model` (`provider/id`), plus
-  `sessionFile` (adopt an existing session), `historySnapshot: true` (emit a
-  `MESSAGES_SNAPSHOT` of the stored conversation), and
-  `abortOnDisconnect: false` (keep the turn running when the client aborts).
+- **forwardedProps**: `personaId` (persona name or id from that user's
+  library — binds the session's persona on new and resumed threads), `model`
+  (`provider/id`, same), and for new threads only `sessionName`,
+  `workdir`/`workdirs` (admin); plus `sessionFile` (adopt an existing
+  session), `historySnapshot: true` (emit a `MESSAGES_SNAPSHOT` of the stored
+  conversation), and `abortOnDisconnect: false` (keep the turn running when
+  the client aborts).
 - **Not supported:** client-defined `tools` (pi has no frontend-tool callback)
   and human-in-the-loop interrupts. These are protocol-level gaps in pi, not
   in autere.
