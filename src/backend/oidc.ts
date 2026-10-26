@@ -84,43 +84,67 @@ async function fetchJson(url: string): Promise<any> {
     redirect: 'follow',
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
-  return res.json();
+  try {
+    return await res.json();
+  } catch {
+    // Usually a proxy/login page: without this the parse error names no URL.
+    const type = res.headers.get('content-type') || 'no content-type';
+    throw new Error(`non-JSON document from ${url} (${type})`);
+  }
+}
+
+/**
+ * Discovery document URLs, in spec order:
+ *   1. OIDC Discovery 1.0 section 4: `<issuer>/.well-known/openid-configuration`
+ *   2. RFC 8414 section 3.1: `/.well-known/oauth-authorization-server` inserted
+ *      before the issuer path (only for issuers that have one)
+ * A value that already contains `/.well-known/` is used as-is.
+ */
+export function discoveryCandidates(rawIssuer: string): string[] {
+  const issuer = rawIssuer.trim().replace(/\/+$/, '');
+  if (!issuer) return [];
+  if (issuer.includes('/.well-known/')) return [issuer];
+  const out = [`${issuer}/.well-known/openid-configuration`];
+  try {
+    const url = new URL(issuer);
+    const path = url.pathname.replace(/\/+$/, '');
+    if (path && path !== '/') out.push(`${url.origin}/.well-known/oauth-authorization-server${path}`);
+  } catch { /* reported per candidate by fetchJson */ }
+  return out;
 }
 
 async function discover(config: OidcConfig): Promise<Discovery> {
   const cached = discoveryCache.get(config.issuer);
   if (cached && Date.now() - cached.fetchedAt < DISCOVERY_TTL_MS) return cached.value;
 
-  const candidates: string[] = [];
-  if (config.issuer.includes('/.well-known/')) {
-    // Operators may point the env var straight at the document.
-    candidates.push(config.issuer);
-  } else {
-    candidates.push(`${config.issuer}/.well-known/openid-configuration`);
-    try {
-      const url = new URL(config.issuer);
-      if (url.pathname && url.pathname !== '/' && url.pathname !== '') {
-        // RFC 8414 puts the well-known prefix before the issuer path.
-        candidates.push(`${url.origin}/.well-known/oauth-authorization-server${url.pathname.replace(/\/+$/, '')}`);
-      }
-    } catch { /* issuer validation happens on fetch */ }
-  }
+  const candidates = discoveryCandidates(config.issuer);
 
   const errors: string[] = [];
   for (const url of candidates) {
+    let doc: any;
     try {
-      const doc = await fetchJson(url);
-      const issuer = normalizeIssuer(doc?.issuer) || config.issuer;
-      if (typeof doc?.jwks_uri !== 'string' || !doc.jwks_uri) throw new Error('document has no jwks_uri');
-      if (!config.issuer.includes('/.well-known/') && issuer !== config.issuer) {
-        throw new Error(`document issuer ${issuer} does not match ${config.issuer}`);
-      }
-      const value: Discovery = { issuer, jwksUri: doc.jwks_uri };
-      discoveryCache.set(config.issuer, { fetchedAt: Date.now(), value });
-      return value;
+      doc = await fetchJson(url);
     } catch (err: any) {
+      // Transport failure: the next spec URL may still work (RFC 8414 only).
       errors.push(`${url}: ${err?.message || err}`);
+      continue;
     }
+    // The document was retrieved, so it is authoritative — no fallback URL can
+    // answer for a different issuer. Worth spelling out: split-horizon setups
+    // (public issuer, internal discovery host) hit exactly this.
+    const issuer = normalizeIssuer(doc?.issuer) || config.issuer;
+    if (!config.issuer.includes('/.well-known/') && issuer !== config.issuer) {
+      errors.push(`document issuer ${issuer} does not match the configured issuer ${config.issuer} — `
+        + `set AUTERE_OIDC_ISSUER to ${issuer}, or to ${url} when that host is not reachable from autere`);
+      break;
+    }
+    if (typeof doc?.jwks_uri !== 'string' || !doc.jwks_uri) {
+      errors.push(`${url}: document has no jwks_uri`);
+      break;
+    }
+    const value: Discovery = { issuer, jwksUri: doc.jwks_uri };
+    discoveryCache.set(config.issuer, { fetchedAt: Date.now(), value });
+    return value;
   }
 
   // Provider blip: keep authenticating with the last good document.

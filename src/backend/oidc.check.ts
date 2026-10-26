@@ -139,6 +139,40 @@ async function main() {
     await authenticateOidc(opaqueReq);
     assert.equal(getUser(opaqueReq), null);
 
+    // ── Discovery URL order and authoritative documents ──
+    const startProvider = async (opts: { docIssuer?: string; serveOidc?: boolean }) => {
+      const seen: string[] = [];
+      let origin = '';
+      const srv = createServer((req, res) => {
+        seen.push(req.url || '');
+        const send = (body: any) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+        const doc = { issuer: opts.docIssuer ?? `${origin}/tenant`, jwks_uri: `${origin}/tenant/jwks` };
+        if (req.url === '/tenant/jwks') return send(jwks);
+        if (req.url === '/tenant/.well-known/openid-configuration' && opts.serveOidc !== false) return send(doc);
+        if (req.url === '/.well-known/oauth-authorization-server/tenant') return send(doc);
+        res.writeHead(404); res.end();
+      });
+      await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+      origin = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+      return { origin, seen, close: () => srv.close() };
+    };
+
+    // Split horizon: the document answers but names another issuer -> reject,
+    // and do not waste a request on the RFC 8414 URL.
+    const split = await startProvider({ docIssuer: 'https://auth.example.com/tenant' });
+    process.env.AUTERE_OIDC_ISSUER = `${split.origin}/tenant`;
+    assert.equal(await resolveOidcUser(valid()), null, 'document issuer must match the configured issuer');
+    assert.equal(split.seen.join(','), '/tenant/.well-known/openid-configuration', `split.seen=${JSON.stringify(split.seen)}`);
+    split.close();
+
+    // RFC 8414 metadata is still the fallback when the OIDC document is missing.
+    const rfc = await startProvider({ serveOidc: false });
+    process.env.AUTERE_OIDC_ISSUER = `${rfc.origin}/tenant`;
+    const rfcToken = signJwt({ alg: 'RS256', kid: 'rsa1' }, claims({ iss: `${rfc.origin}/tenant` }));
+    assert.equal((await resolveOidcUser(rfcToken))?.user, 'alice', 'RFC 8414 fallback');
+    assert.equal(rfc.seen.join(','), '/tenant/.well-known/openid-configuration,/.well-known/oauth-authorization-server/tenant,/tenant/jwks', `rfc.seen=${JSON.stringify(rfc.seen)}`);
+    rfc.close();
+
     console.log('oidc.check: OK');
   } finally {
     server.close();
