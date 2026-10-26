@@ -325,7 +325,10 @@ extras/pi-janitor/     # pi extension: idle-window context cleanup. Observes
 extras/pi-autere/      # pi extension: agent-facing autere API — schedule/list/
                        # enable scheduled tasks (per-task model = provider/id from
                        # autere_find_models), find sessions with their latest
-                       # messages, deliver a message to another session, bind a
+                       # messages, deliver a message to another session (an idle
+                       # target is woken with a prompt; a mid-turn target gets
+                       # it queued as a steer — the result reports queued:true),
+                       # bind a
                        # persona to the calling session (autere_persona: list /
                        # name-or-id / "none"; pi-personas re-reads the binding
                        # every turn, so a switch applies on the next turn), send an

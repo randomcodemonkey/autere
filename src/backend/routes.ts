@@ -99,6 +99,7 @@ import { validateNotificationContent } from '../shared/notifications.js';
 import { API, API_PREFIX } from '../shared/api-paths.js';
 import { TASK_REPORT_MARKER } from '../shared/format.js';
 import { canRunTaskScripts } from '../shared/tasks.js';
+import { effectiveMessageType, type MessageType } from '../shared/messages.js';
 import { buildOpenApiSpec, type RouteDoc } from './openapi.js';
 import type { SessionInfo } from './types.js';
 
@@ -1580,7 +1581,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
   // ── Send a message to the viewed session ──
   route({
     method: 'POST', path: API.session.messages, template: `${API_PREFIX}/session/messages`,
-    role: 'chat', tag: 'Session', summary: 'Send a message (prompt, steer or follow-up) to the viewed session; optionally with base64 file attachments (body: sessionId?, message?, type? prompt|steer|followUp, images?[{mimeType,data,name?}]). Images are inlined to the LLM (max 8 MB); any other type is saved to the session env uploads dir and referenced by path (max 10 MB).',
+    role: 'chat', tag: 'Session', summary: 'Send a message (prompt, steer or follow-up) to the viewed session; a prompt to a mid-turn session is queued as a steer and the response reports queued:true. Optionally with base64 file attachments (body: sessionId?, message?, type? prompt|steer|followUp, images?[{mimeType,data,name?}]). Images are inlined to the LLM (max 8 MB); any other type is saved to the session env uploads dir and referenced by path (max 10 MB).',
     handler: async (c) => {
       const body = await readBody(c.req);
       const t = await resolveTarget(c, body.sessionId, true);
@@ -1641,12 +1642,18 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       }
       // steer/followUp only make sense mid-turn — when idle, pi would leave
       // the message queued without ever starting a turn. Downgrade to a
-      // plain prompt instead (same text, actually runs).
-      const downgraded = (type === 'steer' || type === 'followUp') && !t.rpc.isStreaming;
-      const effType = downgraded ? 'prompt' : (type || 'prompt');
+      // plain prompt instead (same text, actually runs). Conversely a prompt
+      // aimed at a mid-turn session is queued as a steer instead of failing
+      // with pi's "already processing" — the target picks it up in its
+      // current turn (how cross-session deliveries reach a busy agent).
+      const requestedType = (type || 'prompt') as MessageType;
+      const streaming = t.rpc.isStreaming;
+      const downgraded = requestedType !== 'prompt' && !streaming;
+      const queuedByBusy = requestedType === 'prompt' && streaming;
+      const { type: effType, queued: initiallyQueued } = effectiveMessageType(requestedType, streaming);
+      let queued = initiallyQueued;
       log.http.forSession(sessionState.sessionId).info(
-        `${effType}: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"${rpcImages?.length ? ` [${rpcImages.length} image(s)]` : ''}${files.length ? ` [${files.length} file(s)]` : ''}${downgraded ? ' (downgraded to prompt — session idle)' : ''}`);
-      const queued = effType === 'steer' || effType === 'followUp';
+        `${effType}: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"${rpcImages?.length ? ` [${rpcImages.length} image(s)]` : ''}${files.length ? ` [${files.length} file(s)]` : ''}${downgraded ? ' (downgraded to prompt — session idle)' : ''}${queuedByBusy ? ' (queued as steer — session mid-turn)' : ''}`);
 
       // Non-image attachments: persist to the env uploads dir and tell the
       // agent where they landed (works regardless of pi version — the model
@@ -1721,13 +1728,26 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       } else if (effType === 'followUp') {
         await t.rpc.followUp(text, rpcImages);
       } else {
-        await t.rpc.prompt(text, rpcImages);
+        try {
+          await t.rpc.prompt(text, rpcImages);
+        } catch (err: any) {
+          if (!/already processing/i.test(String(err?.message))) throw err;
+          // The turn started between the isStreaming check and the prompt —
+          // queue it as a steer. If the turn ended in the meantime, deliver
+          // it as a normal prompt (a steer while idle would never run).
+          if (t.rpc.isStreaming) {
+            await t.rpc.steer(text, rpcImages);
+            queued = true;
+          } else {
+            await t.rpc.prompt(text, rpcImages);
+          }
+        }
       }
       // Commit the user message into the stream history immediately —
       // retires the client's optimistic pending copy (pi never emits
       // message_end for user messages).
       t.addUserEntry(text, queued);
-      sendJSON(c.res, { success: true });
+      sendJSON(c.res, { success: true, data: { queued } });
     },
   });
 

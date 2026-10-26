@@ -350,7 +350,8 @@ export default function (pi: ExtensionAPI) {
 		label: "Send to session",
 		promptSnippet: "autere_send_to_session — deliver a message to another session as a user message",
 		description:
-			"Deliver a message to another session as a fresh user message — the target agent reacts to it as if its own user typed it. An idle session is woken up; a mid-turn session receives nothing.\n\n" +
+			"Deliver a message to another session as a fresh user message — the target agent reacts to it as if its own user typed it. An idle session is woken up; a mid-turn session queues the message as a steer instead of dropping it, and the result reports `queued: true`." +
+			"\n\n" +
 			"`sessionId` — an id from autere_find_sessions, an id a scheduled task's prompt footer names, or \"current\" for this session. Make `message` self-contained: the target agent cannot see this conversation. A deleted session gets no delivery (the result says so) — a deleted conversation cannot be recreated.",
 		parameters: Type.Object({
 			sessionId: Type.String({ description: "Target session id, or \"current\"" }),
@@ -371,29 +372,22 @@ export default function (pi: ExtensionAPI) {
 					{ delivered: false, reason: "not_found" },
 				);
 			}
-			if (target.streaming) {
+			const res = await api("POST", "/session/messages", {
+				sessionId: target.id,
+				message: params.message,
+				type: "prompt",
+				// Self-identify: the backend stamps task-run deliveries so chat
+				// renders them with a distinct "task" sender.
+				fromSession: currentSessionId(ctx) ?? undefined,
+			}, signal);
+			const name = target.sessionName ?? target.id;
+			if (res?.queued) {
 				return ok(
-					`Session "${target.sessionName ?? target.id}" is mid-turn — nothing delivered. Retry when it is idle (a later scheduled run can do that).`,
-					{ delivered: false, reason: "busy" },
+					`Session "${name}" was busy (mid-turn) — your message is queued and it will act on it as soon as it completes the current turn.`,
+					{ delivered: true, queued: true, sessionId: target.id },
 				);
 			}
-			try {
-				await api("POST", "/session/messages", {
-					sessionId: target.id,
-					message: params.message,
-					type: "prompt",
-					// Self-identify: the backend stamps task-run deliveries so chat
-					// renders them with a distinct "task" sender.
-					fromSession: currentSessionId(ctx) ?? undefined,
-				}, signal);
-			} catch (err: any) {
-				// Busy race: the turn started between our check and the delivery.
-				if (/already processing/i.test(String(err?.message))) {
-					return ok(`Session "${target.sessionName ?? target.id}" is mid-turn — nothing delivered. Retry when it is idle.`, { delivered: false, reason: "busy" });
-				}
-				throw err;
-			}
-			return ok(`Delivered to session "${target.sessionName ?? target.id}" (${target.id}) as a user message.`, { delivered: true, sessionId: target.id });
+			return ok(`Delivered to session "${name}" (${target.id}) as a user message.`, { delivered: true, sessionId: target.id });
 		},
 	});
 

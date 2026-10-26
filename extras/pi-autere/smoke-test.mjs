@@ -93,9 +93,13 @@ const server = createServer((req, res) => {
       return data(res, { persona: hit });
     }
     if (req.method === "POST" && path === "/session/messages") {
-      if (state.busy) return json(res, 500, { success: false, error: "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message." });
-      state.sent.push(body);
-      return data(res, {});
+      // mirrors the real route: a prompt to a mid-turn session is queued as a
+      // steer and the response reports queued:true
+      const type = body.type === "steer" || body.type === "followUp"
+        ? body.type
+        : (state.busy || state.sessions.find((s) => s.id === body.sessionId)?.streaming) ? "steer" : "prompt";
+      state.sent.push({ ...body, type });
+      return data(res, { queued: type !== "prompt" });
     }
     if (req.method === "POST" && path === "/notifications/send") {
       // mirrors the real route: reject oversize content, else record + deliver
@@ -195,18 +199,20 @@ try {
   const byName = text(await run("autere_find_sessions", { query: "Beta" }, ctx));
   assert.ok(byName.includes("id: s2") && !byName.includes("id: s1"), "content search works");
 
-  // 7. send_to_session — missing / busy / delivered
+  // 7. send_to_session — missing / queued while busy / delivered
   const missing = await run("autere_send_to_session", { sessionId: "ghost", message: "hi" }, ctx);
   assert.deepStrictEqual(missing.details, { delivered: false, reason: "not_found" }, "deleted session reported, not delivered");
   const busy = await run("autere_send_to_session", { sessionId: "s2", message: "hi" }, ctx);
-  assert.strictEqual(busy.details.reason, "busy", "mid-turn session not disturbed");
-  assert.strictEqual(state.sent.length, 0, "nothing delivered yet");
+  assert.strictEqual(busy.details.delivered, true, "mid-turn target still accepts the message");
+  assert.strictEqual(busy.details.queued, true, "mid-turn target queues it as a steer");
+  assert.deepStrictEqual(state.sent[0], { sessionId: "s2", message: "hi", type: "steer", fromSession: "s1" }, "queued as a steer, self-identified");
   const delivered = await run("autere_send_to_session", { sessionId: "current", message: "outcome: still waiting" }, ctx);
   assert.strictEqual(delivered.details.delivered, true, "delivered to the idle session");
-  assert.deepStrictEqual(state.sent[0], { sessionId: "s1", message: "outcome: still waiting", type: "prompt", fromSession: "s1" }, "sent as a user prompt, self-identified");
+  assert.strictEqual(delivered.details.queued, undefined, "idle delivery is immediate");
+  assert.deepStrictEqual(state.sent[1], { sessionId: "s1", message: "outcome: still waiting", type: "prompt", fromSession: "s1" }, "sent as a user prompt, self-identified");
   state.busy = true;
   const race = await run("autere_send_to_session", { sessionId: "s1", message: "hi" }, ctx);
-  assert.strictEqual(race.details.reason, "busy", "turn started mid-flight → busy, not an error");
+  assert.strictEqual(race.details.queued, true, "turn started mid-flight → queued, not an error");
   state.busy = false;
 
   // 8. send_notification — session defaults to the current one, the 256
