@@ -72,7 +72,7 @@ const parseMcpHeaders = (text: string): Record<string, string> | undefined => {
 
 const McpServersSection: React.FC<{ field: SettingField; value: unknown; onChange: (key: string, v: Record<string, any>) => void }> = ({ field, value, onChange }) => {
   const servers: Record<string, any> = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {};
-  const names = Object.keys(servers);
+  const names = Object.keys(servers).sort((a, b) => a.localeCompare(b));
   const [editing, setEditing] = useState<{ originalName: string | null; draft: McpServerEditDraft; error: string } | null>(null);
 
   const openAdd = () => {

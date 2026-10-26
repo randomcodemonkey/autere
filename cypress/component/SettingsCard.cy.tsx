@@ -468,6 +468,18 @@ describe('SettingsCard codemode/mcp (pi 1.0)', () => {
     });
   });
 
+  it('lists servers sorted by name regardless of save order', () => {
+    stub({ codemode: false, mcpServers: {
+      zeta: { command: 'z' },
+      alpha: { command: 'a' },
+      Beta: { command: 'b' },
+    } }, false);
+    cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
+    cy.get('.mcp-server-name').then(($els) => {
+      expect([...$els].map((el) => el.textContent)).to.deep.eq(['alpha', 'Beta', 'zeta']);
+    });
+  });
+
   it('adds servers in the edit modal and removes them from the table', () => {
     stub({ codemode: false, mcpServers: {} }, false);
     cy.mount(<MemoryRouter><SettingsCard sseConnected={true} /></MemoryRouter>);
