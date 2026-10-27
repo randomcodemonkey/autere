@@ -578,17 +578,22 @@ export class Scheduler {
         // pi has reported its (possibly brand-new) session file by now.
         this.processManager?.adopt(user, session);
 
-        // Auto-name task-run sessions: "[task] - <user locale + timezone date+time>".
-        // Uses the user's persisted locale/IANA timezone so the name matches
-        // what the user sees in the UI (Intl does the zone conversion).
+        // Auto-name task-run sessions: one-offs take the task name
+        // ("[task] <name>"), recurring runs "[task] - <user locale +
+        // timezone date+time>". The date form uses the user's persisted
+        // locale/IANA timezone so the name matches the UI.
         let runName = '';
         try {
-          const locale = getUserSetting(user, 'locale', '');
-          const timeZone = getUserSetting(user, 'timeZone', '');
-          runName = autoSessionName('[task]', {
-            locale: typeof locale === 'string' && locale ? locale : undefined,
-            timeZone: typeof timeZone === 'string' && timeZone ? timeZone : undefined,
-          });
+          if (task.once) {
+            runName = `[task] ${task.name}`;
+          } else {
+            const locale = getUserSetting(user, 'locale', '');
+            const timeZone = getUserSetting(user, 'timeZone', '');
+            runName = autoSessionName('[task]', {
+              locale: typeof locale === 'string' && locale ? locale : undefined,
+              timeZone: typeof timeZone === 'string' && timeZone ? timeZone : undefined,
+            });
+          }
           await rpc.setSessionName(runName);
         } catch (err) {
           log.scheduler.error(`Failed to auto-name run session ${runId}:`, err);
