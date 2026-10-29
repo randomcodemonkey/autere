@@ -86,4 +86,22 @@ html[data-theme='light'] {
   --c-accent-alt: #2a8f9e;
   --c-blue-strong: #1d69b8;
   --c-blue-bg: #e3edfa;
+
+  // ANSI terminal colors (SGR 0-15) re-tuned for paper surfaces
+  --ansi-0: #3f4657;
+  --ansi-1: #c62828;
+  --ansi-2: #2e7d32;
+  --ansi-3: #a16207;
+  --ansi-4: #1d6fb8;
+  --ansi-5: #8e24aa;
+  --ansi-6: #0e7490;
+  --ansi-7: #333a4c;
+  --ansi-8: #565e73;
+  --ansi-9: #d32f2f;
+  --ansi-10: #1f8a3b;
+  --ansi-11: #a16207;
+  --ansi-12: #2d86d8;
+  --ansi-13: #9c27b0;
+  --ansi-14: #00838f;
+  --ansi-15: #161b26;
 }

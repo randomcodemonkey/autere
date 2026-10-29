@@ -2248,6 +2248,12 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
+// ANSI SGR styles rendered by renderAnsi(); colors come from --ansi-0..15
+.ansi-bold { font-weight: 600; }
+.ansi-dim { opacity: 0.72; }
+.ansi-italic { font-style: italic; }
+.ansi-underline { text-decoration: underline; }
+
 .edit-diff {
   background: var(--c-surface);
   border: 1px solid var(--c-border);

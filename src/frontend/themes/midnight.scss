@@ -97,4 +97,22 @@
   // legacy aliases
   --c-muted: var(--c-text-ghost);
   --c-muted-bg-legacy: var(--c-muted-bg);
+
+  // ANSI terminal colors (SGR 0-15) for tool output
+  --ansi-0: #6b7389;
+  --ansi-1: #f07178;
+  --ansi-2: #7ec98f;
+  --ansi-3: #e5c07b;
+  --ansi-4: #61afef;
+  --ansi-5: #c678dd;
+  --ansi-6: #56b6c2;
+  --ansi-7: #d7dce8;
+  --ansi-8: #8a93ab;
+  --ansi-9: #ff8a92;
+  --ansi-10: #a3e6b0;
+  --ansi-11: #f2d79a;
+  --ansi-12: #8cc3f7;
+  --ansi-13: #d9a2ef;
+  --ansi-14: #7fd6e0;
+  --ansi-15: #ffffff;
 }

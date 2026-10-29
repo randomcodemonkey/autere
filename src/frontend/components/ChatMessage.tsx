@@ -41,6 +41,140 @@ export function escHtml(s: string): string {
   return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// -- ANSI SGR rendering ---------------------------------------------------
+// Tool output frequently carries terminal colors (test runners, ls --color).
+// The tokenizer is deliberately hand-written instead of regex-driven: it walks
+// the string once, drops every control/escape sequence it does not fully
+// understand, and emits React nodes (never HTML strings), so no attacker
+// controlled bytes can reach the DOM as markup. The only interpolated values
+// are fixed class names and numeric colors.
+
+interface AnsiStyle {
+  fg?: string;
+  bg?: string;
+  bold?: boolean;
+  dim?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+}
+
+const ansiVar = (n: number) => `var(--ansi-${n})`;
+
+function ansi256(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '';
+  const i = Math.min(255, Math.floor(n));
+  if (i < 16) return ansiVar(i);
+  if (i >= 232) {
+    const v = 8 + (i - 232) * 10;
+    return `rgb(${v},${v},${v})`;
+  }
+  const steps = [0, 95, 135, 175, 215, 255];
+  const j = i - 16;
+  return `rgb(${steps[Math.floor(j / 36)]},${steps[Math.floor(j / 6) % 6]},${steps[j % 6]})`;
+}
+
+const rgb = (r: number, g: number, b: number) =>
+  [r, g, b].every((v) => Number.isFinite(v))
+    ? `rgb(${[r, g, b].map((v) => Math.min(255, Math.max(0, Math.floor(v)))).join(',')})`
+    : '';
+
+// SGR parameter bytes are digits/semicolons only (checked by the tokenizer)
+function applySgr(st: AnsiStyle, params: string): void {
+  const codes = params === '' ? [0] : params.split(';').map(Number);
+  for (let i = 0; i < codes.length; i++) {
+    const c = codes[i];
+    if (!Number.isFinite(c)) continue;
+    if (c === 0) {
+      st.fg = st.bg = undefined;
+      st.bold = st.dim = st.italic = st.underline = false;
+    } else if (c === 1) st.bold = true;
+    else if (c === 2) st.dim = true;
+    else if (c === 3) st.italic = true;
+    else if (c === 4) st.underline = true;
+    else if (c === 22) st.bold = st.dim = false;
+    else if (c === 23) st.italic = false;
+    else if (c === 24) st.underline = false;
+    else if (c >= 30 && c <= 37) st.fg = ansiVar(c - 30);
+    else if (c >= 90 && c <= 97) st.fg = ansiVar(c - 90 + 8);
+    else if (c >= 40 && c <= 47) st.bg = ansiVar(c - 40);
+    else if (c >= 100 && c <= 107) st.bg = ansiVar(c - 100 + 8);
+    else if (c === 39) st.fg = undefined;
+    else if (c === 49) st.bg = undefined;
+    else if (c === 38 || c === 48) {
+      const target = c === 38 ? 'fg' : 'bg';
+      if (codes[i + 1] === 5) { st[target] = ansi256(codes[i + 2]); i += 2; }
+      else if (codes[i + 1] === 2) { st[target] = rgb(codes[i + 2], codes[i + 3], codes[i + 4]); i += 4; }
+      else i += 1;
+    }
+  }
+}
+
+const ansiClass = (st: AnsiStyle) => [
+  st.bold && 'ansi-bold',
+  st.dim && 'ansi-dim',
+  st.italic && 'ansi-italic',
+  st.underline && 'ansi-underline',
+].filter(Boolean).join(' ');
+
+/** Convert ANSI colored text to React nodes. Unknown sequences are dropped. */
+export function renderAnsi(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const st: AnsiStyle = {};
+  let buf = '';
+  let key = 0;
+
+  const flush = () => {
+    if (!buf) return;
+    const cls = ansiClass(st);
+    const style: React.CSSProperties = {};
+    if (st.fg) style.color = st.fg;
+    if (st.bg) style.background = st.bg;
+    nodes.push(cls || st.fg || st.bg
+      ? <span key={key++} className={cls || undefined} style={style}>{buf}</span>
+      : buf);
+    buf = '';
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const code = ch.charCodeAt(0);
+    if (ch === '\n' || ch === '\t' || (code >= 0x20 && code !== 0x7f && !(code >= 0x80 && code <= 0x9f))) {
+      buf += ch;
+      continue;
+    }
+    if (ch !== '\u001b') continue; // other C0/C1 controls are dropped
+    flush();
+    const next = text[i + 1];
+    if (next === '[') {
+      // CSI: parameter/intermediate bytes (0x20-0x3F), terminated by a final
+      // byte (0x40-0x7E). Only short, digits-only "...m" is an SGR we apply.
+      let j = i + 2;
+      while (j < text.length && j - (i + 2) < 32 && text.charCodeAt(j) >= 0x20 && text.charCodeAt(j) <= 0x3f) j++;
+      const params = text.slice(i + 2, j);
+      const fin = text.charCodeAt(j);
+      if (fin === 0x6d /* m */ && /^[0-9;]*$/.test(params)) {
+        applySgr(st, params);
+        i = j;
+      } else {
+        // Oversized/truncated or non-SGR CSI: skip to its final byte
+        let k = j;
+        while (k < text.length && !(text.charCodeAt(k) >= 0x40 && text.charCodeAt(k) <= 0x7e)) k++;
+        i = Math.min(text.length - 1, k);
+      }
+    } else if (next === ']') {
+      // OSC (e.g. terminal hyperlinks): drop until BEL or ST
+      let j = i + 2;
+      while (j < text.length && text[j] !== '\u0007' && !(text[j] === '\u001b' && text[j + 1] === '\\')) j++;
+      i = text[j] === '\u0007' ? j : Math.min(text.length - 1, j + 1);
+    } else {
+      // Two-byte escape; charset designators ESC ( / ) / # take one more byte
+      i += next === '(' || next === ')' || next === '#' ? 2 : 1;
+    }
+  }
+  flush();
+  return nodes;
+}
+
 export function renderMd(text: string): string {
   if (!text) return '';
   const html = marked.parse(text, { renderer }) as string;
@@ -156,7 +290,8 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   const mdClass = renderMarkdown ? ' md-rendered' : '';
   const textClass = (isToolResult ? 'stream-tool-output' : 'stream-text' + (isNonText ? ' stream-non-text' : '') + mdClass) + (expanded ? ' expanded' : '') + (isError ? ' stream-error' : '');
   const renderText = role === 'thinking' ? stripExtraNewlines(showText) : showText;
-  const renderedText = renderMarkdown ? renderMd(renderText) : role === 'edit' ? '' : escHtml(renderText);
+  const renderedText = renderMarkdown ? renderMd(renderText) : '';
+  const ansiNodes = renderMarkdown || role === 'edit' ? null : renderAnsi(renderText);
   const ts = formatTimestamp(msg.timestamp);
 
   // Download an image. Mobile Safari ignores the download attribute on
@@ -242,7 +377,11 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
             {msg.streaming && <span className="stream-cursor" />}
           </div>
         )}
-        {role === 'edit' ? renderEditDiff(showText, !expanded && isLong, 12, isError) : <span dangerouslySetInnerHTML={{ __html: renderedText }} />}
+        {role === 'edit'
+          ? renderEditDiff(showText, !expanded && isLong, 12, isError)
+          : renderMarkdown
+            ? <span dangerouslySetInnerHTML={{ __html: renderedText }} />
+            : ansiNodes}
         {msg.file && (
           <div className="file-card">
             <span className="file-icon">📄</span>

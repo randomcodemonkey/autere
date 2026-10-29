@@ -52,3 +52,44 @@ describe('ChatMessage — markdown rendering', () => {
     cy.get('.stream-role-user > span').should('contain', 'user');
   });
 });
+
+describe('ChatMessage — ANSI tool output', () => {
+  function mountTool(displayText: string) {
+    cy.mount(
+      <ChatMessage
+        msg={base}
+        role="toolResult"
+        displayText={displayText}
+        isAssistant={false}
+        isToolResult={true}
+        isLong={false}
+        truncLen={5000}
+      />,
+    );
+  }
+
+  it('renders SGR colors and styles without showing escape codes', () => {
+    mountTool('  \u001b[32m✓\u001b[0m \u001b[90mdim note\u001b[0m \u001b[1;31mbold red\u001b[0m');
+    cy.get('.stream-tool-output').should('contain.text', '✓ dim note bold red');
+    cy.get('.stream-tool-output').should('not.contain.text', '\u001b');
+    cy.get('.stream-tool-output span').eq(0).should('have.attr', 'style').and('contain', '--ansi-2');
+    cy.get('.stream-tool-output span').eq(1).should('have.attr', 'style').and('contain', '--ansi-8');
+    cy.get('.stream-tool-output span').eq(2).should('have.class', 'ansi-bold').and('have.attr', 'style').and('contain', '--ansi-1');
+  });
+
+  it('drops unknown escape sequences instead of rendering them', () => {
+    mountTool('a\u001b[2Kb\u001b]0;window title\u0007c\u001b(0d');
+    cy.get('.stream-tool-output').should('have.text', 'abcd');
+  });
+
+  it('cannot inject markup through output text or color parameters', () => {
+    mountTool(
+      '\u001b[31m<script>window.__xss=1</script><img src=x onerror="window.__xss=2">'
+      + '\u001b[38;2;0;0;0;background:url(https://evil)\u001b[0mok',
+    );
+    cy.get('.stream-tool-output script').should('not.exist');
+    cy.get('.stream-tool-output img').should('not.exist');
+    cy.get('.stream-tool-output').should('contain.text', '<script>window.__xss=1</script>');
+    cy.window().its('__xss').should('be.undefined');
+  });
+});
