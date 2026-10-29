@@ -384,6 +384,11 @@ SKILL.md               # This file — canonical, in-repo
 - **History entries** carry stable server-assigned `id`s (monotonic) —
   frontend React keys prefer them so expansion state and scroll anchoring
   survive broadcasts. toolCall→toolResult replacement inherits the id.
+- **Partial tool output**: `tool_execution_update` mutates the streaming
+  toolCall entry's `partial` field (tail capped at 2000 chars, broadcasts
+  throttled to 150ms) and re-upserts it by id; `tool_execution_end` replaces
+  the entry with the full result. The call's `timeout` (event or args) is
+  carried on `toolCall.timeout` and shown as a badge in the header.
 - **Images**: max 4 attachments × 8MB, `image/*` mime, base64 without data:
   prefix over the wire (`MAX_ATTACHED_IMAGES`, `MAX_IMAGE_BYTES` in routes.ts).
 - **Optimistic UI**: DashboardPage injects pending user messages (⏳) on

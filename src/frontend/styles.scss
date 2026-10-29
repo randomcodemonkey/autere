@@ -2477,6 +2477,13 @@ body {
       overflow-wrap: anywhere;
     }
   }
+
+  .tool-call-timeout {
+    color: var(--c-text-faint);
+    flex-shrink: 0;
+    margin-left: auto;
+    white-space: nowrap;
+  }
 }
 
 .stream-images {

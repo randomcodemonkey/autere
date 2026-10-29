@@ -241,6 +241,14 @@ export function formatTimestamp(ts?: number): string {
   return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+/** Tool timeout as a compact duration. Values >= 1000 are milliseconds. */
+export function formatTimeout(value: number): string {
+  const seconds = value >= 1000 ? value / 1000 : value;
+  if (seconds >= 3600) return `${Math.round(seconds / 3600)}h`;
+  if (seconds >= 60) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds)}s`;
+}
+
 interface ChatMessageProps {
   msg: StreamMessage;
   role: string;
@@ -275,7 +283,9 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   if (!msg.streaming && hasBody && !(msg.images && msg.images.length > 0) && !msg.file) return null;
 
   const isCallOnly = role === 'toolCall' && !!msg.toolCall;
-  const bodyText = isCallOnly ? '' : displayText;
+  // Streaming tool calls show the tail of their partial output under the
+  // command header; the final result replaces the whole entry.
+  const bodyText = isCallOnly ? (msg.partial || '') : displayText;
   // Truncate long messages even while streaming — the expand toggle works
   // mid-stream. Bounded height also keeps autoscroll stable on long turns.
   const showText = expanded || !isLong ? bodyText : bodyText.slice(0, truncLen);
@@ -374,6 +384,9 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
                 {msg.toolCall.cmd}
               </span>
             )}
+            {msg.toolCall.timeout ? (
+              <span className="tool-call-timeout" title={`Tool timeout: ${formatTimeout(msg.toolCall.timeout)}`}>⏱ {formatTimeout(msg.toolCall.timeout)}</span>
+            ) : null}
             {msg.streaming && <span className="stream-cursor" />}
           </div>
         )}

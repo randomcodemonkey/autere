@@ -942,10 +942,7 @@ export class UserSession {
           this.handleToolStart(event);
           break;
         case 'tool_execution_update':
-          // Partial tool results (e.g. streaming bash output) — deliberately
-          // not rendered: the final result arrives via tool_execution_end, and
-          // these events still feed the stall watchdog (lastRpcEventAt).
-          // Implement partial-output streaming here if the UI ever wants it.
+          this.handleToolUpdate(event);
           break;
         case 'tool_execution_end':
           this.handleToolEnd(event);
@@ -1450,6 +1447,10 @@ export class UserSession {
     // clearing them here would break the cmd lookup for the FIRST call of a
     // parallel pair (its card would render without the command line).
     const toolEntry: any = { name: event.toolName, args: event.args, cmd, startTime: Date.now() };
+    // pi resolves the tool timeout per call (event.timeout), older/other
+    // tools only carry it in their args.
+    const timeout = event.timeout ?? event.args?.timeout;
+    if (typeof timeout === 'number' && timeout > 0) toolEntry.timeout = timeout;
 
     // For rm commands, snapshot file content before deletion
     if (event.toolName === 'bash' && isRmCommand(event.args?.command)) {
@@ -1463,24 +1464,55 @@ export class UserSession {
       toolEntry.rmSnapshots = snapshots;
     }
 
+    // Show the tool call directly in the chat as a streaming toolCall entry;
+    // handleToolEnd replaces it with the connected toolResult.
+    const entry = this.tagEntry({
+      role: 'toolCall',
+      text: cmd,
+      streaming: true,
+      timestamp: Date.now(),
+      toolCallId: event.toolCallId,
+      toolCall: { name: event.toolName, cmd, ...(toolEntry.timeout ? { timeout: toolEntry.timeout } : {}) },
+    });
+    // handleToolUpdate mutates this entry in place and re-broadcasts it by id.
+    toolEntry.entry = entry;
+
     s.activeTools.set(event.toolCallId, toolEntry);
     this.broadcast({ type: 'tool_start', data: { id: event.toolCallId, name: event.toolName, cmd, args: event.args } });
 
-    // Show the tool call directly in the chat as a streaming toolCall entry;
-    // handleToolEnd replaces it with the connected toolResult.
-    {
-      const buf = this.history();
-      const entry = this.tagEntry({
-        role: 'toolCall',
-        text: cmd,
-        streaming: true,
-        timestamp: Date.now(),
-        toolCallId: event.toolCallId,
-        toolCall: { name: event.toolName, cmd },
-      });
-      buf.push(entry);
-      this.broadcastHistoryUpsert([entry]);
-    }
+    this.history().push(entry);
+    this.broadcastHistoryUpsert([entry]);
+  }
+
+  /** Tail cap for streamed partial tool output (chars) */
+  private static readonly TOOL_PARTIAL_MAX = 2000;
+  /** Minimum gap between partial-output broadcasts (ms) — bash can stream KBs per second */
+  private static readonly TOOL_PARTIAL_INTERVAL_MS = 150;
+
+  /**
+   * Partial tool output (streaming bash, long reads). The final result still
+   * arrives via tool_execution_end and replaces the entry; this only fills the
+   * streaming toolCall card with the tail of what the tool has produced so far.
+   */
+  private handleToolUpdate(event: any): void {
+    const tool = this.state.activeTools.get(event.toolCallId);
+    const entry = tool?.entry;
+    if (!entry) return;
+    const text = (event.partialResult?.content || [])
+      .filter((c: any) => c?.type === 'text')
+      .map((c: any) => c.text || '')
+      .join('\n');
+    if (!text) return;
+    entry.partial = text.length > UserSession.TOOL_PARTIAL_MAX
+      ? '...' + text.slice(-UserSession.TOOL_PARTIAL_MAX)
+      : text;
+    // Throttle: every broadcast re-sends the whole tail over SSE to every
+    // client. The last chunk may be dropped by the window — tool_end
+    // replaces the entry with the full result anyway.
+    const now = Date.now();
+    if (now - (tool.partialAt || 0) < UserSession.TOOL_PARTIAL_INTERVAL_MS) return;
+    tool.partialAt = now;
+    this.broadcastHistoryUpsert([entry]);
   }
 
   private handleToolEnd(event: any): void {
@@ -1505,7 +1537,7 @@ export class UserSession {
         Date.now(),
         event.result?.details,
         tool?.rmSnapshots,
-        { name: event.toolName, cmd },
+        { name: event.toolName, cmd, ...(tool?.timeout ? { timeout: tool.timeout } : {}) },
         getShowReadImages(this.user),
       );
       if (entry) {

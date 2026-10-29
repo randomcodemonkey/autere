@@ -93,3 +93,38 @@ describe('ChatMessage — ANSI tool output', () => {
     cy.window().its('__xss').should('be.undefined');
   });
 });
+
+describe('ChatMessage — streaming tool call', () => {
+  it('shows the partial output tail and the timeout while the tool runs', () => {
+    cy.mount(
+      <ChatMessage
+        msg={{ ...base, streaming: true, partial: '\u001b[32mcompiling\u001b[0m 3/4', toolCall: { name: 'bash', cmd: 'npm test', timeout: 300000 } } as any}
+        role="toolCall"
+        displayText="npm test"
+        isAssistant={false}
+        isToolResult={true}
+        isLong={false}
+        truncLen={5000}
+      />,
+    );
+    cy.get('.tool-call-header').should('contain.text', 'bash').and('contain.text', 'npm test');
+    cy.get('.tool-call-timeout').should('contain.text', '5m');
+    cy.get('.stream-tool-output').should('contain.text', 'compiling 3/4').and('not.contain.text', '\u001b');
+    cy.get('.stream-tool-output > span').first().should('have.attr', 'style').and('contain', '--ansi-2');
+  });
+
+  it('hides the timeout badge when the tool has none', () => {
+    cy.mount(
+      <ChatMessage
+        msg={{ ...base, streaming: true, toolCall: { name: 'read', cmd: 'read /tmp/x' } } as any}
+        role="toolCall"
+        displayText="read /tmp/x"
+        isAssistant={false}
+        isToolResult={true}
+        isLong={false}
+        truncLen={5000}
+      />,
+    );
+    cy.get('.tool-call-timeout').should('not.exist');
+  });
+});

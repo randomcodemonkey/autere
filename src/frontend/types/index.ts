@@ -56,7 +56,9 @@ export interface StreamMessage {
   /** Present on 'file' pseudo-entries — a file shared via pi-filetools */
   file?: { name: string; savedName: string; size: number; mimeType?: string };
   /** Present on toolResult/toolCall entries — the connected tool call */
-  toolCall?: { name: string; cmd: string };
+  toolCall?: { name: string; cmd: string; timeout?: number };
+  /** Streaming toolCall only: tail of the partial output produced so far */
+  partial?: string;
   /** Live only: id used to replace a streaming toolCall with its result */
   toolCallId?: string;
   /** Optimistic frontend-only message — shown with a pending indicator until

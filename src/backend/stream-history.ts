@@ -29,6 +29,8 @@ export type { StreamImage } from '../shared/format.js';
 export interface ToolCallInfo {
   name: string;
   cmd: string;
+  /** Resolved execution timeout (ms) when the tool has one */
+  timeout?: number;
 }
 
 export function formatToolResult(
@@ -237,7 +239,12 @@ export function buildStreamHistoryFromMessages(rawMessages: any[], showReadImage
     if (!id) return undefined;
     const call = toolCallArgs.get(id);
     if (!call) return undefined;
-    return { name: call.name, cmd: formatToolArgs(call.name, call.args) };
+    const timeout = call.args?.timeout;
+    return {
+      name: call.name,
+      cmd: formatToolArgs(call.name, call.args),
+      ...(typeof timeout === 'number' ? { timeout } : {}),
+    };
   };
 
   const out = entries
