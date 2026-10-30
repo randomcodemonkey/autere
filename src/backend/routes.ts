@@ -84,6 +84,7 @@ import { extensionsState } from './state.js';
 import { enabledExtensionsFor, invalidateExtensionEnrichment } from './extensions.js';
 import { pathIsIgnored } from '../shared/edit-ignore.js';
 import { userFileRoots, resolveInRoots, browseList, browseRead, browseWrite, browseDelete, type BrowseResult } from './files.js';
+import { listSkills, createSkill, deleteSkill, skillTree, readSkillFile, writeSkillFile, deleteSkillFile, createSkillDir, importSkillZip, readSkillTemplate, writeSkillTemplate, deleteSkillTemplate, type SkillResult } from './skills.js';
 import { listRepos, repoDetail, fileLog, initRepo, cloneRepo, fileDiff, gitList } from './git.js';
 import { log } from './logger.js';
 import type { UserSession } from './user-session.js';
@@ -239,6 +240,11 @@ const RE = {
   sessionsHistory: new RegExp(`^${API_PREFIX}/sessions/([\\w-]+)/history$`),
   sessionsFileChanges: new RegExp(`^${API_PREFIX}/sessions/([\\w-]+)/file-changes$`),
   personasItem: new RegExp(`^${API_PREFIX}/personas/([\\w-]+)$`),
+  skillsItem: new RegExp(`^${API_PREFIX}/skills/([\\w-]+)$`),
+  skillsTree: new RegExp(`^${API_PREFIX}/skills/([\\w-]+)/tree$`),
+  skillsDir: new RegExp(`^${API_PREFIX}/skills/([\\w-]+)/dir$`),
+  skillsFile: new RegExp(`^${API_PREFIX}/skills/([\\w-]+)/file$`),
+  skillsTemplate: new RegExp(`^${API_PREFIX}/skills/([\\w-]+)/template$`),
   schedulerTask: new RegExp(`^${API_PREFIX}/scheduler/tasks/([\\w-]+)$`),
   schedulerTaskRun: new RegExp(`^${API_PREFIX}/scheduler/tasks/([\\w-]+)/run$`),
   schedulerRunLog: new RegExp(`^${API_PREFIX}/scheduler/runs/([\\w-]+)/([\\w-]+)$`),
@@ -1970,6 +1976,108 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         sendJSON(c.res, { success: false, error: `Failed to generate persona prompt: ${err.statusCode ? err.message : err}` }, err.statusCode || 500);
       }
     },
+  });
+
+  // ── Skills (per-user packages + prompt templates) ──
+  const sendSkill = (res: any, result: SkillResult, status = 200) => {
+    if ('error' in result) sendJSON(res, { success: false, error: result.error }, result.status);
+    else sendJSON(res, { success: true, data: result.data }, status);
+  };
+
+  route({
+    method: 'GET', path: API.skills.root, template: `${API_PREFIX}/skills`,
+    role: 'chat', tag: 'Skills', summary: 'List the caller skills (name, description, shared, template)',
+    handler: async (c) => sendJSON(c.res, { success: true, data: listSkills(c.user) }),
+  });
+
+  route({
+    method: 'POST', path: API.skills.root, template: `${API_PREFIX}/skills`,
+    role: 'control', tag: 'Skills', status: 201,
+    summary: 'Create a skill directory with a SKILL.md (body: name, description)',
+    handler: async (c) => {
+      const body = await readBody(c.req).catch((err) => err);
+      if (body instanceof Error) { sendJSON(c.res, { success: false, error: body.message }, (body as any).statusCode || 400); return; }
+      sendSkill(c.res, createSkill(c.user, body.name, body.description), 201);
+    },
+  });
+
+  route({
+    method: 'POST', path: API.skills.importZip, template: `${API_PREFIX}/skills/import`,
+    role: 'control', tag: 'Skills', status: 201,
+    summary: 'Import a skill package from a base64 zip into skills/<name> (body: name, description?, zip)',
+    handler: async (c) => {
+      const body = await readBody(c.req).catch((err) => err);
+      if (body instanceof Error) { sendJSON(c.res, { success: false, error: body.message }, (body as any).statusCode || 400); return; }
+      sendSkill(c.res, importSkillZip(c.user, body.name, body.description, body.zip), 201);
+    },
+  });
+
+  route({
+    method: 'DELETE', path: RE.skillsItem, template: `${API_PREFIX}/skills/{name}`,
+    role: 'control', tag: 'Skills', summary: 'Delete a skill (a shared skill is only unlinked from this env)',
+    handler: async (c, m) => sendSkill(c.res, deleteSkill(c.user, m![1])),
+  });
+
+  route({
+    method: 'GET', path: RE.skillsTree, template: `${API_PREFIX}/skills/{name}/tree`,
+    role: 'chat', tag: 'Skills', summary: 'List the files and folders of one skill',
+    handler: async (c, m) => sendSkill(c.res, skillTree(c.user, m![1])),
+  });
+
+  route({
+    method: 'GET', path: RE.skillsFile, template: `${API_PREFIX}/skills/{name}/file`,
+    role: 'chat', tag: 'Skills', summary: 'Read one skill file (query: path)',
+    handler: async (c, m) => sendSkill(c.res, readSkillFile(c.user, m![1], c.url.searchParams.get('path') ?? '')),
+  });
+
+  route({
+    method: 'PUT', path: RE.skillsFile, template: `${API_PREFIX}/skills/{name}/file`,
+    role: 'control', tag: 'Skills', summary: 'Create or replace a skill file (body: path, content)',
+    handler: async (c, m) => {
+      const body = await readBody(c.req).catch((err) => err);
+      if (body instanceof Error) { sendJSON(c.res, { success: false, error: body.message }, (body as any).statusCode || 400); return; }
+      sendSkill(c.res, writeSkillFile(c.user, m![1], body.path, body.content));
+    },
+  });
+
+  route({
+    method: 'DELETE', path: RE.skillsFile, template: `${API_PREFIX}/skills/{name}/file`,
+    role: 'control', tag: 'Skills', summary: 'Delete a skill file or folder (query: path)',
+    handler: async (c, m) => sendSkill(c.res, deleteSkillFile(c.user, m![1], c.url.searchParams.get('path') ?? '')),
+  });
+
+  route({
+    method: 'POST', path: RE.skillsDir, template: `${API_PREFIX}/skills/{name}/dir`,
+    role: 'control', tag: 'Skills', summary: 'Create a folder inside a skill (body: path)',
+    handler: async (c, m) => {
+      const body = await readBody(c.req).catch((err) => err);
+      if (body instanceof Error) { sendJSON(c.res, { success: false, error: body.message }, (body as any).statusCode || 400); return; }
+      sendSkill(c.res, createSkillDir(c.user, m![1], body.path));
+    },
+  });
+
+  route({
+    method: 'GET', path: RE.skillsTemplate, template: `${API_PREFIX}/skills/{name}/template`,
+    role: 'chat', tag: 'Skills', summary: 'Read the skill prompt template (prompts/<name>.md)',
+    handler: async (c, m) => sendSkill(c.res, readSkillTemplate(c.user, m![1])),
+  });
+
+  route({
+    method: 'PUT', path: RE.skillsTemplate, template: `${API_PREFIX}/skills/{name}/template`,
+    role: 'control', tag: 'Skills', summary: 'Replace the skill prompt template (body: content; empty removes it)',
+    handler: async (c, m) => {
+      const body = await readBody(c.req).catch((err) => err);
+      if (body instanceof Error) { sendJSON(c.res, { success: false, error: body.message }, (body as any).statusCode || 400); return; }
+      const name = m![1];
+      if (typeof body.content === 'string' && !body.content.trim()) sendSkill(c.res, deleteSkillTemplate(c.user, name));
+      else sendSkill(c.res, writeSkillTemplate(c.user, name, body.content));
+    },
+  });
+
+  route({
+    method: 'DELETE', path: RE.skillsTemplate, template: `${API_PREFIX}/skills/{name}/template`,
+    role: 'control', tag: 'Skills', summary: 'Delete the skill prompt template',
+    handler: async (c, m) => sendSkill(c.res, deleteSkillTemplate(c.user, m![1])),
   });
 
   // ── User settings ──

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { SortableList } from './SortableList';
 import { PersonasSettingsSection } from './Personas';
+import { SkillsSection } from './SkillsSection';
 import { ApiTokensSection } from './ApiTokensSection';
 import { NotificationsSection } from './NotificationsSection';
 import { Modal } from './Modal';
@@ -789,6 +790,8 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected, onSess
           <div className="settings-content">
             {activeSection === 'personas' ? (
               <PersonasSettingsSection />
+            ) : activeSection === 'skills' ? (
+              <SkillsSection />
             ) : activeSection === 'apiTokens' ? (
               <ApiTokensSection />
             ) : activeSection === 'notifications' ? (

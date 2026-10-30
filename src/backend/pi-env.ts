@@ -85,14 +85,12 @@ function pathExists(path: string): boolean {
   try { lstatSync(path); return true; } catch { return false; }
 }
 
-/** Make envDir/extensions a real directory holding per-entry symlinks
- *  instead of one symlink to the shared master dir. Bundled extras are
- *  copied per user, so toggles and refreshes never mutate the master dir.
- *  ponytail: master-loop/link copies are cheap; revisit only if master
- *  extensions ever hold per-entry state beyond symlinks. */
-export function materializeEnvExtensions(user: string): void {
+/** Make envDir/<dir> a real directory holding per-entry symlinks instead of
+ *  one symlink to the shared master dir, so per-user entries can live beside
+ *  the shared ones (extensions: bundled extras; skills: user skills). */
+function materializeEnvDir(user: string, name: string): void {
   const envDir = getPiEnvDir(user);
-  const link = join(envDir, 'extensions');
+  const link = join(envDir, name);
   // Throws inside try →  it's not a symlink (already a real dir) or missing → done
   let src: string;
   try { src = readlinkSync(link); } catch { return; }
@@ -101,9 +99,22 @@ export function materializeEnvExtensions(user: string): void {
   mkdirSync(link, { recursive: true });
   let entries: string[] = [];
   try { entries = readdirSync(target); } catch { /* empty master dir */ }
-  for (const name of entries) {
-    try { symlinkSync(join(target, name), join(link, name), 'dir'); } catch { /* eexist */ }
+  for (const entry of entries) {
+    try { symlinkSync(join(target, entry), join(link, entry), 'dir'); } catch { /* eexist */ }
   }
+}
+
+/** Bundled extras are copied per user, so toggles and refreshes never mutate
+ *  the master dir. ponytail: master-loop/link copies are cheap; revisit only
+ *  if master extensions ever hold per-entry state beyond symlinks. */
+export function materializeEnvExtensions(user: string): void {
+  materializeEnvDir(user, 'extensions');
+}
+
+/** User-created skills live in the env beside the shared (master) ones — the
+ *  shared entries stay read-only symlinks, see skills.ts. */
+export function materializeEnvSkills(user: string): void {
+  materializeEnvDir(user, 'skills');
 }
 
 /**
@@ -230,6 +241,9 @@ export function ensurePiEnv(user: string): string {
         }
       }
     }
+
+    // Per-user skills beside the shared ones (Settings → Skills)
+    materializeEnvSkills(user);
 
     // Sessions dir — per-user, never shared
     const sessionsDir = join(envDir, 'sessions');

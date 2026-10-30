@@ -1323,6 +1323,7 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
   // sort below places them alphabetically; the frontend renders their
   // specialized UI when it sees these section ids.
   sections.push({ id: 'personas', label: 'Personas', fields: [] });
+  sections.push({ id: 'skills', label: 'Skills', fields: [] });
   sections.push({ id: 'apiTokens', label: 'API Tokens', fields: [] });
   sections.push({
     id: 'notifications',

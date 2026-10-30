@@ -108,6 +108,18 @@ export const API = {
     item: (id: string) => `${P}/personas/${encodeURIComponent(id)}`,
   },
 
+  // Per-user skills (Settings -> Skills) and their prompt templates.
+  skills: {
+    root: `${P}/skills`,
+    importZip: `${P}/skills/import`,
+    item: (name: string) => `${P}/skills/${encodeURIComponent(name)}`,
+    tree: (name: string) => `${P}/skills/${encodeURIComponent(name)}/tree`,
+    dir: (name: string) => `${P}/skills/${encodeURIComponent(name)}/dir`,
+    file: (name: string, path?: string) => `${P}/skills/${encodeURIComponent(name)}/file`
+      + (path === undefined ? '' : `?path=${encodeURIComponent(path)}`),
+    template: (name: string) => `${P}/skills/${encodeURIComponent(name)}/template`,
+  },
+
   scheduler: {
     tasks: `${P}/scheduler/tasks`,
     task: (id: string) => `${P}/scheduler/tasks/${encodeURIComponent(id)}`,

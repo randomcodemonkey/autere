@@ -165,6 +165,12 @@ src/backend/
   state.ts              # Global mutable state (extensions, sessions)
   sessions.ts           # Session file listing
   personas.ts           # Persona library + per-session bindings (JSON files)
+  skills.ts             # Per-user skill packages: <pi-env>/skills/<name>/ +
+                        # prompt templates <pi-env>/prompts/<name>.md.
+                        # Zip import uses a built-in reader (stored+deflate,
+                        # no zip64) — Settings -> Skills. Shared master-dir
+                        # skills arrive as symlinks (materializeEnvSkills) and
+                        # are read-only. Self-check: skills.check.ts
   scheduler.ts          # Scheduled tasks (cron-style pi prompts). Each run gets
                         # its own pi session, deleted for good when the run ends
                         # unless the task saves it — saveSession: true
@@ -228,6 +234,8 @@ src/frontend/
                         # folderIgnores (per-folder [edits]/[files] toggles;
                         # filters FileBrowser + Changes server-side, getEditIgnorePaths
                         # derived for the pi env)
+    SkillsSection.tsx   # Settings -> Skills: table, create/import modals, edit
+                        # modal (file tree + editor, per-skill prompt template)
     ChangesPage.tsx, LoginScreen.tsx,
     NotificationsSection.tsx # Settings → Notifications: subscribes this browser to
                         # Web Push + renders the three per-kind toggles
@@ -556,7 +564,8 @@ Logs (supervisord instance): `~/log/autere.out.log` / `~/log/autere.err.log`
 
 Data: per-user pi envs in `~/.autere/pi-envs/<user>/` (sessions/, settings.json,
 personas.json, persona-active.json, persona-markers.json, dedup-stats.json,
-autere-agent.json — pi-autere's backend baseUrl+token),
+skills/<name>/ — user skill packages, prompts/<name>.md — skill prompt
+templates, autere-agent.json — pi-autere's backend baseUrl+token),
 `~/.autere/users/<user>/` (settings.json, scheduled-tasks/,
 push-subscriptions.json — Web Push), `~/.autere/vapid-keys.json`,
 `~/.autere/deleted-sessions/`, `~/.autere/monitor-auth-tokens.json`,

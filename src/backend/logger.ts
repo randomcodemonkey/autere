@@ -73,6 +73,7 @@ export const log = {
   scheduler: new Logger('scheduler'),
   sessions: new Logger('sessions'),
   settings: new Logger('settings'),
+  skills: new Logger('skills'),
   utils: new Logger('utils'),
   server: new Logger('server'),
   userSession: new Logger('user-session'),
