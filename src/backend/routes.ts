@@ -409,6 +409,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         sessionStats: null,
         activeTools: [],
         recentTools: [],
+        // Idle session: no process can be blocked on an extension dialog
+        extensionUi: null,
         streamHistory,
         historySessionId: disk.id,
         availableSessions: pm.listSessions(user, c.viewed),
@@ -434,6 +436,9 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       sessionStats: sess ? { ...sess.state.sessionStats } : null,
       activeTools: sess ? activeToolsSnapshot(sess) : [],
       recentTools: sess ? [...sess.state.recentTools] : [],
+      // A dialog pi is blocked on — replayed on every bootstrap/switch so a
+      // request that arrived while viewing another session is not lost
+      extensionUi: sess ? [...sess.state.pendingUi.values()][0] ?? null : null,
       streamHistory,
       historySessionId: st?.sessionId ?? null,
       availableSessions: pm.listSessions(user, c.viewed),
@@ -1497,6 +1502,22 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           t.broadcast({ type: 'error', data: { message: `Compaction failed: ${err}` } });
         }
       });
+    },
+  });
+
+  route({
+    method: 'POST', path: API.session.extensionUi, template: `${API_PREFIX}/session/extension-ui`,
+    role: 'chat', tag: 'Session',
+    summary: 'Answer a pending extension UI dialog (body: id, value|confirmed|cancelled, sessionId?)',
+    handler: async (c) => {
+      const body = await readBody(c.req).catch((err) => err);
+      if (body instanceof Error) { sendJSON(c.res, { success: false, error: body.message }, (body as any).statusCode || 400); return; }
+      const t = await resolveTarget(c, targetParam(c, body));
+      if (!t) { sendTargetMissing(c); return; }
+      if (!body.id) { sendJSON(c.res, { success: false, error: 'id is required' }, 400); return; }
+      // A dialog pi already gave up on (its own timeout) is not an error —
+      // the UI just needs to close.
+      sendJSON(c.res, { success: t.respondExtensionUi(body.id, body) });
     },
   });
 

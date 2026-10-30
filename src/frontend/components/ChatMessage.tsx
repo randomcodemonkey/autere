@@ -242,6 +242,16 @@ export function formatTimestamp(ts?: number): string {
 }
 
 /** Tool timeout as a compact duration. Values >= 1000 are milliseconds. */
+/** Compact tool run time: 320ms / 4.2s / 12s / 1m 5s */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 10) return `${seconds.toFixed(1)}s`;
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
 export function formatTimeout(value: number): string {
   const seconds = value >= 1000 ? value / 1000 : value;
   if (seconds >= 3600) return `${Math.round(seconds / 3600)}h`;
@@ -280,7 +290,11 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
 
   // Don't render empty non-streaming messages (image-only messages still render)
   const hasBody = role === 'toolCall' && !!msg.toolCall ? false : !displayText.trim();
-  if (!msg.streaming && hasBody && !(msg.images && msg.images.length > 0) && !msg.file) return null;
+  // Empty thinking blocks are kept on purpose: models that withhold their
+  // reasoning stream start/end with no content, and the block is the only
+  // sign of activity in the chat.
+  const emptyThinking = role === 'thinking' && hasBody;
+  if (!msg.streaming && hasBody && !emptyThinking && !(msg.images && msg.images.length > 0) && !msg.file) return null;
 
   const isCallOnly = role === 'toolCall' && !!msg.toolCall;
   // Streaming tool calls show the tail of their partial output under the
@@ -373,7 +387,7 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
         {/* Connected tool call: rendered as a header line inside the tool
             result block — call and result are one unit */}
         {msg.toolCall && (
-          <div className="tool-call-header">
+          <div className={`tool-call-header${msg.toolCall.parentToolCallId ? ' tool-call-nested' : ''}`}>
             <span className="tool-call-name">⚙ {msg.toolCall.name}</span>
             {msg.toolCall.cmd && (
               <span
@@ -384,6 +398,11 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
                 {msg.toolCall.cmd}
               </span>
             )}
+            {typeof msg.toolCall.durationMs === 'number' && (
+              <span className="tool-call-duration" title={`Tool ran for ${formatDuration(msg.toolCall.durationMs)}`}>
+                {formatDuration(msg.toolCall.durationMs)}
+              </span>
+            )}
             {msg.toolCall.timeout ? (
               <span className="tool-call-timeout" title={`Tool timeout: ${formatTimeout(msg.toolCall.timeout)}`}>⏱ {formatTimeout(msg.toolCall.timeout)}</span>
             ) : null}
@@ -392,6 +411,8 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
         )}
         {role === 'edit'
           ? renderEditDiff(showText, !expanded && isLong, 12, isError)
+          : emptyThinking
+          ? <span className="stream-empty-marker">…</span>
           : renderMarkdown
             ? <span dangerouslySetInnerHTML={{ __html: renderedText }} />
             : ansiNodes}

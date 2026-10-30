@@ -113,6 +113,88 @@ describe('ChatMessage — streaming tool call', () => {
     cy.get('.stream-tool-output > span').first().should('have.attr', 'style').and('contain', '--ansi-2');
   });
 
+  it('renders an empty thinking block while streaming', () => {
+    cy.mount(
+      <ChatMessage
+        msg={{ ...base, streaming: true } as any}
+        role="thinking"
+        displayText=""
+        isAssistant={false}
+        isToolResult={false}
+        isLong={false}
+        truncLen={5000}
+      />,
+    );
+    cy.contains('.stream-role', 'thinking').should('exist');
+    cy.get('.stream-cursor').should('exist');
+    cy.get('.stream-empty-marker').should('have.text', '…');
+  });
+
+  it('keeps an empty thinking block after it ends', () => {
+    cy.mount(
+      <ChatMessage
+        msg={{ ...base, streaming: false } as any}
+        role="thinking"
+        displayText=""
+        isAssistant={false}
+        isToolResult={false}
+        isLong={false}
+        truncLen={5000}
+      />,
+    );
+    cy.contains('.stream-role', 'thinking').should('exist');
+    cy.get('.stream-empty-marker').should('exist');
+    cy.get('.stream-cursor').should('not.exist');
+  });
+
+  it('shows the tool duration and indents nested calls', () => {
+    cy.mount(
+      <ChatMessage
+        msg={{ ...base, streaming: false, toolCall: { name: 'bash', cmd: 'npm test', durationMs: 12345 } } as any}
+        role="toolCall"
+        displayText="npm test"
+        isAssistant={false}
+        isToolResult={true}
+        isLong={false}
+        truncLen={5000}
+      />,
+    );
+    cy.get('.tool-call-duration').should('have.text', '12s');
+    cy.get('.tool-call-header').should('not.have.class', 'tool-call-nested');
+  });
+
+  it('indents a nested tool call', () => {
+    cy.mount(
+      <ChatMessage
+        msg={{ ...base, streaming: false, toolCall: { name: 'read', cmd: 'a.txt', parentToolCallId: 'call_parent' } } as any}
+        role="toolCall"
+        displayText="a.txt"
+        isAssistant={false}
+        isToolResult={true}
+        isLong={false}
+        truncLen={5000}
+      />,
+    );
+    cy.get('.tool-call-header').should('have.class', 'tool-call-nested');
+  });
+
+  it('renders a call whose arguments are still streaming (no cmd yet)', () => {
+    cy.mount(
+      <ChatMessage
+        msg={{ ...base, streaming: true, toolCall: { name: 'write' } } as any}
+        role="toolCall"
+        displayText=""
+        isAssistant={false}
+        isToolResult={true}
+        isLong={false}
+        truncLen={5000}
+      />,
+    );
+    cy.get('.tool-call-header').should('contain.text', 'write');
+    cy.get('.tool-call-cmd').should('not.exist');
+    cy.get('.tool-call-header .stream-cursor').should('exist');
+  });
+
   it('hides the timeout badge when the tool has none', () => {
     cy.mount(
       <ChatMessage

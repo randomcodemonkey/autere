@@ -80,6 +80,8 @@ export const API = {
     abort: `${P}/session/abort`,
     restart: `${P}/session/restart`,
     compact: `${P}/session/compact`,
+    /** Answer a pending extension UI dialog (select/confirm/input/editor) */
+    extensionUi: `${P}/session/extension-ui`,
     pending: `${P}/session/pending`,
     fileChangesQuery: (id: string) => `sessionId=${encodeURIComponent(id)}`,
   },

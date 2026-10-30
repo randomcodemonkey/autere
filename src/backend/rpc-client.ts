@@ -13,6 +13,7 @@ import type {
   RpcCommand,
   RpcResponse,
   RpcSessionState,
+  RpcExtensionUIResponse,
   JsonAgentSessionEvent,
 } from '@earendil-works/pi-coding-agent';
 import { log, Logger } from './logger.js';
@@ -624,6 +625,26 @@ export class MonitorRpcClient {
       pending.reject(error);
     }
     this.pendingRequests.clear();
+  }
+
+  /**
+   * Answer an extension UI dialog. Not an RPC command: pi does not send a
+   * response record back, so this writes straight to stdin instead of going
+   * through send() (which would wait out its timeout).
+   */
+  respondExtensionUi(response: RpcExtensionUIResponse): boolean {
+    const stdin = this.process?.stdin;
+    if (!stdin || stdin.destroyed || !stdin.writable) {
+      log.rpc.warn(`Cannot answer extension UI request ${response.id}: stdin not writable`);
+      return false;
+    }
+    try {
+      stdin.write(JSON.stringify(response) + '\n');
+      return true;
+    } catch (err) {
+      log.rpc.warn(`Failed to answer extension UI request ${response.id}: ${err instanceof Error ? err.message : err}`);
+      return false;
+    }
   }
 
   private send(command: RpcCommand, timeoutMs = 30000): Promise<RpcResponse> {

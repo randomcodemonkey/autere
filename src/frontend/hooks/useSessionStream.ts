@@ -10,6 +10,7 @@ import type {
   AvailableModel,
   SessionInfo,
   SSEMessage,
+  ExtensionUiRequest,
 } from '../types';
 
 // Session-scoped SSE events carry the CANONICAL session id, but the URL may
@@ -69,6 +70,8 @@ export function useSessionStream(opts: {
   // removed once the backend broadcast carries the same text.
   const [pendingUser, setPendingUser] = useState<StreamMessage[]>([]);
   const [extensions, setExtensions] = useState<ExtensionInfo[]>([]);
+  /** Extension UI dialog pi is blocked on (null = none) */
+  const [extensionUi, setExtensionUi] = useState<ExtensionUiRequest | null>(null);
   const [models, setModels] = useState<AvailableModel[]>([]);
   const [availableSessions, setAvailableSessions] = useState<SessionInfo[]>([]);
   // false until the first bootstrap 'sessions' list arrives — the header
@@ -119,6 +122,7 @@ export function useSessionStream(opts: {
     setStreamHistory([]);
     setPendingUser([]);
     setStats(EMPTY_STATS);
+    setExtensionUi(null);
   }, []);
 
   const flushPendingDelta = useCallback(() => {
@@ -317,6 +321,13 @@ export function useSessionStream(opts: {
         }
         break;
       }
+      case 'extension_ui': {
+        // pi is blocked on a dialog (select/confirm/input/editor); null means
+        // it was answered elsewhere or the process went away.
+        if (!inViewedSession(viewedSessionRef.current, msg.sessionId)) break;
+        setExtensionUi(msg.data || null);
+        break;
+      }
       case 'models':
         setModels(msg.data || []);
         break;
@@ -364,6 +375,9 @@ export function useSessionStream(opts: {
     setSessionsLoaded(true);
     setModels(d.availableModels ?? []);
     setExtensions(d.extensions ?? []);
+    // A dialog pi is blocked on survives session switches only via the
+    // bootstrap payload (SSE is live-only) — replay it here.
+    setExtensionUi(d.extensionUi ?? null);
   }, []);
 
   // ── Bootstrap: ONE request loads everything at (re)load time ──
@@ -516,8 +530,26 @@ export function useSessionStream(opts: {
     });
   }, [authenticated, sseConnected, urlSessionId, sessionState.sessionId, applyBootstrap, navigate]);
 
+  /** Answer the pending extension UI dialog (no-op when pi already timed out) */
+  const respondExtensionUi = useCallback(async (payload: { value?: string; confirmed?: boolean; cancelled?: boolean }) => {
+    const request = extensionUi;
+    if (!request) return;
+    setExtensionUi(null);
+    try {
+      await apiSend(API.session.extensionUi, 'POST', {
+        id: request.id,
+        sessionId: sessionState.sessionId || undefined,
+        ...payload,
+      });
+    } catch {
+      // pi resolved the dialog on its own (timeout/abort) — nothing to do
+    }
+  }, [extensionUi, sessionState.sessionId]);
+
   return {
     sessionState, setSessionState,
+    extensionUi,
+    respondExtensionUi,
     stats,
     streamHistory,
     pendingUser, setPendingUser,

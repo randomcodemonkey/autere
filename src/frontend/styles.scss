@@ -5375,3 +5375,59 @@ textarea.skills-textarea {
   white-space: pre;
   overflow: auto;
 }
+
+// ── Extension UI dialogs (pi ctx.ui select/confirm/input/editor) ──
+.modal-extension-ui {
+  max-width: 560px;
+}
+
+.extension-ui-message {
+  margin-bottom: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--c-text-soft, var(--c-text-2));
+  white-space: pre-wrap;
+}
+
+.extension-ui-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.6rem;
+
+  .btn {
+    width: 100%;
+    text-align: left;
+  }
+}
+
+.extension-ui-editor {
+  min-height: 40vh;
+  font-family: var(--font-mono, monospace);
+  resize: vertical;
+}
+
+// Nested tool calls (tool-calls-tool): indent so the parent/child relation
+// is visible without a separate tree
+.tool-call-header.tool-call-nested {
+  padding-left: 1.1rem;
+  border-left: 2px solid var(--c-border);
+  margin-left: 0.25rem;
+
+  .tool-call-name::before {
+    content: '↳ ';
+    color: var(--c-text-faint);
+  }
+}
+
+.tool-call-duration {
+  color: var(--c-text-faint);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+// Empty thinking block (model withheld its reasoning) — the block itself is
+// the activity signal, so show a placeholder instead of a bare header.
+.stream-empty-marker {
+  color: var(--c-text-faint);
+  font-style: italic;
+}

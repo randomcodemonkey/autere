@@ -56,7 +56,13 @@ export interface StreamMessage {
   /** Present on 'file' pseudo-entries — a file shared via pi-filetools */
   file?: { name: string; savedName: string; size: number; mimeType?: string };
   /** Present on toolResult/toolCall entries — the connected tool call */
-  toolCall?: { name: string; cmd: string; timeout?: number };
+  toolCall?: {
+    name: string; cmd: string; timeout?: number;
+    /** Tool run time reported by pi */
+    durationMs?: number;
+    /** Set for tool-calls-tool invocations — nested cards render indented */
+    parentToolCallId?: string;
+  };
   /** Streaming toolCall only: tail of the partial output produced so far */
   partial?: string;
   /** Live only: id used to replace a streaming toolCall with its result */
@@ -165,6 +171,19 @@ export interface SessionInfo {
   compacting?: boolean;
 }
 
+/** Extension UI dialog pi is blocked on (null payload = dismissed/answered) */
+export interface ExtensionUiRequest {
+  id: string;
+  method: 'select' | 'confirm' | 'input' | 'editor';
+  title: string;
+  message?: string;
+  options?: string[];
+  placeholder?: string;
+  prefill?: string;
+  /** pi auto-resolves after this many ms */
+  timeout?: number;
+}
+
 export type SSEEventType =
   | 'status'
   | 'stats'
@@ -172,6 +191,7 @@ export type SSEEventType =
   | 'history_upsert'
   | 'history_remove'
   | 'stream_delta'
+  | 'extension_ui'
   | 'message'
   | 'tool_start'
   | 'tool_end'

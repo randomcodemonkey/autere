@@ -18,6 +18,7 @@ import { API } from '../api-paths';
 import { apiJSON, apiBody, apiSend, JSON_HEADERS } from '../api';
 import { uiSessionName } from '../session-name';
 import { useSessionStream } from '../hooks/useSessionStream';
+import { ExtensionUiModal } from '../components/ExtensionUiModal';
 import type { SSEMessage, SessionInfo } from '../types';
 
 /** Combine base auth/SSE status with session streaming state */
@@ -141,6 +142,7 @@ export function AppPage({
     setAvailableSessions,
     sessionsLoaded,
     sessionError, setSessionError,
+    extensionUi, respondExtensionUi,
     creatingSession, setCreatingSession,
     switchingSession, switchLabel,
     resetSessionUI,
@@ -499,6 +501,7 @@ export function AppPage({
           {switchLabel}
         </div>
       )}
+      <ExtensionUiModal request={extensionUi} onRespond={respondExtensionUi} />
       <Modal open={!!sessionError} onClose={() => setSessionError(null)} className="modal-status">
         <div className="modal-header">
           <h3>Error</h3>

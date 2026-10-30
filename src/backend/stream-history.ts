@@ -31,6 +31,10 @@ export interface ToolCallInfo {
   cmd: string;
   /** Resolved execution timeout (ms) when the tool has one */
   timeout?: number;
+  /** Execution time reported by pi (tool_execution_end.durationMs) */
+  durationMs?: number;
+  /** Set for tool-calls-tool invocations (nested cards render indented) */
+  parentToolCallId?: string;
 }
 
 export function formatToolResult(

@@ -400,11 +400,45 @@ SKILL.md               # This file — canonical, in-repo
 - **History entries** carry stable server-assigned `id`s (monotonic) —
   frontend React keys prefer them so expansion state and scroll anchoring
   survive broadcasts. toolCall→toolResult replacement inherits the id.
+- **Tool-call arguments**: the model writes a call's arguments BEFORE
+  `tool_execution_start` — `message_update` carries `toolcall_start` /
+  `toolcall_delta` / `toolcall_end` (`toolcall-args.ts`). Start pushes a
+  streaming toolCall card, deltas fill it with a best-effort preview of the
+  complete fields (`partialToolArgs`, throttled 120ms), end finalizes the
+  command. The card is adopted at `tool_execution_start` by tool call id
+  (deltas only carry `contentIndex`, so pending calls are keyed by it), so
+  the call renders as one entry from first token to result. Cards of calls
+  that never execute are dropped on abort/error/agent_end. Pure logic
+  covered by `npx tsx src/backend/toolcall-args.check.ts`.
 - **Partial tool output**: `tool_execution_update` mutates the streaming
   toolCall entry's `partial` field (tail capped at 2000 chars, broadcasts
   throttled to 150ms) and re-upserts it by id; `tool_execution_end` replaces
   the entry with the full result. The call's `timeout` (event or args) is
   carried on `toolCall.timeout` and shown as a badge in the header.
+- **pi event coverage** (`user-session.ts` `registerEventHandlers`): every
+  `AgentSessionEvent` is either handled or explicitly listed as a deliberate
+  no-op in `KNOWN_EVENT_TYPES` — anything else logs `unhandled RPC event
+  type` so a new pi event cannot vanish silently. Notable handlers:
+  `thinking_level_changed` -> `sessionState.thinkingLevel` (+ seeded from
+  `get_state`); `summarization_retry_scheduled` / `compaction_end`
+  (`errorMessage`, `aborted`, `willRetry`) -> chat system notices;
+  `thinking_start` creates the block immediately (models that withhold
+  reasoning stream start/end with no deltas — the empty block, rendered with
+  a `…` placeholder, is the only activity signal); `text_start`/`text_end`
+  -> per-block finalization (`textBlockStart` keeps
+  interleaved text blocks from overwriting each other) and the streaming
+  cursor stops before the tool-call phase; `tool_execution_end.durationMs`
+  -> `toolCall.durationMs` badge; `parentToolCallId` -> indented nested call
+  cards.
+- **Extension UI dialogs**: pi's `ctx.ui.select/confirm/input/editor` block
+  the extension (and the turn) until the client answers. `extension_ui_request`
+  is broadcast as the `extension_ui` SSE event (null = dismissed), rendered
+  by `ExtensionUiModal`, and answered through `POST /session/extension-ui`
+  -> `extension_ui_response` written straight to pi's stdin
+  (`rpc.respondExtensionUi`, not an RPC command — pi sends no response).
+  `notify` becomes a chat system line; `setStatus`/`setWidget`/`setTitle`/
+  `set_editor_text` are terminal chrome and dropped. Pending dialogs are
+  dismissed when the pi process stops.
 - **Images**: max 4 attachments × 8MB, `image/*` mime, base64 without data:
   prefix over the wire (`MAX_ATTACHED_IMAGES`, `MAX_IMAGE_BYTES` in routes.ts).
 - **Optimistic UI**: DashboardPage injects pending user messages (⏳) on

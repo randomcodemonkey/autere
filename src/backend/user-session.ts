@@ -29,6 +29,7 @@ import {
   extractImages,
 } from './stream-history.js';
 import { formatToolArgs } from '../shared/format.js';
+import { ToolArgStream, partialToolArgs, toolCallPreview } from './toolcall-args.js';
 import { streamRoleForUserText } from '../shared/format.js';
 import { clipNotification, shouldNotifyAllDone, workedLongEnough } from '../shared/notifications.js';
 
@@ -64,10 +65,17 @@ export interface UserSessionState {
   sessionState: any;
   sessionStats: any;
   activeTools: Map<string, any>;
+  /** Tool calls whose arguments the model is still writing */
+  toolArgs: ToolArgStream;
+  /** Extension UI dialogs pi is blocked on, keyed by request id */
+  pendingUi: Map<string, any>;
   recentTools: any[];
   availableModels: any[];
   extensionsState: any[];
   currentStreamText: string;
+  /** Offset of the current text block inside currentStreamText (interleaved
+   *  thinking splits one message into several text blocks) */
+  textBlockStart: number;
   activeAssistantId: string | null;
   activeThinkingId: string | null;
   currentThinkingText: string;
@@ -104,10 +112,13 @@ function createInitialState(): UserSessionState {
       contextUsage: null,
     },
     activeTools: new Map(),
+    toolArgs: new ToolArgStream(),
+    pendingUi: new Map(),
     recentTools: [],
     availableModels: [],
     extensionsState: [],
     currentStreamText: '',
+    textBlockStart: 0,
     activeAssistantId: null,
     activeThinkingId: null,
     currentThinkingText: '',
@@ -410,6 +421,11 @@ export class UserSession {
     return this.historyBuf;
   }
 
+  /** Tool calls whose arguments are still streaming in */
+  private get toolArgs(): ToolArgStream {
+    return this.state.toolArgs;
+  }
+
   /** Replace the stream history buffer for this session */
   setHistory(entries: any[]) {
     for (const e of entries) this.tagEntry(e);
@@ -591,11 +607,21 @@ export class UserSession {
   private static readonly STALL_WARN_MS = 120_000;
 
   /** Event types known to be benign — anything else hits the default WARN */
+  /**
+   * Event types we knowingly do not act on — everything else falls through to
+   * a WARN so a new pi event cannot vanish silently.
+   *
+   *   message_start  the first text/thinking/toolcall delta already creates
+   *                  the streaming entry, so an empty bubble would add nothing
+   *   turn_end       message_end + tool_execution_end carry the same data
+   *   bash_execution_update  RPC-only, for pi's `bash` command (unused)
+   */
   private static readonly KNOWN_EVENT_TYPES = new Set([
     'session_start', 'session_info_changed', 'agent_start', 'agent_end', 'agent_settled',
     'queue_update', 'message_start', 'message_update', 'message_end', 'tool_execution_start',
-    'tool_execution_end', 'model_select', 'entry_appended', 'compaction_start', 'compaction_end',
-    'turn_start', 'turn_end', 'extension_ui_request', 'extension_error', 'auto_retry_start', 'auto_retry_end',
+    'tool_execution_update', 'tool_execution_end', 'model_select', 'entry_appended',
+    'compaction_start', 'compaction_end', 'turn_start', 'turn_end', 'extension_ui_request',
+    'extension_error', 'auto_retry_start', 'auto_retry_end', 'bash_execution_update',
   ]);
 
   /**
@@ -712,6 +738,8 @@ export class UserSession {
     } catch (err) {
       userLog(this.user).error('Failed to stop RPC:', err);
     }
+    // A dialog pi was blocked on can never be answered now.
+    this.dismissExtensionUi();
     // Clients stay connected to the hub — they may simply switch to another
     // session's process. Only their own actions terminate the connection.
     userLog(this.user).info('pi process stopped');
@@ -733,6 +761,7 @@ export class UserSession {
       this.state.sessionState.sessionName = state.sessionName || null;
       this.state.sessionState.isStreaming = state.isStreaming;
       this.state.sessionState.compacting = state.isCompacting;
+      if (state.thinkingLevel) this.state.sessionState.thinkingLevel = state.thinkingLevel;
       if (state.model) {
         this.state.sessionState.model = {
           provider: state.model.provider,
@@ -879,6 +908,7 @@ export class UserSession {
           // Fresh run — tool entries from a previous run are dead (their
           // tool_execution_end never arrived) and must not pollute cmd lookups.
           s.activeTools.clear();
+          s.toolArgs.drain();
           s.sessionState.isStreaming = true;
           this.broadcast({ type: 'status', data: { ...s.sessionState } });
           break;
@@ -898,7 +928,11 @@ export class UserSession {
           const buf = this.history();
           const stale = buf.filter((e) => e.streaming);
           for (const e of stale) e.streaming = false;
+          // Calls whose arguments streamed but that never executed (aborted
+          // turn) would linger as empty cards — drop them with the map.
+          const orphanCalls = new Set(s.toolArgs.drain().map((r) => r.entry?.id).filter(Boolean));
           for (let k = buf.length - 1; k >= 0; k--) {
+            if (orphanCalls.has(buf[k].id)) { buf.splice(k, 1); continue; }
             if (buf[k].role === 'assistant' && !(buf[k].text || '').trim() && !(buf[k].images?.length)) buf.splice(k, 1);
           }
           this.broadcast({ type: 'stream_history', sessionId: s.sessionState.sessionId, data: this.history().slice(-this.historyLimit) });
@@ -999,6 +1033,13 @@ export class UserSession {
           s.sessionState.compacting = false;
           s.sessionState.isStreaming = false;
           this.broadcast({ type: 'status', data: { ...s.sessionState } });
+          if (event.errorMessage) {
+            this.pushSystemNotice(`Compaction failed: ${event.errorMessage}`);
+          } else if (event.aborted && !s.sessionState.compactionAborted) {
+            this.pushSystemNotice('Compaction aborted.');
+          } else if (event.willRetry) {
+            this.pushSystemNotice('Compaction finished — retrying the prompt with the compacted context.');
+          }
           // Context shrank — refresh usage stats immediately (pi updates them
           // at compaction, we otherwise only re-fetch on message_end).
           this.rpc.getSessionStats().then(stats => {
@@ -1013,6 +1054,26 @@ export class UserSession {
         case 'extension_error':
           log.userSession.forSession(s.sessionState.sessionId).warn(
             `extension error in ${event.extensionPath || 'unknown extension'}: ${event.error || JSON.stringify(event.event)}`);
+          break;
+        case 'thinking_level_changed':
+          s.sessionState.thinkingLevel = event.level || 'off';
+          this.broadcast({ type: 'status', data: { ...s.sessionState } });
+          break;
+        case 'summarization_retry_scheduled':
+          log.userSession.forSession(s.sessionState.sessionId).warn(
+            `summarization retry ${event.attempt}/${event.maxAttempts} scheduled in ${event.delayMs}ms: ${event.errorMessage || 'unknown error'}`);
+          this.pushSystemNotice(
+            `Summarization failed (${event.errorMessage || 'unknown error'}) — retrying ${event.attempt}/${event.maxAttempts} in ${Math.max(1, Math.round((event.delayMs || 0) / 1000))}s.`);
+          break;
+        case 'summarization_retry_attempt_start':
+          log.userSession.forSession(s.sessionState.sessionId).debug(
+            `summarization retry attempt start (${event.source}${event.reason ? `/${event.reason}` : ''})`);
+          break;
+        case 'summarization_retry_finished':
+          log.userSession.forSession(s.sessionState.sessionId).debug('summarization retries finished');
+          break;
+        case 'extension_ui_request':
+          this.handleExtensionUi(event);
           break;
         case 'auto_retry_start':
           log.userSession.forSession(s.sessionState.sessionId).warn(
@@ -1071,10 +1132,14 @@ export class UserSession {
     const s = this.state;
     const rpc = this.rpc;
 
+    // A dialog the previous pi process was blocked on is gone with it
+    this.dismissExtensionUi();
+
     // Reset streaming state — a new session has begun
     s.activeAssistantId = null;
     s.activeThinkingId = null;
     s.currentStreamText = '';
+    s.textBlockStart = 0;
     s.currentThinkingText = '';
 
     // Invalidate the session key immediately: subsequent pi events belong to
@@ -1111,6 +1176,7 @@ export class UserSession {
       s.sessionState.sessionName = state.sessionName || null;
       s.sessionState.isStreaming = state.isStreaming;
       s.sessionState.compacting = state.isCompacting;
+      if (state.thinkingLevel) s.sessionState.thinkingLevel = state.thinkingLevel;
       if (state.model) {
         // Prefer the model observed in the session file over pi's reported
         // default (see lastSessionModel above).
@@ -1144,15 +1210,17 @@ export class UserSession {
   private discardFailedAttempt(s: any): void {
     const buf = this.history();
     const removable = new Set(['thinking', 'assistant']);
+    const pendingIds = new Set(s.toolArgs.drain().map((r: any) => r.entry?.id).filter(Boolean));
     const remove: string[] = [];
     for (let i = buf.length - 1; i >= 0; i--) {
-      if (!removable.has(buf[i].role)) break;
+      if (!removable.has(buf[i].role) && !pendingIds.has(buf[i].id)) break;
       remove.push(buf[i].id);
       buf.splice(i, 1);
     }
     s.activeAssistantId = null;
     s.activeThinkingId = null;
     s.currentStreamText = '';
+    s.textBlockStart = 0;
     s.currentThinkingText = '';
     if (remove.length > 0) {
       this.broadcast({ type: 'history_remove', sessionId: s.sessionState.sessionId, data: remove });
@@ -1187,6 +1255,13 @@ export class UserSession {
         if (prev && prev.streaming) { prev.streaming = false; this.broadcastHistoryUpsert([prev]); }
         s.activeThinkingId = null;
       }
+      // Create the block HERE, not on the first delta: reasoning models that
+      // withhold their thinking send start/end with no deltas at all, and the
+      // empty block is the only signal the user gets that the model is busy.
+      const started = this.tagEntry({ role: 'thinking', text: '', streaming: true, timestamp: Date.now() });
+      buf.push(started);
+      s.activeThinkingId = started.id;
+      this.broadcastHistoryUpsert([started]);
     } else if (evt.type === 'thinking_delta') {
       s.currentThinkingText += evt.delta || '';
       // Track streaming entries by stable id, NOT index — trimHistory shifts
@@ -1223,20 +1298,50 @@ export class UserSession {
         // continuation reuses the existing entry without resetting — text
         // deltas are incremental across the thinking gap.)
         s.currentStreamText = '';
+        s.textBlockStart = 0;
         cur = this.tagEntry({ role: 'assistant', text: '', streaming: true, timestamp: Date.now() });
         buf.push(cur);
         s.activeAssistantId = cur.id;
       }
       const wasRevealed = s.currentStreamText.trim() !== '';
+      const wasStreaming = cur.streaming !== false;
       s.currentStreamText += delta || '';
       cur.text = s.currentStreamText;
+      // A text block after text_end resumes the cursor — the client buffers
+      // deltas against a STREAMING entry, so flip the flag in an upsert first.
+      cur.streaming = true;
       // Whitespace-only assistant text (e.g. GLM streams a leading ' ') must
       // never reach clients — it renders an empty bubble. The entry is
       // withheld until real content arrives, then revealed in one shot.
       if (s.currentStreamText.trim() !== '') {
-        if (!wasRevealed) this.broadcastHistoryUpsert([cur]);
+        if (!wasRevealed || !wasStreaming) this.broadcastHistoryUpsert([cur]);
         this.broadcast({ type: 'stream_delta', sessionId, data: { role: 'assistant', id: cur.id, text: s.currentStreamText } });
       }
+    } else if (evt.type === 'text_start') {
+      s.textBlockStart = s.currentStreamText.length;
+    } else if (evt.type === 'text_end') {
+      // Text block finished: stamp pi's authoritative content and stop the
+      // cursor here, so it does not blink through the tool-call phase that
+      // follows. A later text block (interleaved thinking) resumes streaming.
+      const cur = s.activeAssistantId ? buf.find((m: any) => m.id === s.activeAssistantId) : undefined;
+      if (cur) {
+        // One assistant entry merges ALL text blocks of the message, so only
+        // the slice belonging to this block may be replaced by evt.content —
+        // a blind overwrite drops text streamed before a thinking block.
+        const start = Math.min(s.textBlockStart, s.currentStreamText.length);
+        if (typeof evt.content === 'string' && evt.content) {
+          s.currentStreamText = s.currentStreamText.slice(0, start) + evt.content;
+        }
+        cur.text = s.currentStreamText;
+        cur.streaming = false;
+        this.broadcastHistoryUpsert([cur]);
+      }
+    } else if (evt.type === 'toolcall_start') {
+      this.handleToolCallStart(evt);
+    } else if (evt.type === 'toolcall_delta') {
+      this.handleToolCallDelta(evt);
+    } else if (evt.type === 'toolcall_end') {
+      this.handleToolCallEnd(evt);
     }
 
     // Update usage if present
@@ -1265,6 +1370,7 @@ export class UserSession {
       // NEXT message's first text_delta append to this (finalized) entry.
       s.activeAssistantId = null;
       s.currentStreamText = '';
+      s.textBlockStart = 0;
       // Each finalized assistant message is one LLM request (matches the
       // readSessionUsage/pi getSessionStats seeding semantics).
       s.sessionState.requestCount++;
@@ -1273,6 +1379,17 @@ export class UserSession {
       if (stop === 'error' || stop === 'aborted') {
         log.userSession.forSession(s.sessionState.sessionId).warn(
           `assistant stream ended with stop=${stop}: ${event.message.errorMessage || '(no error message)'}`);
+        // Tool calls whose arguments streamed in this failed message will
+        // never execute — drop their cards instead of leaving empty stubs.
+        const ids = new Set(this.toolArgs.drain().map((r) => r.entry?.id).filter(Boolean));
+        if (ids.size > 0) {
+          const buf = this.history();
+          const removed: string[] = [];
+          for (let k = buf.length - 1; k >= 0; k--) {
+            if (ids.has(buf[k].id)) { removed.push(buf[k].id); buf.splice(k, 1); }
+          }
+          if (removed.length > 0) this.broadcast({ type: 'history_remove', sessionId: s.sessionState.sessionId, data: removed });
+        }
       }
     }
 
@@ -1437,6 +1554,60 @@ export class UserSession {
     }).catch((err) => { log.userSession.forSession(s.sessionState.sessionId).error('handleMessageEnd: failed to get session stats:', err); });
   }
 
+  /** Preview broadcast gap for streamed tool arguments (ms) */
+  private static readonly TOOLCALL_PREVIEW_INTERVAL_MS = 120;
+
+  /**
+   * The model started writing a tool call's arguments. tool_execution_start
+   * only fires once the whole message is complete, so without this card a
+   * long `write` argument leaves the chat silent for seconds.
+   */
+  private handleToolCallStart(evt: any): void {
+    const rec = this.toolArgs.start(evt);
+    const entry = this.tagEntry({
+      role: 'toolCall',
+      text: '',
+      streaming: true,
+      timestamp: Date.now(),
+      toolCallId: rec.id || undefined,
+      toolCall: { name: rec.name },
+    });
+    rec.entry = entry;
+    this.history().push(entry);
+    this.broadcastHistoryUpsert([entry]);
+  }
+
+  /**
+   * Arguments still streaming: fill the card with a best-effort preview of
+   * the fields that are already complete (path/command). Throttled — every
+   * upsert re-sends the whole entry to every client.
+   */
+  private handleToolCallDelta(evt: any): void {
+    const rec = this.toolArgs.delta(evt);
+    if (!rec?.entry) return;
+    const now = Date.now();
+    if (now - rec.at < UserSession.TOOLCALL_PREVIEW_INTERVAL_MS) return;
+    rec.at = now;
+    const cmd = toolCallPreview(rec.name, rec.json);
+    if (!cmd || cmd === rec.entry.toolCall?.cmd) return;
+    rec.entry.text = cmd;
+    rec.entry.toolCall = { ...rec.entry.toolCall, name: rec.name, cmd };
+    this.broadcastHistoryUpsert([rec.entry]);
+  }
+
+  /** Arguments complete — the tool is about to execute; keep the same card. */
+  private handleToolCallEnd(evt: any): void {
+    const rec = this.toolArgs.end(evt);
+    if (!rec?.entry) return;
+    const args = evt.toolCall?.arguments ?? partialToolArgs(rec.json);
+    const cmd = formatToolArgs(rec.name, args);
+    const entry = rec.entry;
+    entry.text = cmd;
+    if (rec.id) entry.toolCallId = rec.id;
+    entry.toolCall = { ...entry.toolCall, name: rec.name, cmd };
+    this.broadcastHistoryUpsert([entry]);
+  }
+
   private handleToolStart(event: any): void {
     const s = this.state;
     const cmd = formatToolArgs(event.toolName, event.args);
@@ -1446,7 +1617,10 @@ export class UserSession {
     // toolCallId. Stale entries from dead runs are cleared on agent_start;
     // clearing them here would break the cmd lookup for the FIRST call of a
     // parallel pair (its card would render without the command line).
-    const toolEntry: any = { name: event.toolName, args: event.args, cmd, startTime: Date.now() };
+    const toolEntry: any = {
+      name: event.toolName, args: event.args, cmd, startTime: Date.now(),
+      parentToolCallId: event.parentToolCallId,
+    };
     // pi resolves the tool timeout per call (event.timeout), older/other
     // tools only carry it in their args.
     const timeout = event.timeout ?? event.args?.timeout;
@@ -1465,22 +1639,37 @@ export class UserSession {
     }
 
     // Show the tool call directly in the chat as a streaming toolCall entry;
-    // handleToolEnd replaces it with the connected toolResult.
-    const entry = this.tagEntry({
+    // handleToolEnd replaces it with the connected toolResult. When the
+    // arguments already streamed (toolcall_start above) reuse that card — the
+    // stable id keeps the client from remounting it.
+    const callInfo: any = {
+      name: event.toolName, cmd,
+      ...(toolEntry.timeout ? { timeout: toolEntry.timeout } : {}),
+      ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
+    };
+    const adopted = this.toolArgs.take(event.toolCallId, event.toolName);
+    const entry = adopted?.entry ?? this.tagEntry({
       role: 'toolCall',
       text: cmd,
       streaming: true,
       timestamp: Date.now(),
       toolCallId: event.toolCallId,
-      toolCall: { name: event.toolName, cmd, ...(toolEntry.timeout ? { timeout: toolEntry.timeout } : {}) },
+      toolCall: callInfo,
     });
+    if (adopted) {
+      entry.role = 'toolCall';
+      entry.text = cmd;
+      entry.streaming = true;
+      entry.toolCallId = event.toolCallId;
+      entry.toolCall = callInfo;
+    }
     // handleToolUpdate mutates this entry in place and re-broadcasts it by id.
     toolEntry.entry = entry;
 
     s.activeTools.set(event.toolCallId, toolEntry);
     this.broadcast({ type: 'tool_start', data: { id: event.toolCallId, name: event.toolName, cmd, args: event.args } });
 
-    this.history().push(entry);
+    if (!adopted) this.history().push(entry);
     this.broadcastHistoryUpsert([entry]);
   }
 
@@ -1537,7 +1726,12 @@ export class UserSession {
         Date.now(),
         event.result?.details,
         tool?.rmSnapshots,
-        { name: event.toolName, cmd, ...(tool?.timeout ? { timeout: tool.timeout } : {}) },
+        {
+          name: event.toolName, cmd,
+          ...(tool?.timeout ? { timeout: tool.timeout } : {}),
+          ...(typeof event.durationMs === 'number' ? { durationMs: event.durationMs } : {}),
+          ...(tool?.parentToolCallId ? { parentToolCallId: tool.parentToolCallId } : {}),
+        },
         getShowReadImages(this.user),
       );
       if (entry) {
@@ -1613,6 +1807,65 @@ export class UserSession {
     const entry = this.tagEntry({ role: 'system', text, streaming: false, timestamp: Date.now() });
     this.history().push(entry);
     this.broadcastHistoryUpsert([entry]);
+  }
+
+  /** Extension UI methods that block pi until the client answers */
+  private static readonly EXTENSION_UI_DIALOGS = new Set(['select', 'confirm', 'input', 'editor']);
+
+  /**
+   * Extension UI sub-protocol. Dialog methods block the extension (and the
+   * turn) until a client answers with extension_ui_response — they are
+   * broadcast to the UI and tracked in pendingUi. `notify` becomes a chat
+   * system line; the terminal-chrome methods (setStatus/setWidget/setTitle/
+   * set_editor_text) have no dashboard equivalent and are dropped.
+   */
+  private handleExtensionUi(event: any): void {
+    const method = String(event?.method || '');
+    if (method === 'notify') {
+      const text = String(event.message || '').trim();
+      if (text) this.pushSystemNotice(text);
+      return;
+    }
+    if (!UserSession.EXTENSION_UI_DIALOGS.has(method)) return;
+    const request = {
+      id: String(event.id || ''),
+      method,
+      title: event.title || '',
+      message: event.message || '',
+      options: Array.isArray(event.options) ? event.options.map(String) : undefined,
+      placeholder: typeof event.placeholder === 'string' ? event.placeholder : undefined,
+      prefill: typeof event.prefill === 'string' ? event.prefill : undefined,
+      timeout: typeof event.timeout === 'number' ? event.timeout : undefined,
+    };
+    if (!request.id) return;
+    log.userSession.forSession(this.state.sessionState.sessionId).info(
+      `extension UI ${method} requested: ${request.title || request.message || '(untitled)'}`);
+    this.state.pendingUi.set(request.id, request);
+    this.broadcast({ type: 'extension_ui', sessionId: this.state.sessionState.sessionId, data: request });
+  }
+
+  /** Answer a pending extension UI dialog; false when the id is unknown. */
+  respondExtensionUi(id: unknown, payload: { value?: unknown; confirmed?: unknown; cancelled?: unknown }): boolean {
+    if (typeof id !== 'string' || !this.state.pendingUi.delete(id)) return false;
+    // Show the next queued dialog, if pi is blocked on more than one
+    const next = [...this.state.pendingUi.values()][0] ?? null;
+    this.broadcast({ type: 'extension_ui', sessionId: this.state.sessionState.sessionId, data: next });
+    const response = payload.cancelled === true
+      ? { type: 'extension_ui_response' as const, id, cancelled: true as const }
+      : typeof payload.confirmed === 'boolean'
+        ? { type: 'extension_ui_response' as const, id, confirmed: payload.confirmed }
+        : { type: 'extension_ui_response' as const, id, value: typeof payload.value === 'string' ? payload.value : '' };
+    const sent = this.rpc.respondExtensionUi(response);
+    log.userSession.forSession(this.state.sessionState.sessionId).info(
+      `extension UI ${id} answered${sent ? '' : ' (pi not listening)'}: ${JSON.stringify(response)}`);
+    return sent;
+  }
+
+  /** Drop pending dialogs (session restart / process gone) and dismiss the UI. */
+  dismissExtensionUi(): void {
+    if (this.state.pendingUi.size === 0) return;
+    this.state.pendingUi.clear();
+    this.broadcast({ type: 'extension_ui', sessionId: this.state.sessionState.sessionId, data: null });
   }
 
   private handleModelSelect(event: any): void {
