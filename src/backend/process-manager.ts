@@ -192,10 +192,15 @@ export class ProcessManager {
         // keep the same workdir. Only persisted when the caller supplied them.
         if (opts.cwd || opts.workdirs) saveSpawnOpts(user, resolvedFile, { cwd: opts.cwd, workdirs: opts.workdirs });
         const dupe = map.get(resolvedFile);
-        if (dupe && dupe !== session && dupe.isRunning) {
-          // Another process won the race — stop this redundant one.
-          session.stop().catch(() => {});
-          return dupe;
+        if (dupe && dupe !== session) {
+          if (dupe.isRunning) {
+            // Another process won the race — stop this redundant one.
+            session.stop().catch(() => {});
+            return dupe;
+          }
+          // A leaked instance from an earlier spawn still holds its own idle
+          // timer; left alive it would terminate this process by file later.
+          dupe.stop().catch(() => {});
         }
         map.set(resolvedFile, session);
       }

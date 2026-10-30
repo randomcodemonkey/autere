@@ -295,7 +295,16 @@ export class UserSession {
   private resetIdleTimer() {
     if (this.cleanupTimer) clearTimeout(this.cleanupTimer);
     this.cleanupTimer = setTimeout(() => {
-      userLog(this.user).info('Idle timeout, terminating pi process');
+      const st = this.state.sessionState;
+      // Never kill a running turn: a timer armed before the turn started (and
+      // never reset, e.g. a leaked duplicate instance) would otherwise stop
+      // the pi process mid-stream — leaving a half-written session line.
+      if (st.isStreaming || st.compacting) {
+        this.resetIdleTimer();
+        return;
+      }
+      const idleSec = Math.round((Date.now() - this.lastActivity) / 1000);
+      userLog(this.user).info(`Idle timeout (${idleSec}s since last activity), terminating pi process`);
       if (this.stallTimer) { clearInterval(this.stallTimer); this.stallTimer = null; }
       this._onIdle?.();
     }, this._idleTimeoutMs);
