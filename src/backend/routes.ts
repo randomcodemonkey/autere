@@ -98,7 +98,7 @@ import { randomUUID, createHash } from 'crypto';
 import { vapidPublicKey, saveSubscription, deleteSubscription, validateSubscription, sendNotification } from './notifications.js';
 import { validateNotificationContent } from '../shared/notifications.js';
 import { API, API_PREFIX } from '../shared/api-paths.js';
-import { TASK_REPORT_MARKER } from '../shared/format.js';
+import { TASK_REPORT_MARKER, basePromptText } from '../shared/format.js';
 import { canRunTaskScripts } from '../shared/tasks.js';
 import { effectiveMessageType, type MessageType } from '../shared/messages.js';
 import { buildOpenApiSpec, type RouteDoc } from './openapi.js';
@@ -1773,7 +1773,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // Commit the user message into the stream history immediately —
       // retires the client's optimistic pending copy (pi never emits
       // message_end for user messages).
-      t.addUserEntry(text, queued);
+      // Commit what the user typed: attachment notes are model instructions
+      // (and pi-filetools appends its own copy on the prompt path), so a
+      // decorated entry would never match pi's echo and chat showed twice.
+      t.addUserEntry(basePromptText(text), queued);
       sendJSON(c.res, { success: true, data: { queued } });
     },
   });

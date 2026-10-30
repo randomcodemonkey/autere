@@ -14,7 +14,7 @@ import { existsSync, openSync, readSync, closeSync, readFileSync, statSync } fro
 // ── rm command detection ──
 
 export { isRmCommand, extractRmPaths, accumulateUsage, extractImages } from '../shared/format.js';
-import { isRmCommand, extractRmPaths, extractImages , formatToolArgs, streamRoleForUserText } from '../shared/format.js';
+import { isRmCommand, extractRmPaths, extractImages , formatToolArgs, streamRoleForUserText, basePromptText } from '../shared/format.js';
 import type { StreamImage } from '../shared/format.js';
 import { API } from '../shared/api-paths.js';
 
@@ -378,7 +378,9 @@ function buildOneEntry(
       // no text content; custom/persona messages carry string content but are
       // not rendered (the live path ignores them too — keep both consistent).
       if (role === 'custom') return [];
-      const text = msgText(msg.content);
+      // Attachment notes are model instructions appended to the prompt — never
+      // part of the message the user typed.
+      const text = role === 'user' ? basePromptText(msgText(msg.content)) : msgText(msg.content);
       const images = extractImages(msg.content);
       if (text.trim() || images.length > 0) {
         // Task deliveries arrive as user-role messages carrying the autere

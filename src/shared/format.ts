@@ -234,6 +234,17 @@ export function streamRoleForUserText(text: string): string {
   return text.startsWith(TASK_REPORT_MARKER) ? 'taskReport' : 'user';
 }
 
+/**
+ * Strip the "[Attached file ...]" notes the send route and the pi-filetools
+ * extension append to a prompt. They instruct the model where the uploaded
+ * files live and are not part of what the user typed, so chat must not show
+ * them (and must match a committed entry against pi's decorated copy).
+ */
+export function basePromptText(text: string): string {
+  const i = text.indexOf('\n\n[Attached file');
+  return i >= 0 ? text.slice(0, i) : text;
+}
+
 /** Full auto-generated session name, e.g. "[ui] - Sep 3, 2026, 12:00:45 PM" */
 export function autoSessionName(prefix: '[ui]' | '[task]', opts: SessionStampOptions = {}, date: Date = new Date()): string {
   return `${prefix} - ${sessionLocaleStamp(opts, date)}`;

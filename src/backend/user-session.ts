@@ -30,7 +30,7 @@ import {
 } from './stream-history.js';
 import { formatToolArgs } from '../shared/format.js';
 import { ToolArgStream, partialToolArgs, toolCallPreview } from './toolcall-args.js';
-import { streamRoleForUserText } from '../shared/format.js';
+import { basePromptText, streamRoleForUserText } from '../shared/format.js';
 import { clipNotification, shouldNotifyAllDone, workedLongEnough } from '../shared/notifications.js';
 
 /** Sandbox spawn options for a (user, cwd, workdirs) spawn — shared by
@@ -554,9 +554,10 @@ export class UserSession {
     const sessionId = this.state.sessionState.sessionId;
     const buf = this.history();
     const dropped: string[] = [];
+    const wanted = texts.map(basePromptText);
     for (let i = buf.length - 1; i >= 0; i--) {
       const e = buf[i];
-      if (e.role === 'user' && (e as any).pending && texts.includes(e.text)) {
+      if (e.role === 'user' && (e as any).pending && wanted.includes(e.text)) {
         dropped.push(e.id);
         buf.splice(i, 1);
       }
@@ -564,8 +565,8 @@ export class UserSession {
     if (dropped.length) this.broadcast({ type: 'history_remove', sessionId, data: dropped });
     // Session is idle after abort — prompt() starts the new turn.
     for (const text of texts) {
-      this.addUserEntry(text);
-      await this.rpc.prompt(text);
+      this.addUserEntry(basePromptText(text));
+      await this.rpc.prompt(basePromptText(text));
     }
   }
 
@@ -580,7 +581,7 @@ export class UserSession {
     const cleared = await this.rpc.clearQueue();
     let cancelled = false;
     const prune = (arr: string[]) => {
-      const idx = arr.indexOf(text);
+      const idx = arr.findIndex((t) => basePromptText(t) === basePromptText(text));
       if (idx >= 0) { arr.splice(idx, 1); cancelled = true; }
     };
     prune(cleared.steering);
@@ -593,7 +594,7 @@ export class UserSession {
     const sessionId = this.state.sessionState.sessionId;
     const buf = this.history();
     for (let i = buf.length - 1; i >= 0; i--) {
-      if (buf[i].role === 'user' && (buf[i] as any).pending && buf[i].text === text) {
+      if (buf[i].role === 'user' && (buf[i] as any).pending && buf[i].text === basePromptText(text)) {
         const [removed] = buf.splice(i, 1);
         this.broadcast({ type: 'history_remove', sessionId, data: [removed.id] });
         break;
@@ -1422,9 +1423,14 @@ export class UserSession {
         // Task deliveries are committed under the 'taskReport' role (marker
         // text), not 'user' — derive the role from the text like addUserEntry
         // does, or the lookup misses and the message is appended twice.
+        // pi stores the prompt as it finally was, which may carry attachment
+        // notes appended by the send route or by the pi-filetools extension —
+        // the committed entry has the text the user actually typed.
         const userRole = streamRoleForUserText(text);
-        let entry = [...buf].reverse().find((e: any) => e.role === userRole && e.text === text && e.pending)
-          ?? [...buf].reverse().find((e: any) => e.role === userRole && e.text === text);
+        const wanted = text === basePromptText(text) ? [text] : [text, basePromptText(text)];
+        const match = (e: any) => e.role === userRole && wanted.includes(e.text);
+        let entry = [...buf].reverse().find((e: any) => match(e) && e.pending)
+          ?? [...buf].reverse().find(match);
         if (!entry) {
           // Not in the buffer at all (pending copy lost in a rebuild): append
           // it — dropping the message would lose it from chat entirely until
