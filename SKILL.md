@@ -109,6 +109,14 @@ after the image push.
    failure in CI is a broken commit shipped to the user.
 4. **Never kill supervisord-parented processes.** No `pkill`/`killall` on
    node/tsx; e2e tests manage their own backend lifecycle.
+4b. **NEVER start a second backend instance — not even on a spare port.**
+   `src/backend/index.ts` preflights `AUTERE_NINE_ROUTER_URL` and, when it is
+   unreachable, spawns its own `9router` on that port. The new instance
+   displaces the running router and every session fails. Verify changes with
+   the self-checks (`*.check.ts`), the component tests and the e2e harness
+   (which owns its backend + mock router) — never with an ad-hoc backend.
+   The only sanctioned way to run the code is the user's restart of the
+   supervisord-managed instance.
 5. **Test runs are slow/expensive.** Pipe output to a temp file and grep from
    it; don't re-run suites without code changes between runs.
 6. **Prefer the `edit` and `write` tools over bash for file modifications.**
