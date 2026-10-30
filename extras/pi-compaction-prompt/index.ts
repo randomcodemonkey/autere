@@ -60,19 +60,14 @@ function readConfig(): { prompt?: string; compactAtTokens?: number } {
 }
 
 /**
- * Request-time auth for the session's model. compact() only falls back to
- * environment keys when apiKey is undefined, so OAuth providers (e.g.
- * github-copilot) fail with "No API key for provider" unless the key is
- * resolved from the model registry here.
+ * Stream summaries through the model registry instead of handing compact() an
+ * apiKey. Request-time auth also carries a token-specific baseUrl (Copilot
+ * tokens encode their API host in `proxy-ep`), which compact() has no place
+ * for — without it the summary is sent to the provider's default host and
+ * rejected with "IDE authentication failed ... unknown stamp".
  */
-async function requestAuth(ctx: any): Promise<{ apiKey?: string; headers?: any; env?: Record<string, string> }> {
-	try {
-		const auth = await ctx.modelRegistry?.getApiKeyAndHeaders(ctx.model);
-		if (auth?.ok) return { apiKey: auth.apiKey, headers: auth.headers, env: auth.env };
-	} catch {
-		// Registry unavailable — let pi resolve its own credentials
-	}
-	return {};
+function summaryStream(ctx: any) {
+	return (model: any, context: any, options: any) => ctx.modelRegistry.streamSimple(model, context, options);
 }
 
 function combined(user: string | undefined, extra: string): string {
@@ -88,18 +83,17 @@ export default function (pi: ExtensionAPI) {
 		// Without the stored prompt this handler would not run; if somehow the
 		// user text alone survives, pi's default path already appends it.
 		if (user === event.customInstructions?.trim()) return;
-		const auth = await requestAuth(ctx);
 		try {
 			const result = await defaultCompact(
 				event.preparation,
 				ctx.model,
-				auth.apiKey,
-				auth.headers,
+				undefined,
+				undefined,
 				user,
 				event.signal,
 				undefined,
+				summaryStream(ctx),
 				undefined,
-				auth.env,
 				undefined,
 				undefined,
 				uuidv7(),
@@ -123,18 +117,17 @@ export default function (pi: ExtensionAPI) {
 		if (!usage || (usage.tokens ?? 0) < compactAtTokens) return;
 		const preparation = prepareCompaction(ctx.sessionManager.getBranch(), { ...DEFAULT_COMPACTION_SETTINGS });
 		if (!preparation) return;
-		const auth = await requestAuth(ctx);
 		try {
 			const result = await defaultCompact(
 				preparation,
 				ctx.model,
-				auth.apiKey,
-				auth.headers,
+				undefined,
+				undefined,
 				combined(undefined, prompt),
 				undefined,
 				undefined,
+				summaryStream(ctx),
 				undefined,
-				auth.env,
 				undefined,
 				undefined,
 				uuidv7(),
