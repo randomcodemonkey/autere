@@ -59,6 +59,22 @@ function readConfig(): { prompt?: string; compactAtTokens?: number } {
 	}
 }
 
+/**
+ * Request-time auth for the session's model. compact() only falls back to
+ * environment keys when apiKey is undefined, so OAuth providers (e.g.
+ * github-copilot) fail with "No API key for provider" unless the key is
+ * resolved from the model registry here.
+ */
+async function requestAuth(ctx: any): Promise<{ apiKey?: string; headers?: any; env?: Record<string, string> }> {
+	try {
+		const auth = await ctx.modelRegistry?.getApiKeyAndHeaders(ctx.model);
+		if (auth?.ok) return { apiKey: auth.apiKey, headers: auth.headers, env: auth.env };
+	} catch {
+		// Registry unavailable — let pi resolve its own credentials
+	}
+	return {};
+}
+
 function combined(user: string | undefined, extra: string): string {
 	const parts = [user?.trim(), extra].filter((p) => p !== undefined && p.length > 0);
 	return parts.join("\n\n");
@@ -72,17 +88,18 @@ export default function (pi: ExtensionAPI) {
 		// Without the stored prompt this handler would not run; if somehow the
 		// user text alone survives, pi's default path already appends it.
 		if (user === event.customInstructions?.trim()) return;
+		const auth = await requestAuth(ctx);
 		try {
 			const result = await defaultCompact(
 				event.preparation,
 				ctx.model,
-				undefined,
-				undefined,
+				auth.apiKey,
+				auth.headers,
 				user,
 				event.signal,
 				undefined,
 				undefined,
-				undefined,
+				auth.env,
 				undefined,
 				undefined,
 				uuidv7(),
@@ -106,17 +123,18 @@ export default function (pi: ExtensionAPI) {
 		if (!usage || (usage.tokens ?? 0) < compactAtTokens) return;
 		const preparation = prepareCompaction(ctx.sessionManager.getBranch(), { ...DEFAULT_COMPACTION_SETTINGS });
 		if (!preparation) return;
+		const auth = await requestAuth(ctx);
 		try {
 			const result = await defaultCompact(
 				preparation,
 				ctx.model,
-				undefined,
-				undefined,
+				auth.apiKey,
+				auth.headers,
 				combined(undefined, prompt),
 				undefined,
 				undefined,
 				undefined,
-				undefined,
+				auth.env,
 				undefined,
 				undefined,
 				uuidv7(),
