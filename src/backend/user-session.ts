@@ -1415,13 +1415,17 @@ export class UserSession {
         // Prefer the pending copy added at send time; the pending flag alone
         // is not reliable — a pi respawn rebuilds the buffer from disk, where
         // the queued message exists but pending was never persisted.
-        let entry = [...buf].reverse().find((e: any) => e.role === 'user' && e.text === text && e.pending)
-          ?? [...buf].reverse().find((e: any) => e.role === 'user' && e.text === text);
+        // Task deliveries are committed under the 'taskReport' role (marker
+        // text), not 'user' — derive the role from the text like addUserEntry
+        // does, or the lookup misses and the message is appended twice.
+        const userRole = streamRoleForUserText(text);
+        let entry = [...buf].reverse().find((e: any) => e.role === userRole && e.text === text && e.pending)
+          ?? [...buf].reverse().find((e: any) => e.role === userRole && e.text === text);
         if (!entry) {
           // Not in the buffer at all (pending copy lost in a rebuild): append
           // it — dropping the message would lose it from chat entirely until
           // some full re-read.
-          entry = this.tagEntry({ role: 'user', text, streaming: false, timestamp: Date.now() });
+          entry = this.tagEntry({ role: userRole, text, streaming: false, timestamp: Date.now() });
           buf.push(entry);
           this.broadcastHistoryUpsert([entry]);
           log.userSession.forSession(s.sessionState.sessionId).info('user message_end: pending copy missing from buffer — re-appended');
