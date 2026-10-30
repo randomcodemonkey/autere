@@ -1373,6 +1373,10 @@ export class UserSession {
     const text = msgText(event.message.content) || '';
     const msgImages = extractImages(event.message.content);
 
+    // The entry this message streamed into — captured before the branch below
+    // retires the tracker.
+    const activeAssistantId = rawRole === 'assistant' ? s.activeAssistantId : null;
+
     if (rawRole === 'assistant') {
       const stop = event.message.stopReason;
       // Retire the assistant stream trackers — a stale id here would make the
@@ -1470,10 +1474,13 @@ export class UserSession {
       }
     }
 
-    // Update stream history
-    const streamingIdx = buf.findIndex(
-      (m: any) => m.streaming && m.role === rawRole
-    );
+    // Update stream history. An assistant message whose text block already
+    // ended (text_end clears the streaming flag) must still be found by id —
+    // looking for a streaming entry would miss it and append a SECOND copy of
+    // the same text below the first.
+    const streamingIdx = activeAssistantId
+      ? buf.findIndex((m: any) => m.id === activeAssistantId)
+      : buf.findIndex((m: any) => m.streaming && m.role === rawRole);
 
     // Whitespace-only assistant text with no images is never worth
     // broadcasting (empty bubble) and must not linger in the buffer either —
