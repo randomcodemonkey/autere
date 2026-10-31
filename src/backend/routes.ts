@@ -104,7 +104,7 @@ import { effectiveMessageType, type MessageType } from '../shared/messages.js';
 import { buildOpenApiSpec, type RouteDoc } from './openapi.js';
 import type { SessionInfo } from './types.js';
 
-import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getSendImagesToChatModel, getImagePreviewQuality, getEditIgnorePaths, getFolderIgnores, getSummaryPromptComposition, getSummaryPromptGuardTokens, getSummaryPromptExtra, deleteUserSettings } from './user-settings.js';
+import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getEditIgnorePaths, getFolderIgnores, getSummaryPromptComposition, getSummaryPromptGuardTokens, getSummaryPromptExtra, deleteUserSettings } from './user-settings.js';
 
 const startsWithLocal = (p: unknown): boolean => String(typeof p === 'string' ? p : (p as { source?: string })?.source || '').startsWith('local:');
 
@@ -1684,10 +1684,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
 
       // Non-image attachments: persist to the env uploads dir and tell the
       // agent where they landed (works regardless of pi version — the model
-      // uses its file tools instead of inline content). Prompt path: plain
-      // path note. Steer/followUp path: pi 1.0 accepts arbitrary content
-      // blocks in {images}, but 0.87.x is image-strict — so they also go
-      // through a path note and a chat 'file' card.
+      // uses its file tools instead of inline content).
+      // Images are left to the pi-filetools input hook, which runs for every
+      // source (prompt, steer, followUp): it saves the file, publishes the
+      // chat card and appends the path note exactly once.
       if (files.length > 0) {
         try {
           const uploadsDir = join(t.getEnvDir(), 'uploads');
@@ -1706,50 +1706,6 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         }
       }
 
-      // pi only runs extension input hooks on the prompt() path — steered/
-      // followUp requests bypass them, so queued messages with images must get the
-      // pi-filetools provides for prompts.
-      if (queued && rpcImages && rpcImages.length > 0) {
-        const sendPreviews = getSendImagesToChatModel(c.user);
-        const preset = getImagePreviewQuality(c.user);
-        try {
-          const uploadsDir = join(t.getEnvDir(), 'uploads');
-          mkdirSync(uploadsDir, { recursive: true });
-          const stamp = Date.now();
-          const paths: string[] = [];
-          const previews: import('./rpc-client.js').RpcImage[] = [];
-          for (const [i, img] of rpcImages.entries()) {
-            const ext = (img.mimeType.split('/')[1] || 'png').replace('jpeg', 'jpg');
-            const file = join(uploadsDir, `upload-${stamp}-${i + 1}.${ext}`);
-            writeFileSync(file, Buffer.from(img.data, 'base64'));
-            paths.push(file);
-            // Publish under the hist-* name the images route serves, and push
-            // an image entry so the attachment still renders in chat.
-            const name = `hist-${createHash('sha1').update(img.data).digest('hex').slice(0, 16)}.${ext}`;
-            const histFile = join(uploadsDir, name);
-            if (!existsSync(histFile)) writeFileSync(histFile, Buffer.from(img.data, 'base64'));
-            t.pushImageEntry(name, img.mimeType);
-            // Downscaled preview for the LLM (full res stays on disk)
-            if (sendPreviews) {
-              try {
-                if (preset === 'full') previews.push(img);
-                else {
-                  const { resizeImage } = await import('@earendil-works/pi-coding-agent');
-                  const r = await resizeImage(Buffer.from(img.data, 'base64'), img.mimeType, preset);
-                  previews.push(r ? { type: 'image', mimeType: r.mimeType, data: r.data } : img);
-                }
-              } catch (e: any) {
-                log.http.error('preview resize failed:', e?.message || e);
-                previews.push(img);
-              }
-            }
-          }
-          text += `\n\n[Attached file${paths.length > 1 ? 's' : ''} saved to:\n${paths.join('\n')}\n${sendPreviews ? 'Full-resolution originals are at these paths — use them with tools (read, bash, edit_image, …). The image(s) shown to you here are downscaled previews.' : 'Use these paths directly with tools (read, bash, edit_image, …) instead of searching for the attachment. Images are not shown inline.'}]`;
-          rpcImages = sendPreviews ? previews : undefined;
-        } catch (err: any) {
-          log.http.error('Failed to save queued image attachments:', err?.message || err);
-        }
-      }
       if (effType === 'steer') {
         await t.rpc.steer(text, rpcImages);
       } else if (effType === 'followUp') {
