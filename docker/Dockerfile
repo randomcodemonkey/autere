@@ -54,6 +54,7 @@ RUN apt-get -y -qq update \
     && apt-get -y -qq update \
     && apt-get install -y -qq --no-install-recommends \
       docker-ce-cli \
+      docker-buildx-plugin \
       nodejs \
       sbt \
     && rm -rf /usr/lib/jvm/*/jmods \
