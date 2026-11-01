@@ -21,6 +21,9 @@ interface StreamCardProps {
   onCommandError?: (message: string) => void;
   steerPending?: number;
   followUpPending?: number;
+  steerQueue?: string[];
+  followUpQueue?: string[];
+  onModifyPending?: (text: string, newText: string, type: 'steer' | 'followUp') => Promise<boolean>;
   model?: { provider: string; id: string; name: string } | null;
   models?: AvailableModel[];
   activeModelId?: string | null;
@@ -28,7 +31,7 @@ interface StreamCardProps {
   /** Called after a successful send (for optimistic user-message display) */
   onSent?: (text: string, type: 'prompt' | 'steer' | 'followUp', sessionId?: string | null) => void;
   /** Cancel a queued (steer/follow-up) message */
-  onCancelPending?: (text: string) => void;
+  onCancelPending?: (text: string) => Promise<boolean>;
   /** Active session id — passed to ChatInput for draft persistence */
   sessionId?: string | null;
 }
@@ -44,7 +47,7 @@ const TRUNC_LEN: Record<string, number> = {
 /** Collapse edit diffs longer than this many diff rows */
 const EDIT_COLLAPSE_ROWS = 12;
 
-export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onGoToView, onSetModel, onSetPersona, modelNames, onCompact, onCommandError, steerPending, followUpPending, model, models, activeModelId, onModelsFetched, onSent, onCancelPending, sessionId }) => {
+export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onGoToView, onSetModel, onSetPersona, modelNames, onCompact, onCommandError, steerPending, followUpPending, steerQueue, followUpQueue, model, models, activeModelId, onModelsFetched, onSent, onCancelPending, onModifyPending, sessionId }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const [filters, setFilters] = useState({
     thinking: localStorage.getItem('autere-filter-thinking') !== 'off',
@@ -385,7 +388,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
           </button>
         )}
       </div>
-      <ChatInput onNewSession={onNewSession} onGoToView={onGoToView} onSetModel={onSetModel} onSetPersona={onSetPersona} modelNames={modelNames} onCompact={onCompact} onError={onCommandError} disabled={compacting} isStreaming={isStreaming} isActive={isStreaming || compacting} steerPending={steerPending} followUpPending={followUpPending} onSent={onSent} sessionId={sessionId} />
+      <ChatInput onNewSession={onNewSession} onGoToView={onGoToView} onSetModel={onSetModel} onSetPersona={onSetPersona} modelNames={modelNames} onCompact={onCompact} onError={onCommandError} disabled={compacting} isStreaming={isStreaming} isActive={isStreaming || compacting} steerPending={steerPending} followUpPending={followUpPending} steerQueue={steerQueue} followUpQueue={followUpQueue} onCancelPending={onCancelPending} onModifyPending={onModifyPending} onSent={onSent} sessionId={sessionId} />
     </div>
   );
 };

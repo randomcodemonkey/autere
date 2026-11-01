@@ -5431,3 +5431,46 @@ textarea.skills-textarea {
   color: var(--c-text-faint);
   font-style: italic;
 }
+
+// -- Queued (steer/follow-up) message editor ------------------------------------
+.modal-pending-messages {
+  width: 100%;
+  max-width: 42rem;
+}
+
+.pending-message {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.pending-message-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.pending-message-actions {
+  display: flex;
+  gap: 0.4rem;
+
+  .btn {
+    width: auto;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.75rem;
+  }
+}
+
+.pending-message-text {
+  width: 100%;
+  resize: vertical;
+  padding: 0.5rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  border: 1px solid var(--c-border-2);
+  border-radius: 0.5rem;
+  background: var(--c-input-bg);
+  color: var(--c-text);
+}

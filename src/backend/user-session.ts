@@ -105,6 +105,8 @@ function createInitialState(): UserSessionState {
       compactionAborted: false,
       steerPending: 0,
       followUpPending: 0,
+      steerQueue: [],
+      followUpQueue: [],
     },
     sessionStats: {
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -140,6 +142,12 @@ export interface UserSessionOptions {
   /** Whether a settings save may restart this process (default true).
    *  Scheduler-owned runs must never be restarted mid-run. */
   restartable?: boolean;
+}
+
+/** Queued prompt texts as the user typed them (attachment notes stripped) */
+function queuedTexts(list: unknown): string[] {
+  if (!Array.isArray(list)) return [];
+  return list.filter((t): t is string => typeof t === 'string').map(basePromptText);
 }
 
 export class UserSession {
@@ -542,8 +550,7 @@ export class UserSession {
    * — the chat entry would stay on PENDING after the answer has arrived.
    */
   private retireConsumedPending(steering: unknown, followUp: unknown): void {
-    const lists = [steering, followUp].filter(Array.isArray) as unknown[][];
-    const queued = new Set(lists.flat().filter((t): t is string => typeof t === 'string').map(basePromptText));
+    const queued = new Set([...queuedTexts(steering), ...queuedTexts(followUp)]);
     const retired = this.history().filter((e: any) => e.pending && !queued.has(e.text));
     for (const e of retired) e.pending = false;
     this.broadcastHistoryUpsert(retired);
@@ -987,6 +994,10 @@ export class UserSession {
           // authoritative pending counts for the chat buttons.
           s.sessionState.steerPending = Array.isArray(event.steering) ? event.steering.length : 0;
           s.sessionState.followUpPending = Array.isArray(event.followUp) ? event.followUp.length : 0;
+          // Queue contents for the pending-messages modal (attachment notes are
+          // model instructions — show what the user typed).
+          s.sessionState.steerQueue = queuedTexts(event.steering);
+          s.sessionState.followUpQueue = queuedTexts(event.followUp);
           this.retireConsumedPending(event.steering, event.followUp);
           this.broadcast({ type: 'status', data: { ...s.sessionState } });
           break;

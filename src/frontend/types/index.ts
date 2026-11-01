@@ -15,6 +15,9 @@ export interface SessionState {
   persona?: { id: string; name: string } | null;
   steerPending?: number;
   followUpPending?: number;
+  /** Queued message texts, in pi's order (attachment notes stripped) */
+  steerQueue?: string[];
+  followUpQueue?: string[];
 }
 
 export interface TokenUsage {

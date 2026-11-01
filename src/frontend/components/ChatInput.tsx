@@ -1,6 +1,8 @@
 import React, { Suspense, lazy, useState, useRef, useCallback, useEffect } from 'react';
 import { API } from '../api-paths';
 import { apiJSON, JSON_HEADERS } from '../api';
+import { PendingMessagesModal } from './PendingMessagesModal';
+import type { PendingType } from './PendingMessagesModal';
 
 // CodeMirror markdown editor loads as a separate chunk — it's only used on
 // desktop, and the initial bundle stays lean.
@@ -35,6 +37,13 @@ interface ChatInputProps {
   isActive?: boolean; // true when streaming or compacting — blocks /new command
   steerPending?: number; // queued steer messages (from pi's queue_update)
   followUpPending?: number; // queued follow-up messages
+  /** Queued message texts, shown by the pending-messages modal */
+  steerQueue?: string[];
+  followUpQueue?: string[];
+  /** Remove one queued message; false when pi already consumed it */
+  onCancelPending?: (text: string) => Promise<boolean>;
+  /** Replace a queued message; false when pi already consumed it */
+  onModifyPending?: (text: string, newText: string, type: PendingType) => Promise<boolean>;
   /** Active session id — keys the persisted input draft (survives tab navigation + reloads) */
   sessionId?: string | null;
 }
@@ -69,7 +78,7 @@ const SLASH_COMMANDS: { cmd: string; use: string; description: string }[] = [
   { cmd: '/persona', use: '/persona <name>', description: 'Set the persona for this session.' },
 ];
 
-export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, onSetModel, onSetPersona, modelNames, onCompact, onError, onSent, disabled, isStreaming, isActive, steerPending, followUpPending, sessionId }) => {
+export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, onSetModel, onSetPersona, modelNames, onCompact, onError, onSent, disabled, isStreaming, isActive, steerPending, followUpPending, steerQueue, followUpQueue, onCancelPending, onModifyPending, sessionId }) => {
   // Draft persistence: the chat view unmounts on tab navigation (edits,
   // settings, ...) and the input text would be lost. Keep it in localStorage
   // keyed by session so each session remembers its own draft. ponytail:
@@ -187,6 +196,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
     // Reset so selecting the same file again still fires onChange
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [images.length, onError]);
+
+  const [showPending, setShowPending] = useState(false);
 
   const send = useCallback(async (type: 'prompt' | 'steer' | 'followUp') => {
     const text = value.trim();
@@ -468,19 +479,21 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
         )}
         {isStreaming ? (
           <div className="chat-action-buttons">
+            {/* Empty input + queued messages: the button opens the queue
+                instead of sending (nothing to send). */}
             <button
               className="chat-send-btn chat-steer-btn"
               onMouseDown={(e) => e.preventDefault()} // keep textarea focus (no collapse)
-              onClick={() => send('steer')}
-              disabled={canSend ? false : true}
+              onClick={() => (canSend ? send('steer') : setShowPending(true))}
+              disabled={!canSend && !steerPending}
             >
               Steer{steerPending ? <span className="badge warning pending-count">{steerPending}</span> : null}
             </button>
             <button
               className="chat-send-btn chat-followup-btn"
               onMouseDown={(e) => e.preventDefault()} // keep textarea focus (no collapse)
-              onClick={() => send('followUp')}
-              disabled={canSend ? false : true}
+              onClick={() => (canSend ? send('followUp') : setShowPending(true))}
+              disabled={!canSend && !(followUpPending || steerPending)}
             >
               Follow-up{followUpPending ? <span className="badge warning pending-count">{followUpPending}</span> : null}
             </button>
@@ -496,6 +509,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
           </button>
         )}
       </div>
+      {showPending && (
+        <PendingMessagesModal
+          steer={steerQueue ?? []}
+          followUp={followUpQueue ?? []}
+          onClose={() => setShowPending(false)}
+          onCancel={onCancelPending ?? (async () => false)}
+          onSave={onModifyPending ?? (async () => false)}
+        />
+      )}
       <input
         ref={fileInputRef}
         type="file"

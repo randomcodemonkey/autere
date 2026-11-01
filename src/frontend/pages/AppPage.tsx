@@ -185,11 +185,36 @@ export function AppPage({
   // backend prunes pi's queue and broadcasts history_remove for the
   // committed pending copy in streamHistory.
   const handleCancelPending = useCallback(async (text: string) => {
-    setPendingUser((prev) => prev.filter((p) => p.text !== text || p.pendingSessionId !== currentSessionId));
     try {
       await apiSend(API.session.pending, 'DELETE', { text, sessionId: targetSessionRef.current });
-    } catch {}
+    } catch {
+      // Already consumed by pi — nothing was queued to cancel
+      return false;
+    }
+    setPendingUser((prev) => prev.filter((p) => p.text !== text || p.pendingSessionId !== currentSessionId));
+    return true;
   }, [setPendingUser, targetSessionRef, currentSessionId]);
+
+  /**
+   * Re-queue a modified pending message: cancel, then send the new text with
+   * the same queue type. If the cancel fails pi already consumed it and the
+   * edit is dropped (the model saw the original).
+   */
+  const handleModifyPending = useCallback(async (text: string, newText: string, type: 'steer' | 'followUp') => {
+    if (!(await handleCancelPending(text))) return false;
+    try {
+      await apiJSON(API.session.messages, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ message: newText, type, sessionId: targetSessionRef.current }),
+      });
+    } catch {
+      setSessionError(`Queued message cancelled, but sending the edited text failed.`);
+      return true;
+    }
+    setPendingUser((prev) => [...prev, { role: 'user', text: newText, streaming: false, pending: true, pendingSessionId: targetSessionRef.current, timestamp: Date.now() }]);
+    return true;
+  }, [handleCancelPending, targetSessionRef, setSessionError, setPendingUser]);
 
   const handleLogout = useCallback(async () => {
     await logout();
@@ -446,7 +471,7 @@ export function AppPage({
           )}
           {activeView === 'chat' && (
             <ErrorBoundary key="v-chat" name="Chat">
-            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={() => { setNewFormRequested(true); handleSetView('sessions'); }} onGoToView={(v) => handleSetView(v === 'files' ? 'edits' : v)} onSetModel={handleCommandSetModel} onSetPersona={handleCommandSetPersona} modelNames={models.map((m) => m.id)} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} model={sessionState.model} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text, _type, pendingSessionId) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, pendingSessionId, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={urlSessionId || sessionState.sessionId} />
+            <StreamCard messages={[...streamHistory, ...visiblePendingUser]} isStreaming={sessionState.isStreaming} compacting={sessionState.compacting} onNewSession={() => { setNewFormRequested(true); handleSetView('sessions'); }} onGoToView={(v) => handleSetView(v === 'files' ? 'edits' : v)} onSetModel={handleCommandSetModel} onSetPersona={handleCommandSetPersona} modelNames={models.map((m) => m.id)} onCompact={handleCompact} onCommandError={setSessionError} steerPending={sessionState.steerPending} followUpPending={sessionState.followUpPending} steerQueue={sessionState.steerQueue} followUpQueue={sessionState.followUpQueue} onModifyPending={handleModifyPending} model={sessionState.model} models={models} activeModelId={sessionState.model?.id || null} onModelsFetched={setModels} onSent={(text, _type, pendingSessionId) => setPendingUser((prev) => [...prev, { role: 'user', text, streaming: false, pending: true, pendingSessionId, timestamp: Date.now() }])} onCancelPending={handleCancelPending} sessionId={urlSessionId || sessionState.sessionId} />
             </ErrorBoundary>
           )}
           {activeView === 'settings' && (

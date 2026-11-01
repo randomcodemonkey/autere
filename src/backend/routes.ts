@@ -403,7 +403,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           model, thinkingLevel: 'off', isStreaming: false, compacting: false,
           messageCount: 0, requestCount: 0, pendingMessageCount: 0,
           connected: false, startTime: disk.createdAt,
-          steerPending: 0, followUpPending: 0,
+          steerPending: 0, followUpPending: 0, steerQueue: [], followUpQueue: [],
           persona: persona ? { id: persona.id, name: persona.name } : null,
         },
         sessionStats: null,
