@@ -36,4 +36,16 @@ assert.equal(users.length, 1, `expected 1 user entry, got ${users.length}`);
 assert.equal(users[0].text, 'Look at this');
 assert.notEqual(users[0].pending, true);
 
+// A steered message pi consumed without a user message_end must leave PENDING.
+let onEvent: any;
+s.rpc.onEvent = (h: any) => { onEvent = h; };
+s.registerEventHandlers();
+s.addUserEntry('queued question', true);
+s.addUserEntry('still queued', true);
+assert.equal(s.history().find((e: any) => e.text === 'queued question').pending, true);
+// pi lists only what is still queued; attachment notes must not break the match.
+onEvent({ type: 'queue_update', steering: ['still queued\n\n[Attached file saved to:\n/tmp/a.png]'], followUp: [] });
+assert.notEqual(s.history().find((e: any) => e.text === 'queued question').pending, true);
+assert.equal(s.history().find((e: any) => e.text === 'still queued').pending, true);
+
 console.log('message-end.check: OK');

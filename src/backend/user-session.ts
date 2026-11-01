@@ -537,6 +537,19 @@ export class UserSession {
   }
 
   /**
+   * pi's queue is authoritative for steered/follow-up messages: whatever it no
+   * longer lists has been consumed, and pi emits no user message_end for those
+   * — the chat entry would stay on PENDING after the answer has arrived.
+   */
+  private retireConsumedPending(steering: unknown, followUp: unknown): void {
+    const lists = [steering, followUp].filter(Array.isArray) as unknown[][];
+    const queued = new Set(lists.flat().filter((t): t is string => typeof t === 'string').map(basePromptText));
+    const retired = this.history().filter((e: any) => e.pending && !queued.has(e.text));
+    for (const e of retired) e.pending = false;
+    this.broadcastHistoryUpsert(retired);
+  }
+
+  /**
    * Salvage queued (steer/follow-up) messages stranded by an abort. pi keeps
    * un-consumed queued messages forever while idle (verified: agent_end does
    * not drain the queue), and steer/follow_up can't start a run when idle —
@@ -974,6 +987,7 @@ export class UserSession {
           // authoritative pending counts for the chat buttons.
           s.sessionState.steerPending = Array.isArray(event.steering) ? event.steering.length : 0;
           s.sessionState.followUpPending = Array.isArray(event.followUp) ? event.followUp.length : 0;
+          this.retireConsumedPending(event.steering, event.followUp);
           this.broadcast({ type: 'status', data: { ...s.sessionState } });
           break;
         case 'message_update':
