@@ -93,7 +93,8 @@ function parseArgs(): {
   let auterePassword = process.env.INITIAL_PASSWORD || '';
   let piProvider = process.env.AUTERE_PROVIDER || undefined;
   let piModel = process.env.AUTERE_MODEL || undefined;
-  let idleTimeoutMinutes = parseInt(process.env.AUTERE_IDLE_TIMEOUT || '', 10) || 30;
+  // Fractional minutes allowed (AUTERE_IDLE_TIMEOUT=0.05 -> 3s), used by tests
+  let idleTimeoutMinutes = parseFloat(process.env.AUTERE_IDLE_TIMEOUT || '') || 30;
   let newSession = false;
   const piArgs: string[] = [];
 
@@ -110,7 +111,7 @@ function parseArgs(): {
     } else if (arg === '--model' && args[i + 1]) {
       piModel = args[++i];
     } else if (arg === '--idle-timeout' && args[i + 1]) {
-      idleTimeoutMinutes = parseInt(args[++i]) || 30;
+      idleTimeoutMinutes = parseFloat(args[++i]) || 30;
     } else if (arg === '--new-session') {
       // Always start pi with a brand-new session — never resume the last
       // active session. Used by e2e tests so they never attach to (and

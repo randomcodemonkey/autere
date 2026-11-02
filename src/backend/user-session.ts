@@ -303,11 +303,10 @@ export class UserSession {
   private resetIdleTimer() {
     if (this.cleanupTimer) clearTimeout(this.cleanupTimer);
     this.cleanupTimer = setTimeout(() => {
-      const st = this.state.sessionState;
       // Never kill a running turn: a timer armed before the turn started (and
       // never reset, e.g. a leaked duplicate instance) would otherwise stop
       // the pi process mid-stream — leaving a half-written session line.
-      if (st.isStreaming || st.compacting) {
+      if (this.isBusy) {
         this.resetIdleTimer();
         return;
       }
@@ -763,6 +762,10 @@ export class UserSession {
       clearTimeout(this.cleanupTimer);
       this.cleanupTimer = null;
     }
+    if (this.stallTimer) {
+      clearInterval(this.stallTimer);
+      this.stallTimer = null;
+    }
     try {
       await this.rpc.stop();
     } catch (err) {
@@ -778,6 +781,12 @@ export class UserSession {
   /** Whether the pi process is running */
   get isRunning(): boolean {
     return this.rpc.isRunning;
+  }
+
+  /** A turn or compaction is in progress — the idle timer must not fire. */
+  get isBusy(): boolean {
+    const st = this.state.sessionState;
+    return !!(st.isStreaming || st.compacting);
   }
 
   // ── Private ──
@@ -1154,11 +1163,15 @@ export class UserSession {
     // case where the upstream stream stalls without ever erroring.
     this.lastRpcEventAt = Date.now();
     this.stallTimer = setInterval(() => {
-      if (s.sessionState.isStreaming && !this.stallWarned
+      // Compaction counts: a hung summarization produces no events at all and
+      // the idle timer is (correctly) held off by isBusy, so this WARN is the
+      // only signal that the session is stuck.
+      const busy = s.sessionState.isStreaming || s.sessionState.compacting;
+      if (busy && !this.stallWarned
           && Date.now() - this.lastRpcEventAt > UserSession.STALL_WARN_MS) {
         this.stallWarned = true;
         log.userSession.forSession(s.sessionState.sessionId).warn(
-          `turn stalled: no RPC events for ${Math.round((Date.now() - this.lastRpcEventAt) / 1000)}s while streaming — provider stream may have hung`);
+          `turn stalled: no RPC events for ${Math.round((Date.now() - this.lastRpcEventAt) / 1000)}s while ${s.sessionState.compacting ? 'compacting' : 'streaming'} — provider stream may have hung`);
       }
     }, 30_000);
   }
@@ -1364,12 +1377,16 @@ export class UserSession {
         // the slice belonging to this block may be replaced by evt.content —
         // a blind overwrite drops text streamed before a thinking block.
         const start = Math.min(s.textBlockStart, s.currentStreamText.length);
-        if (typeof evt.content === 'string' && evt.content) {
+        const streamed = s.currentStreamText.slice(start);
+        // Guards that pi delivered the block later than the provider streamed
+        // it: replacing would then wipe text from a following block.
+        if (typeof evt.content === 'string' && evt.content && evt.content.length >= streamed.length) {
           s.currentStreamText = s.currentStreamText.slice(0, start) + evt.content;
         }
         cur.text = s.currentStreamText;
         cur.streaming = false;
-        this.broadcastHistoryUpsert([cur]);
+        // Never push a whitespace-only entry: it renders an empty bubble.
+        if (s.currentStreamText.trim() !== '') this.broadcastHistoryUpsert([cur]);
       }
     } else if (evt.type === 'toolcall_start') {
       this.handleToolCallStart(evt);

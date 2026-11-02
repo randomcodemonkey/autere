@@ -27,6 +27,41 @@ assert.equal(buf[0].streaming, false);
 s.handleMessageEnd({ message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: 'Second' }] } });
 assert.equal(s.history().length, 2);
 assert.deepEqual(s.history().map((e: any) => e.text), ['Hello', 'Second']);
+// pi can report a text block's end AFTER a following block already streamed
+// (provider batching). That late text_end must not wipe the newer text.
+s.state.activeAssistantId = null;
+s.state.currentStreamText = '';
+s.state.textBlockStart = 0;
+update({ type: 'text_start', contentIndex: 0 });
+update({ type: 'text_delta', contentIndex: 0, delta: '   ' });
+update({ type: 'text_start', contentIndex: 1 });
+update({ type: 'text_delta', contentIndex: 1, delta: 'LATE-CONTENT' });
+update({ type: 'text_end', contentIndex: 0, content: '   ' }); // late block 0 end
+assert.equal(s.history().at(-1).text, '   LATE-CONTENT', 'late text_end wiped streamed text');
+assert.notEqual(s.history().at(-1).streaming, true);
+
+// The whitespace guard applies to the assistant text entry only — empty
+// thinking blocks stay (they are the activity signal for withheld reasoning).
+s.state.activeAssistantId = null;
+s.state.currentStreamText = '';
+s.state.textBlockStart = 0;
+const sent: any[] = [];
+s.broadcast = (m: any) => sent.push(m);
+update({ type: 'thinking_start' });
+const thinking = s.history().at(-1);
+assert.equal(thinking.role, 'thinking');
+assert.equal(thinking.text, '');
+assert.ok(sent.some((m) => m.type === 'history_upsert' && m.data.some((e: any) => e.id === thinking.id)),
+  'empty thinking block is not broadcast');
+sent.length = 0;
+update({ type: 'thinking_end', content: '' });
+sent.length = 0; // the thinking block's own finalize upsert is expected
+update({ type: 'text_start', contentIndex: 0 });
+update({ type: 'text_delta', contentIndex: 0, delta: '   ' });
+update({ type: 'text_end', contentIndex: 0, content: '   ' });
+assert.equal(sent.filter((m) => m.type === 'history_upsert').length, 0, 'whitespace-only assistant entry broadcast');
+assert.equal(s.history().find((e: any) => e.id === thinking.id).text, '');
+
 // A prompt pi decorated with an attachment note must retire the committed
 // entry, not append a decorated second copy.
 s.addUserEntry('Look at this');
@@ -48,4 +83,5 @@ onEvent({ type: 'queue_update', steering: ['still queued\n\n[Attached file saved
 assert.notEqual(s.history().find((e: any) => e.text === 'queued question').pending, true);
 assert.equal(s.history().find((e: any) => e.text === 'still queued').pending, true);
 
+try { await s.stop(); } catch { /* never started */ } // clears the idle timer
 console.log('message-end.check: OK');

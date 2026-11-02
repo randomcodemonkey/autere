@@ -147,8 +147,22 @@ export class ProcessManager {
       }, this.defaultIdleTimeoutMs);
 
       session.onIdle(() => {
-        log.processMgr.info(`Idle timeout, terminating session process (${user}, ${sessionFile ? sessionFile.slice(-20) : 'new'})`);
-        this.terminate(user, session.routedSessionFile());
+        const file = session.routedSessionFile();
+        // A leaked instance (an earlier spawn the map no longer holds) must
+        // only reap itself — it never sees the live process's RPC events, so
+        // its idle timer would otherwise terminate a session that is working.
+        const current = file ? this.sessions.get(user)?.get(file) : undefined;
+        if (current && current !== session) {
+          log.processMgr.info(`Idle timeout on a superseded session instance (${user}), stopping it only`);
+          session.stop().catch(() => {});
+          return;
+        }
+        if (session.isBusy) {
+          session.touch();
+          return;
+        }
+        log.processMgr.info(`Idle timeout, terminating session process (${user}, ${file ? file.slice(-20) : 'new'})`);
+        this.terminate(user, file);
       });
 
       // Deferred settings restart: applied when the current turn ends —

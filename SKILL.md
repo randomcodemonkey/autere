@@ -372,7 +372,8 @@ SKILL.md               # This file — canonical, in-repo
   pi session, so only the trailing `user` message is sent to pi.
 - Translations live in `AguiTranslator` (pure, covered by
   `npx tsx src/backend/agui.check.ts
-npx tsx src/backend/message-end.check.ts`): `stream_delta` -> TEXT/REASONING
+npx tsx src/backend/message-end.check.ts
+npx tsx src/backend/idle-timeout.check.ts`): `stream_delta` -> TEXT/REASONING
   message events (cumulative text -> deltas), `tool_start`/`tool_end` +
   `toolResult` history entries -> TOOL_CALL_START/ARGS/END/RESULT, `status`/
   `stats` -> STATE_SNAPSHOT (deduped). `turn_settled` (internal, emitted on
