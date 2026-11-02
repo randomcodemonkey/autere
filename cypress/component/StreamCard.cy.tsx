@@ -233,6 +233,22 @@ describe('StreamCard', () => {
     cy.get('.stream-text-truncated').should('contain', 'more characters');
   });
 
+  it('collapses a long streaming tool output on arrival instead of flashing it', () => {
+    const partial = Array.from({ length: 60 }, (_, i) => `output line ${i}`).join('\n');
+    cy.mount(
+      <StreamCard
+        messages={[{ role: 'toolCall', text: '', streaming: true, toolCallId: 't1', toolCall: { name: 'bash', cmd: 'sleep 5' }, partial } as StreamMessage]}
+        isStreaming
+        onNewSession={cy.stub()}
+      />,
+    );
+    // Collapsed: only the tail is rendered, with a toggle to expand
+    cy.get('.stream-text-truncated').should('exist');
+    cy.contains('output line 0').should('not.exist');
+    cy.contains('output line 59').should('exist'); // the tail stays visible
+    cy.contains('more characters - click to expand').should('exist');
+  });
+
   it('hides the expand footer for an active toolCall (expansion is via the command header)', () => {
     const longCmd = 'echo ' + 'B'.repeat(3000);
     const messages: StreamMessage[] = [

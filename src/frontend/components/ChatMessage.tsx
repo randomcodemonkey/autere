@@ -302,7 +302,12 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   const bodyText = isCallOnly ? (msg.partial || '') : displayText;
   // Truncate long messages even while streaming — the expand toggle works
   // mid-stream. Bounded height also keeps autoscroll stable on long turns.
-  const showText = expanded || !isLong ? bodyText : bodyText.slice(0, truncLen);
+  // A streaming call shows the TAIL of its output: the head is stale by then.
+  const showText = expanded || !isLong
+    ? bodyText
+    : isCallOnly && bodyText.length > truncLen
+      ? '...' + bodyText.slice(-truncLen)
+      : bodyText.slice(0, truncLen);
   const roleClass = role === 'user' ? 'stream-role-user' : role === 'assistant' ? 'stream-role-assistant' : `stream-role-${role}`;
   // Task deliveries (scheduled-task reports committed as user-role messages)
   // read like assistant output: markdown body, distinct "task" sender.
@@ -485,9 +490,9 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
           ))}
         </div>
       )}
-      {/* Call-only toolCall (active execution): body is empty, expansion
-          happens via the command header — a footer toggle would be dead */}
-      {isLong && !isCallOnly && (
+      {/* Long streaming tool output collapses like a result; the command
+          header keeps its own toggle */}
+      {isLong && (
         <div
           className="stream-text-truncated"
           onClick={() => setExpanded((prev) => !prev)}
@@ -496,7 +501,7 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
             ? '▾ collapse'
             : role === 'edit'
               ? `▸ ${lineCount} rows - click to expand`
-              : `▸ ${displayText.length - truncLen} more characters - click to expand`}
+              : `▸ ${bodyText.length - truncLen} more characters - click to expand`}
         </div>
       )}
     </div>

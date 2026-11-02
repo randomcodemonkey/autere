@@ -39,6 +39,9 @@ interface StreamCardProps {
 /** Truncation limits per role (characters), for non-edit messages */
 const TRUNC_LEN: Record<string, number> = {
   toolResult: 128,
+  // Same threshold while the call streams: a longer final result would
+  // otherwise arrive collapsed right after the expanded partial (flash).
+  toolCall: 128,
   thinking: 128,
   system: Number.MAX_SAFE_INTEGER,
   default: 2048,
@@ -362,7 +365,11 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
             const lineCount = editLines.length;
             const isEdit = role === 'edit';
             const truncLen = TRUNC_LEN[role] ?? TRUNC_LEN.default;
-            const isLong = isEdit ? lineCount > EDIT_COLLAPSE_ROWS : displayText.length > truncLen;
+            // A streaming tool call renders its partial output, not `text` —
+            // measuring `text` kept a long result expanded until the final
+            // upsert collapsed it (flash).
+            const bodyLen = role === 'toolCall' && msg.toolCall ? (msg.partial || '').length : displayText.length;
+            const isLong = isEdit ? lineCount > EDIT_COLLAPSE_ROWS : bodyLen > truncLen;
             const isAssistant = role === 'assistant';
 
             return (
