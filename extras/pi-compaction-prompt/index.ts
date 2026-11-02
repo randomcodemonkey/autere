@@ -60,14 +60,27 @@ function readConfig(): { prompt?: string; compactAtTokens?: number } {
 }
 
 /**
- * Stream summaries through the model registry instead of handing compact() an
- * apiKey. Request-time auth also carries a token-specific baseUrl (Copilot
- * tokens encode their API host in `proxy-ep`), which compact() has no place
- * for — without it the summary is sent to the provider's default host and
- * rejected with "IDE authentication failed ... unknown stamp".
+ * Resolve request-time auth exactly like pi does for its own summaries
+ * (AgentSession._getSummarizationRequestAuth): the credential may pin a
+ * provider host (Copilot mints tokens for a specific `proxy-ep`), and compact()
+ * has no baseUrl parameter — so the host must travel on the model itself.
+ * Missing registry (older pi) -> pi's env credentials apply unchanged.
  */
-function summaryStream(ctx: any) {
-	return (model: any, context: any, options: any) => ctx.modelRegistry.streamSimple(model, context, options);
+async function summaryRequest(ctx: any): Promise<{ model: any; apiKey?: string; headers?: any; env?: Record<string, string> }> {
+	try {
+		const auth = await ctx.modelRegistry?.getApiKeyAndHeaders(ctx.model);
+		if (auth?.ok) {
+			return {
+				model: auth.baseUrl ? { ...ctx.model, baseUrl: auth.baseUrl } : ctx.model,
+				apiKey: auth.apiKey,
+				headers: auth.headers,
+				env: auth.env,
+			};
+		}
+	} catch {
+		// Registry unavailable — let pi resolve its own credentials
+	}
+	return { model: ctx.model };
 }
 
 function combined(user: string | undefined, extra: string): string {
@@ -83,24 +96,27 @@ export default function (pi: ExtensionAPI) {
 		// Without the stored prompt this handler would not run; if somehow the
 		// user text alone survives, pi's default path already appends it.
 		if (user === event.customInstructions?.trim()) return;
+		const req = await summaryRequest(ctx);
 		try {
 			const result = await defaultCompact(
 				event.preparation,
-				ctx.model,
-				undefined,
-				undefined,
+				req.model,
+				req.apiKey,
+				req.headers,
 				user,
 				event.signal,
 				undefined,
-				summaryStream(ctx),
 				undefined,
+				req.env,
 				undefined,
 				undefined,
 				uuidv7(),
 			);
 			return { compaction: result };
 		} catch (error) {
-			if (!event.signal.aborted) ctx.ui.notify(`pi-compaction-prompt: custom summary failed (${error instanceof Error ? error.message : String(error)}), using pi default`, "warning");
+			// The request host is the usual culprit for auth failures; show it.
+			const detail = req.model.baseUrl && req.model.baseUrl !== ctx.model.baseUrl ? `, host ${req.model.baseUrl}` : '';
+			if (!event.signal.aborted) ctx.ui.notify(`pi-compaction-prompt: custom summary failed (${error instanceof Error ? error.message : String(error)}${detail}), using pi default`, "warning");
 			return;
 		}
 	});
@@ -117,17 +133,18 @@ export default function (pi: ExtensionAPI) {
 		if (!usage || (usage.tokens ?? 0) < compactAtTokens) return;
 		const preparation = prepareCompaction(ctx.sessionManager.getBranch(), { ...DEFAULT_COMPACTION_SETTINGS });
 		if (!preparation) return;
+		const req = await summaryRequest(ctx);
 		try {
 			const result = await defaultCompact(
 				preparation,
-				ctx.model,
-				undefined,
-				undefined,
+				req.model,
+				req.apiKey,
+				req.headers,
 				combined(undefined, prompt),
 				undefined,
 				undefined,
-				summaryStream(ctx),
 				undefined,
+				req.env,
 				undefined,
 				undefined,
 				uuidv7(),
