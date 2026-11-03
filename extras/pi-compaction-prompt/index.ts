@@ -39,6 +39,76 @@ function configPath(): string {
 	return join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), CONFIG_NAME);
 }
 
+/**
+ * Summaries are one bounded generation, but pi's static reserveTokens (16k, of
+ * which a split turn's prefix step may use half) truncates long histories on
+ * large-context models. Widen the budget to a tenth of the context window,
+ * clamped by the model's own output cap; the preparation is already computed at
+ * this point, so reserveTokens only sets maxTokens here.
+ */
+function widenBudget(preparation: any, model: any): any {
+	const configured = preparation?.settings?.reserveTokens ?? 16384;
+	const contextWindow = model?.contextWindow > 0 ? model.contextWindow : 0;
+	const modelCap = model?.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY;
+	const target = Math.max(configured, Math.min(contextWindow ? Math.floor(contextWindow * 0.1) : configured, modelCap));
+	if (target <= configured) return preparation;
+	return { ...preparation, settings: { ...preparation.settings, reserveTokens: target } };
+}
+
+/**
+ * Run compact() with at most ONE fallback for the failure mode that is about
+ * budget rather than content ("generation hit the token cap"). Each attempt is
+ * a full summarization, so the fallback is chosen by what can actually change:
+ *
+ * - the cap is `min(floor(0.5 * reserveTokens), model.maxTokens)` for a split
+ *   turn. If the model is the binding limit, a bigger reserveTokens cannot
+ *   help — rebuild the preparation keeping nothing recent instead, which
+ *   removes the split turn and gives the single remaining summary the full
+ *   budget.
+ * - otherwise raise reserveTokens for the same preparation (already computed,
+ *   so it only widens the output budget).
+ */
+async function compactWithFallbacks(
+	preparation: any,
+	branchEntries: any[] | undefined,
+	model: any,
+	apiKey: any,
+	headers: any,
+	instructions: string,
+	signal: any,
+	env: any,
+): Promise<any> {
+	const run = (prep: any) =>
+		defaultCompact(prep, model, apiKey, headers, instructions, signal, undefined, undefined, env, undefined, undefined, uuidv7());
+	preparation = widenBudget(preparation, model);
+	const reserveTokens = preparation?.settings?.reserveTokens ?? 16384;
+	const modelCap = model?.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY;
+	const isTokenCapFailure = (error: unknown) => /token cap/i.test(error instanceof Error ? error.message : String(error));
+	try {
+		return await run(preparation);
+	} catch (error) {
+		if (!isTokenCapFailure(error)) throw error;
+		const modelIsTheLimit = Math.floor(0.5 * reserveTokens) >= modelCap;
+		let fallback: any;
+		if (modelIsTheLimit) {
+			fallback = branchEntries?.length
+				? prepareCompaction(branchEntries, { ...preparation.settings, keepRecentTokens: 0 })
+				: undefined;
+		} else {
+			fallback = {
+				...preparation,
+				settings: { ...preparation.settings, reserveTokens: Math.max(32768, reserveTokens * 2) },
+			};
+		}
+		if (!fallback || fallback === preparation) throw error;
+		try {
+			return await run(fallback);
+		} catch {
+			throw error; // report the primary failure, not the fallback's
+		}
+	}
+}
+
 let cache: { mtime: number; prompt?: string; compactAtTokens?: number } | null = null;
 
 function readConfig(): { prompt?: string; compactAtTokens?: number } {
@@ -98,20 +168,7 @@ export default function (pi: ExtensionAPI) {
 		if (user === event.customInstructions?.trim()) return;
 		const req = await summaryRequest(ctx);
 		try {
-			const result = await defaultCompact(
-				event.preparation,
-				req.model,
-				req.apiKey,
-				req.headers,
-				user,
-				event.signal,
-				undefined,
-				undefined,
-				req.env,
-				undefined,
-				undefined,
-				uuidv7(),
-			);
+			const result = await compactWithFallbacks(event.preparation, event.branchEntries, req.model, req.apiKey, req.headers, user, event.signal, req.env);
 			return { compaction: result };
 		} catch (error) {
 			// The request host is the usual culprit for auth failures; show it.
@@ -131,24 +188,13 @@ export default function (pi: ExtensionAPI) {
 		if (ctx.model === undefined) return;
 		const usage = ctx.getContextUsage?.();
 		if (!usage || (usage.tokens ?? 0) < compactAtTokens) return;
-		const preparation = prepareCompaction(ctx.sessionManager.getBranch(), { ...DEFAULT_COMPACTION_SETTINGS });
+		const settings = { ...DEFAULT_COMPACTION_SETTINGS, ...(ctx.getSettings?.()?.compaction ?? {}) };
+		if (!settings.enabled) return; // pi would not compact either
+		const preparation = prepareCompaction(ctx.sessionManager.getBranch(), settings);
 		if (!preparation) return;
 		const req = await summaryRequest(ctx);
 		try {
-			const result = await defaultCompact(
-				preparation,
-				req.model,
-				req.apiKey,
-				req.headers,
-				combined(undefined, prompt),
-				undefined,
-				undefined,
-				undefined,
-				req.env,
-				undefined,
-				undefined,
-				uuidv7(),
-			);
+			const result = await compactWithFallbacks(preparation, ctx.sessionManager.getBranch(), req.model, req.apiKey, req.headers, combined(undefined, prompt), undefined, req.env);
 			ctx.ui.notify("Compaction forced mid-run (context over the configured token limit), continuing", "info");
 			return {
 				entries: [
