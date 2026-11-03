@@ -223,6 +223,22 @@ export function useSessionStream(opts: {
         setStreamHistory(incoming);
         break;
       }
+      case 'tool_output': {
+        // Incremental output of an active tool call: appended to the entry the
+        // tool_start upsert created, so the expanded card can show all of it.
+        const viewed = viewedSessionRef.current;
+        if (!inViewedSession(viewed, msg.sessionId)) break;
+        const { id, text, replace } = msg.data || {};
+        if (!id || typeof text !== 'string') break;
+        setStreamHistory((prev) => {
+          const i = prev.findIndex((m) => m.toolCallId === id);
+          if (i < 0) return prev; // a snapshot/bootstrap carries it instead
+          const next = [...prev];
+          next[i] = { ...next[i], partial: replace ? text : (next[i].partial || '') + text };
+          return next;
+        });
+        break;
+      }
       case 'history_upsert': {
         // Targeted live mutation: replace-by-stable-id or append. Full
         // stream_history snapshots now only arrive on reconnect/reload/

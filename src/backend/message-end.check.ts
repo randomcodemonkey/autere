@@ -40,6 +40,36 @@ update({ type: 'text_end', contentIndex: 0, content: '   ' }); // late block 0 e
 assert.equal(s.history().at(-1).text, '   LATE-CONTENT', 'late text_end wiped streamed text');
 assert.notEqual(s.history().at(-1).streaming, true);
 
+// Streamed tool output: the buffer keeps it all (bootstrap sends it once),
+// live clients get deltas.
+{
+	const line = (i: number) => `line ${i}`;
+	const first = Array.from({ length: 400 }, (_, i) => line(i)).join('\n');
+	const entry: any = { id: 'tool-entry', role: 'toolCall', text: '', streaming: true, toolCallId: 'call1', partial: '' };
+	s.history().push(entry);
+	const tool: any = { entry, partialAt: 0 };
+	s.state.activeTools.set('call1', tool);
+	const sent: any[] = [];
+	s.broadcast = (m: any) => sent.push(m);
+	s.handleToolUpdate({ toolCallId: 'call1', partialResult: { content: [{ type: 'text', text: first }] } });
+	assert.equal(entry.partial, first, 'buffer lost part of the streamed output');
+	const d1 = sent.at(-1);
+	assert.equal(d1.type, 'tool_output');
+	assert.equal(d1.data.replace, false);
+	assert.ok(d1.data.text.endsWith(first), 'first delta should carry what was not sent yet');
+	// Next snapshot only adds a line: the delta carries just that line.
+	tool.partialAt = 0;
+	const second = first + '\n' + line(400);
+	s.handleToolUpdate({ toolCallId: 'call1', partialResult: { content: [{ type: 'text', text: second }] } });
+	assert.equal(sent.at(-1).data.text, '\n' + line(400), 'delta should only carry the new output');
+	// A tool that rewrites its output gets a full replacement instead.
+	tool.partialAt = 0;
+	s.handleToolUpdate({ toolCallId: 'call1', partialResult: { content: [{ type: 'text', text: 'rewritten' }] } });
+	assert.equal(sent.at(-1).data.replace, true);
+	assert.equal(sent.at(-1).data.text, 'rewritten');
+	s.state.activeTools.delete('call1');
+}
+
 // The whitespace guard applies to the assistant text entry only — empty
 // thinking blocks stay (they are the activity signal for withheld reasoning).
 s.state.activeAssistantId = null;

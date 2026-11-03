@@ -399,6 +399,10 @@ npx tsx src/backend/idle-timeout.check.ts`): `stream_delta` -> TEXT/REASONING
   caused multi-GB memory spikes, event-loop lag, OOM, and client freezes.
 - **Full snapshots** (`stream_history`) carry images; sent on load, entry
   creation, message_end, tool events, session switch.
+- **Streamed tool output** travels as `tool_output` deltas (`{id, text,
+  replace}`) appended to the streaming `toolCall` entry — the buffer keeps the
+  whole output (2 MB cap, then a tail with an ellipsis and `replace: true`), so
+  an expanded card shows everything; a snapshot resend would be MB/s.
 - **History entries** carry stable server-assigned `id`s (monotonic) —
   frontend React keys prefer them so expansion state and scroll anchoring
   survive broadcasts. toolCall→toolResult replacement inherits the id.

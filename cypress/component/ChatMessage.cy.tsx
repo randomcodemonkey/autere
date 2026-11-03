@@ -113,6 +113,25 @@ describe('ChatMessage — streaming tool call', () => {
     cy.get('.stream-tool-output > span').first().should('have.attr', 'style').and('contain', '--ansi-2');
   });
 
+  it('shows the whole streamed output when an active tool call is expanded', () => {
+    const full = Array.from({ length: 50 }, (_, i) => `full line ${i}`).join('\n');
+    cy.mount(
+      <ChatMessage
+        msg={{ ...base, streaming: true, toolCallId: 'call1', toolCall: { name: 'bash', cmd: 'build' }, partial: full } as any}
+        role="toolCall"
+        displayText=""
+        isAssistant={false}
+        isToolResult={true}
+        isLong={true}
+        truncLen={128}
+      />,
+    );
+    // Collapsed: tail preview only, starting with an ellipsis
+    cy.get('.stream-tool-output:not(.expanded)').should('contain', '...').and('contain', 'full line 49');
+    cy.get('.stream-text-truncated').click();
+    cy.get('.stream-tool-output.expanded').should('contain', 'full line 0').and('contain', 'full line 49');
+  });
+
   it('renders an empty thinking block while streaming', () => {
     cy.mount(
       <ChatMessage

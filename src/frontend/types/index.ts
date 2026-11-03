@@ -197,6 +197,7 @@ export type SSEEventType =
   | 'extension_ui'
   | 'message'
   | 'tool_start'
+  | 'tool_output'
   | 'tool_end'
   | 'extensions'
   | 'models'

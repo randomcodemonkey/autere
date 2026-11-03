@@ -298,11 +298,14 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
 
   const isCallOnly = role === 'toolCall' && !!msg.toolCall;
   // Streaming tool calls show the tail of their partial output under the
-  // command header; the final result replaces the whole entry.
+  // command header (the backend streams it in full as deltas); the final
+  // result replaces the whole entry.
   const bodyText = isCallOnly ? (msg.partial || '') : displayText;
   // Truncate long messages even while streaming — the expand toggle works
   // mid-stream. Bounded height also keeps autoscroll stable on long turns.
   // A streaming call shows the TAIL of its output: the head is stale by then.
+  // Expanded always renders the text as-is: a tail preview with an ellipsis is
+  // only ever the collapsed form.
   const showText = expanded || !isLong
     ? bodyText
     : isCallOnly && bodyText.length > truncLen

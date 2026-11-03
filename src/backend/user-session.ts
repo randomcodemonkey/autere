@@ -1741,8 +1741,8 @@ export class UserSession {
     this.broadcastHistoryUpsert([entry]);
   }
 
-  /** Tail cap for streamed partial tool output (chars) */
-  private static readonly TOOL_PARTIAL_MAX = 2000;
+  /** Streamed tool output kept per active call (chars) — the expanded card shows all of it */
+  private static readonly TOOL_PARTIAL_KEEP = 2_000_000;
   /** Minimum gap between partial-output broadcasts (ms) — bash can stream KBs per second */
   private static readonly TOOL_PARTIAL_INTERVAL_MS = 150;
 
@@ -1760,16 +1760,26 @@ export class UserSession {
       .map((c: any) => c.text || '')
       .join('\n');
     if (!text) return;
-    entry.partial = text.length > UserSession.TOOL_PARTIAL_MAX
-      ? '...' + text.slice(-UserSession.TOOL_PARTIAL_MAX)
+    // The buffer keeps the whole output (bootstrap/reconnect sends it once);
+    // live updates travel as deltas — re-sending the full text every 150 ms
+    // would be megabytes per second for a chatty tool.
+    const target = text.length > UserSession.TOOL_PARTIAL_KEEP
+      ? '...' + text.slice(-UserSession.TOOL_PARTIAL_KEEP)
       : text;
-    // Throttle: every broadcast re-sends the whole tail over SSE to every
-    // client. The last chunk may be dropped by the window — tool_end
-    // replaces the entry with the full result anyway.
+    entry.partial = target;
+    // Throttle the flush, never the content: whatever arrives in between is
+    // carried by the next delta.
     const now = Date.now();
     if (now - (tool.partialAt || 0) < UserSession.TOOL_PARTIAL_INTERVAL_MS) return;
     tool.partialAt = now;
-    this.broadcastHistoryUpsert([entry]);
+    const sent = tool.sentText || '';
+    // A tool can rewrite its output (and the tail cap rewrites it once the
+    // output outgrows the keep limit) — then send the whole thing instead.
+    const replace = !target.startsWith(sent);
+    const delta = replace ? target : target.slice(sent.length);
+    tool.sentText = target;
+    if (!delta) return;
+    this.broadcast({ type: 'tool_output', sessionId: this.state.sessionState.sessionId, data: { id: event.toolCallId, text: delta, replace } });
   }
 
   private handleToolEnd(event: any): void {
