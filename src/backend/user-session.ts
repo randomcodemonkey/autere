@@ -73,12 +73,17 @@ export interface UserSessionState {
   availableModels: any[];
   extensionsState: any[];
   currentStreamText: string;
+  /** Chars of the current block already delivered as stream_delta since the
+   *  last full snapshot (see STREAM_SNAPSHOT_CHARS) */
+  sentText: number;
   /** Offset of the current text block inside currentStreamText (interleaved
    *  thinking splits one message into several text blocks) */
   textBlockStart: number;
   activeAssistantId: string | null;
   activeThinkingId: string | null;
   currentThinkingText: string;
+  /** Same accounting for the thinking block */
+  sentThinking: number;
   isThinking: boolean;
 }
 
@@ -120,10 +125,12 @@ function createInitialState(): UserSessionState {
     availableModels: [],
     extensionsState: [],
     currentStreamText: '',
+    sentText: 0,
     textBlockStart: 0,
     activeAssistantId: null,
     activeThinkingId: null,
     currentThinkingText: '',
+    sentThinking: 0,
     isThinking: false,
   };
 }
@@ -1198,8 +1205,10 @@ export class UserSession {
     s.activeAssistantId = null;
     s.activeThinkingId = null;
     s.currentStreamText = '';
+    s.sentText = 0;
     s.textBlockStart = 0;
     s.currentThinkingText = '';
+    s.sentThinking = 0;
 
     // Invalidate the session key immediately: subsequent pi events belong to
     // the NEW session but we don't know its id until getState() resolves.
@@ -1279,8 +1288,10 @@ export class UserSession {
     s.activeAssistantId = null;
     s.activeThinkingId = null;
     s.currentStreamText = '';
+    s.sentText = 0;
     s.textBlockStart = 0;
     s.currentThinkingText = '';
+    s.sentThinking = 0;
     if (remove.length > 0) {
       this.broadcast({ type: 'history_remove', sessionId: s.sessionState.sessionId, data: remove });
     }
@@ -1296,7 +1307,6 @@ export class UserSession {
     // buffer that nobody is viewing — this prevents leaking one session's
     // content into another session's history.
     const buf = this.history();
-    const sessionId = s.sessionState.sessionId;
 
     // Separate trackers per role: GLM/z-ai-style requests emit thinking
     // blocks INTERLEAVED with text (think → few words → think → continue)
@@ -1309,6 +1319,7 @@ export class UserSession {
     if (evt.type === 'thinking_start') {
       s.isThinking = true;
       s.currentThinkingText = '';
+      s.sentThinking = 0;
       if (s.activeThinkingId) {
         const prev = buf.find((m: any) => m.id === s.activeThinkingId);
         if (prev && prev.streaming) { prev.streaming = false; this.broadcastHistoryUpsert([prev]); }
@@ -1322,7 +1333,8 @@ export class UserSession {
       s.activeThinkingId = started.id;
       this.broadcastHistoryUpsert([started]);
     } else if (evt.type === 'thinking_delta') {
-      s.currentThinkingText += evt.delta || '';
+      const fresh = evt.delta || '';
+      s.currentThinkingText += fresh;
       // Track streaming entries by stable id, NOT index — trimHistory shifts
       // the buffer mid-turn and a numeric index goes stale.
       const cur = s.activeThinkingId ? buf.find((m: any) => m.id === s.activeThinkingId) : undefined;
@@ -1331,13 +1343,11 @@ export class UserSession {
         buf.push(entry);
         this.broadcastHistoryUpsert([entry]);
         s.activeThinkingId = entry.id;
+        s.sentThinking = 0;
       } else {
         cur.text = s.currentThinkingText;
+        this.sendDelta('thinking', s.activeThinkingId as string, fresh, s, cur);
       }
-      // Delta events send ONLY the streaming entry's text — never the full
-      // history buffer. Re-broadcasting history (with multi-MB base64 images)
-      // on every token caused multi-GB memory churn and client jank.
-      this.broadcast({ type: 'stream_delta', sessionId, data: { role: 'thinking', id: s.activeThinkingId, text: s.currentThinkingText } });
     } else if (evt.type === 'thinking_end') {
       s.isThinking = false;
       const text = evt.content || s.currentThinkingText;
@@ -1349,6 +1359,7 @@ export class UserSession {
       }
       s.activeThinkingId = null;
       s.currentThinkingText = '';
+      s.sentThinking = 0;
     } else if (evt.type === 'text_delta') {
       const delta = evt.delta;
       let cur = s.activeAssistantId ? buf.find((m: any) => m.id === s.activeAssistantId) : undefined;
@@ -1373,8 +1384,13 @@ export class UserSession {
       // never reach clients — it renders an empty bubble. The entry is
       // withheld until real content arrives, then revealed in one shot.
       if (s.currentStreamText.trim() !== '') {
-        if (!wasRevealed || !wasStreaming) this.broadcastHistoryUpsert([cur]);
-        this.broadcast({ type: 'stream_delta', sessionId, data: { role: 'assistant', id: cur.id, text: s.currentStreamText } });
+        if (!wasRevealed || !wasStreaming) {
+          // First visible content (or a resumed block): one full snapshot.
+          this.broadcastHistoryUpsert([cur]);
+          s.sentText = 0;
+        } else {
+          this.sendDelta('assistant', cur.id, delta || '', s, cur);
+        }
       }
     } else if (evt.type === 'text_start') {
       s.textBlockStart = s.currentStreamText.length;
@@ -1396,6 +1412,7 @@ export class UserSession {
         }
         cur.text = s.currentStreamText;
         cur.streaming = false;
+        s.sentText = 0; // this broadcast is a full snapshot
         // Never push a whitespace-only entry: it renders an empty bubble.
         if (s.currentStreamText.trim() !== '') this.broadcastHistoryUpsert([cur]);
       }
@@ -1750,6 +1767,28 @@ export class UserSession {
 
     if (!adopted) this.history().push(entry);
     this.broadcastHistoryUpsert([entry]);
+  }
+
+  /** Streamed text delivered as deltas before a full snapshot heals any gap
+   *  (a lost frame must not leave the message permanently short). */
+  private static readonly STREAM_SNAPSHOT_CHARS = 8192;
+
+  /**
+   * Deliver freshly streamed text as a DELTA: only the new chunk goes over the
+   * wire, because re-sending the whole message on every token is O(n^2) bytes
+   * for a long answer. Every STREAM_SNAPSHOT_CHARS a full entry snapshot is
+   * sent instead, which also heals anything the client missed.
+   */
+  private sendDelta(role: 'assistant' | 'thinking', id: string, text: string, ss: any, cur: any): void {
+    if (!text) return;
+    const key = role === 'assistant' ? 'sentText' : 'sentThinking';
+    ss[key] = (ss[key] || 0) + text.length;
+    if (ss[key] >= UserSession.STREAM_SNAPSHOT_CHARS) {
+      ss[key] = 0;
+      this.broadcastHistoryUpsert([cur]);
+      return;
+    }
+    this.broadcast({ type: 'stream_delta', sessionId: ss.sessionId, data: { role, id, text } });
   }
 
   /** Streamed tool output kept per active call (chars) — the expanded card shows all of it */

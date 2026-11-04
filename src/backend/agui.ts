@@ -373,9 +373,12 @@ export class AguiTranslator {
     const out: any[] = [];
     switch (event?.type) {
       case 'stream_delta': {
+        // stream_delta carries ONLY the new text of the block (a full entry
+        // snapshot arrives as history_upsert every few KB), so it maps 1:1
+        // onto an AG-UI content delta.
         const data = event.data || {};
-        if (data.role === 'assistant') this.textChunk(out, data);
-        else if (data.role === 'thinking') this.reasoningChunk(out, data);
+        if (data.role === 'assistant') this.textChunk(out, data, false);
+        else if (data.role === 'thinking') this.reasoningChunk(out, data, false);
         break;
       }
       case 'history_upsert': {
@@ -394,7 +397,7 @@ export class AguiTranslator {
           } else if (entry?.role === 'assistant' && entry.streaming === false) {
             // Final text can arrive without deltas (resumed/one-shot message);
             // never lose it.
-            if (entry.text) this.textChunk(out, { id: entry.id, text: entry.text });
+            if (entry.text) this.textChunk(out, { id: entry.id, text: entry.text }, true);
             this.closeText(out);
           } else if (entry?.role === 'thinking' && entry.streaming === false) {
             this.closeReasoning(out);
@@ -452,7 +455,9 @@ export class AguiTranslator {
     return out;
   }
 
-  private textChunk(out: any[], data: any): void {
+  /** `full` = data.text is the whole message so far (a snapshot), else just
+   *  the next chunk. */
+  private textChunk(out: any[], data: any, full: boolean): void {
     const id = typeof data.id === 'string' && data.id ? data.id : 'assistant';
     const text = typeof data.text === 'string' ? data.text : '';
     if (!this.text || this.text.id !== id) {
@@ -461,14 +466,14 @@ export class AguiTranslator {
       this.lastAssistantId = id;
       out.push({ type: 'TEXT_MESSAGE_START', messageId: id, role: 'assistant', timestamp: Date.now() });
     }
-    const delta = text.slice(this.text.sent);
+    const delta = full ? text.slice(this.text.sent) : text;
     if (delta) {
       out.push({ type: 'TEXT_MESSAGE_CONTENT', messageId: id, delta, timestamp: Date.now() });
-      this.text.sent = text.length;
+      this.text.sent += delta.length;
     }
   }
 
-  private reasoningChunk(out: any[], data: any): void {
+  private reasoningChunk(out: any[], data: any, full: boolean): void {
     const id = typeof data.id === 'string' && data.id ? data.id : 'reasoning';
     const text = typeof data.text === 'string' ? data.text : '';
     if (!this.reasoning || this.reasoning.id !== id) {
@@ -476,10 +481,10 @@ export class AguiTranslator {
       this.reasoning = { id, sent: 0 };
       out.push({ type: 'REASONING_MESSAGE_START', messageId: id, role: 'reasoning', timestamp: Date.now() });
     }
-    const delta = text.slice(this.reasoning.sent);
+    const delta = full ? text.slice(this.reasoning.sent) : text;
     if (delta) {
       out.push({ type: 'REASONING_MESSAGE_CONTENT', messageId: id, delta, timestamp: Date.now() });
-      this.reasoning.sent = text.length;
+      this.reasoning.sent += delta.length;
     }
   }
 

@@ -108,12 +108,13 @@ export function useSessionStream(opts: {
   // older than this must not apply their transient flags (see below).
   const lastLiveStatusAtRef = useRef(0);
 
-  // stream_delta throttling: latest delta text + scheduled flush timer.
-  // flushPendingDelta applies the buffered text to streamHistory; if a new
-  // streaming entry must be created (first delta of an entry), it does the
-  // same append the old unthrottled path did.
+  // stream_delta throttling: buffered chunks + scheduled flush timer.
+  // The backend sends only the new text of a streaming block (a full entry
+  // snapshot every few KB heals gaps), so the flush APPENDS. Chunks are kept
+  // in arrival order per role: thinking and text can interleave inside one
+  // message.
   const STREAM_DELTA_FLUSH_MS = 10;
-  const pendingDeltaRef = useRef<{ role: 'assistant' | 'thinking'; text: string } | null>(null);
+  const pendingDeltaRef = useRef<Array<{ role: 'assistant' | 'thinking'; id?: string; text: string }> | null>(null);
   const deltaFlushTimerRef = useRef<number | null>(null);
 
   // Clear per-session UI state (used when entering a fresh session)
@@ -127,27 +128,26 @@ export function useSessionStream(opts: {
 
   const flushPendingDelta = useCallback(() => {
     deltaFlushTimerRef.current = null;
-    const delta = pendingDeltaRef.current;
+    const chunks = pendingDeltaRef.current;
     pendingDeltaRef.current = null;
-    if (!delta) return;
+    if (!chunks || chunks.length === 0) return;
     setStreamHistory((prev) => {
-      // The backend streams at most ONE entry per role — but its upserts
-      // (tool results, moved follow-ups, file entries) can land between our
-      // deltas, so the streaming entry may not be LAST. Scan for it; only
-      // append a synthetic entry when none exists (a blind append here is
-      // how duplicate/frozen thinking ghosts were born).
-      for (let k = prev.length - 1; k >= 0; k--) {
-        if (prev[k].role === delta.role && prev[k].streaming) {
-          const next = prev.slice();
-          next[k] = { ...prev[k], text: delta.text };
-          return next;
-        }
+      const next = prev.slice();
+      for (const chunk of chunks) {
+        // Match by id when the backend sent one, else the newest streaming
+        // entry of that role. Upserts (tool results, file entries) can land
+        // between our deltas, so the streaming entry may not be LAST.
+        let k = -1;
+        if (chunk.id) k = next.findIndex((m) => m.id === chunk.id);
+        if (k < 0) for (let i = next.length - 1; i >= 0; i--) if (next[i].role === chunk.role && next[i].streaming) { k = i; break; }
+        // No streaming entry found: drop the chunk. The backend always
+        // upserts the entry (with stable id) before deltas flow, and a
+        // snapshot heals any gap — synthesizing entries here is how
+        // duplicate/frozen thinking ghosts were born.
+        if (k < 0) continue;
+        next[k] = { ...next[k], text: (next[k].text || '') + chunk.text };
       }
-      // No streaming entry of this role found: drop the delta. The backend
-      // always upserts the entry (with stable id) before deltas flow, and a
-      // turn-end snapshot heals any gap — synthesizing entries here is how
-      // duplicate/frozen thinking ghosts were born.
-      return prev;
+      return next;
     });
   }, []);
 
@@ -331,7 +331,9 @@ export function useSessionStream(opts: {
         const role = msg.data?.role;
         const text = msg.data?.text ?? '';
         if (role !== 'assistant' && role !== 'thinking') break;
-        pendingDeltaRef.current = { role, text };
+        const buf = pendingDeltaRef.current ?? [];
+        buf.push({ role, id: msg.data?.id, text });
+        pendingDeltaRef.current = buf;
         if (deltaFlushTimerRef.current === null) {
           deltaFlushTimerRef.current = window.setTimeout(flushPendingDelta, STREAM_DELTA_FLUSH_MS);
         }

@@ -86,7 +86,8 @@ const types = (events: any[]) => events.map((e) => e.type);
 let out = tr.onEvent({ type: 'stream_delta', data: { role: 'assistant', id: 'a1', text: 'Hel' } });
 assert.deepEqual(types(out), ['TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT']);
 assert.equal(out[1].delta, 'Hel');
-out = tr.onEvent({ type: 'stream_delta', data: { role: 'assistant', id: 'a1', text: 'Hello' } });
+// Deltas carry only the new chunk (the wire format since the O(n^2) fix).
+out = tr.onEvent({ type: 'stream_delta', data: { role: 'assistant', id: 'a1', text: 'lo' } });
 assert.deepEqual(types(out), ['TEXT_MESSAGE_CONTENT']);
 assert.equal(out[0].delta, 'lo');
 // Thinking opens its own reasoning stream
@@ -112,6 +113,12 @@ assert.equal(out[0].messageId, 'a2');
 // Final assistant upsert without deltas must not duplicate text
 out = tr.onEvent({ type: 'history_upsert', data: [{ role: 'assistant', id: 'a2', streaming: false, text: 'Done' }] });
 assert.deepEqual(types(out), ['TEXT_MESSAGE_END']);
+// A snapshot that carries MORE than was streamed emits only the remainder
+out = tr.onEvent({ type: 'stream_delta', data: { role: 'assistant', id: 'a3', text: 'One' } });
+assert.equal(out[1].delta, 'One');
+out = tr.onEvent({ type: 'history_upsert', data: [{ role: 'assistant', id: 'a3', streaming: false, text: 'One two' }] });
+assert.deepEqual(types(out), ['TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END']);
+assert.equal(out[0].delta, ' two');
 assert.deepEqual(tr.close(), []);
 
 // ── translator: state snapshots are deduped ──

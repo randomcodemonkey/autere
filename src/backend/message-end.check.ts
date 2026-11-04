@@ -134,5 +134,36 @@ assert.equal(removed.length, 1, 'client was not told to drop the cancelled messa
 assert.equal(s.history().find((e: any) => e.text === 'keep me').pending, true, 'remaining queued message lost its pending marker');
 assert.deepEqual(requeued, ['keep me']);
 
+// Streaming text travels as DELTAS (only the new chunk): re-sending the whole
+// message on every token was O(n^2) bytes for a long answer. A full snapshot
+// every few KB heals a lost frame.
+{
+  s.setHistory([]);
+  s.state.activeAssistantId = null;
+  s.state.currentStreamText = '';
+  s.state.sentText = 0;
+  s.state.textBlockStart = 0;
+  const sent: any[] = [];
+  s.broadcast = (m: any) => sent.push(m);
+  update({ type: 'text_start' });
+  update({ type: 'text_delta', delta: 'hello ' });   // first visible text -> snapshot
+  update({ type: 'text_delta', delta: 'world' });
+  update({ type: 'text_delta', delta: '!' });
+  assert.deepEqual(
+    sent.filter((m) => m.type === 'stream_delta').map((m) => m.data.text),
+    ['world', '!'],
+    'deltas must not repeat the whole message',
+  );
+  sent.length = 0;
+  let snapshots = 0;
+  for (let i = 0; i < 900; i++) {
+    update({ type: 'text_delta', delta: '0123456789' });
+    snapshots += sent.filter((m) => m.type === 'history_upsert').length;
+    sent.length = 0;
+  }
+  assert.ok(snapshots >= 1, 'no periodic snapshot — a lost delta would never heal');
+  s.setHistory([]);
+}
+
 try { await s.stop(); } catch { /* never started */ } // clears the idle timer
 console.log('message-end.check: OK');
