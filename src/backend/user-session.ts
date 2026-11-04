@@ -683,19 +683,24 @@ export class UserSession {
     this.broadcast({ type: 'history_upsert', sessionId: this.state.sessionState.sessionId, data: list });
   }
 
-  /** Cap the buffer, telling clients which entries were dropped */
+  /** Chat text kept in the live buffer before the oldest entries are dropped
+   *  (the buffer is a render cache — pi's session file keeps everything). */
+  private static readonly HISTORY_MAX_CHARS = 8 * 1024 * 1024;
+
   private trimHistory(buf: any[]): void {
-    if (buf.length <= this.historyLimit) return;
-    // Trim from the front, but NEVER drop user entries: a single turn can
-    // produce 50+ tool/thinking/edit entries, and evicting the user's own
-    // messages from the trailing window makes the dashboard lose the
-    // conversation (the agent_end snapshot then confirms the loss).
-    const excess = buf.length - this.historyLimit;
+    const chars = (e: any) => (typeof e?.text === 'string' ? e.text.length : 0);
+    const excess = Math.max(0, buf.length - this.historyLimit);
+    let total = buf.reduce((n: number, e: any) => n + chars(e), 0);
+    if (excess === 0 && total <= UserSession.HISTORY_MAX_CHARS) return;
+    // Trim from the front, but NEVER drop user entries or a block that is
+    // still streaming: a single turn can produce 50+ tool/thinking entries,
+    // and evicting the user's own messages makes the dashboard lose the
+    // conversation (the next snapshot then confirms the loss).
     const removedIds: any[] = [];
     let removed = 0;
-    let i = 0;
-    while (i < buf.length && removed < excess) {
-      if (buf[i].role === 'user') { i++; continue; }
+    for (let i = 0; i < buf.length && (removed < excess || total > UserSession.HISTORY_MAX_CHARS);) {
+      if (buf[i].role === 'user' || buf[i].streaming) { i++; continue; }
+      total -= chars(buf[i]);
       if (buf[i].id) removedIds.push(buf[i].id);
       buf.splice(i, 1);
       removed++;

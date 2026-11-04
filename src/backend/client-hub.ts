@@ -54,8 +54,8 @@ export function registerClient(user: string, clientId: string, res: ServerRespon
   }
   streams.set(clientId, res);
   log.userSession.debug(`[hub] SSE register client=${clientId} streams=${streams.size}`);
-  // ponytail: stale clientIds (closed tabs) linger in bindings forever; fine
-  // for dashboard scale — clean up here if it ever matters.
+  // Bindings are durable (a reload keeps its tab id) so they cannot be
+  // dropped on close; `setClientSession` caps the map instead.
   res.on('close', () => {
     if (streams.get(clientId) === res) streams.delete(clientId);
     log.userSession.debug(`[hub] SSE close client=${clientId} streams=${streams.size}`);
@@ -68,11 +68,25 @@ export function getClientSession(user: string, clientId: string | null): string 
   return userBindings(user).get(clientId) ?? null;
 }
 
+/** Bindings kept per user; honestly stale tab ids are evicted oldest-first
+ *  once the cap is hit (live tabs re-bind on their next call). */
+const MAX_BINDINGS_PER_USER = 200;
+
 /** Bind a client to a session file (null = detach) */
 export function setClientSession(user: string, clientId: string | null, sessionFile: string | null): void {
   if (!clientId) return;
   log.userSession.debug(`[hub] bind client=${clientId} -> ${sessionFile ?? 'null'}`);
-  userBindings(user).set(clientId, sessionFile);
+  const bindings = userBindings(user);
+  const existed = bindings.has(clientId);
+  bindings.set(clientId, sessionFile);
+  if (!existed && bindings.size > MAX_BINDINGS_PER_USER) {
+    const streams = streamsByUser.get(user);
+    for (const key of bindings.keys()) {
+      if (streams?.has(key)) continue; // a connected tab keeps its binding
+      bindings.delete(key);
+      if (bindings.size <= MAX_BINDINGS_PER_USER) break;
+    }
+  }
 }
 
 /**
