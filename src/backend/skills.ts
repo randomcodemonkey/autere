@@ -328,6 +328,11 @@ export function deleteSkillTemplate(user: string, name: string): SkillResult<nul
  * ponytail: enough for skill packages; swap in a zip lib if zip64 or
  * encrypted archives ever matter.
  */
+/** Inflated-size and entry-count caps: a 64 MB request body can otherwise
+ *  claim gigabytes (deflate ~1000:1) and take the backend down. */
+const MAX_UNZIPPED_BYTES = 64 * 1024 * 1024;
+const MAX_ZIP_ENTRIES = 2000;
+
 export function unzip(buf: Buffer): { path: string; data: Buffer; mode?: number }[] {
   const EOCD = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
   const eocd = buf.lastIndexOf(EOCD);
@@ -335,6 +340,8 @@ export function unzip(buf: Buffer): { path: string; data: Buffer; mode?: number 
   const count = buf.readUInt16LE(eocd + 10);
   let off = buf.readUInt32LE(eocd + 16);
   const out: { path: string; data: Buffer; mode?: number }[] = [];
+  if (count > MAX_ZIP_ENTRIES) throw new Error(`Archive has too many files (max ${MAX_ZIP_ENTRIES})`);
+  let inflated = 0;
   for (let i = 0; i < count; i++) {
     if (off + 46 > buf.length || buf.readUInt32LE(off) !== 0x02014b50) throw new Error('Corrupt zip central directory');
     const method = buf.readUInt16LE(off + 10);
@@ -352,9 +359,18 @@ export function unzip(buf: Buffer): { path: string; data: Buffer; mode?: number 
     const localExtraLen = buf.readUInt16LE(localOff + 28);
     const start = localOff + 30 + localNameLen + localExtraLen;
     const raw = buf.subarray(start, start + size);
-    if (method === 0) out.push({ path: name, data: raw, mode });
-    else if (method === 8) out.push({ path: name, data: inflateRawSync(raw), mode });
-    else throw new Error(`Unsupported zip compression (method ${method}) for ${name}`);
+    let data: Buffer;
+    if (method === 0) data = raw;
+    else if (method === 8) {
+      try {
+        data = inflateRawSync(raw, { maxOutputLength: Math.max(1, MAX_UNZIPPED_BYTES - inflated) });
+      } catch {
+        throw new Error(`Archive expands beyond ${Math.round(MAX_UNZIPPED_BYTES / (1024 * 1024))} MB`);
+      }
+    } else throw new Error(`Unsupported zip compression (method ${method}) for ${name}`);
+    inflated += data.length;
+    if (inflated > MAX_UNZIPPED_BYTES) throw new Error(`Archive expands beyond ${Math.round(MAX_UNZIPPED_BYTES / (1024 * 1024))} MB`);
+    out.push({ path: name, data, mode });
   }
   return out;
 }

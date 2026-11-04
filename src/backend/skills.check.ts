@@ -102,6 +102,16 @@ assert.equal(('error' in importSkillZip(user, 'pdf-tools', '', archive.toString(
 assert.equal(('error' in importSkillZip(user, 'Bad Name', '', archive.toString('base64'))), true);
 assert.equal(('error' in importSkillZip(user, 'broken', '', Buffer.from('not a zip').toString('base64'))), true);
 
+// Zip bomb: a tiny archive that inflates past the 64 MB cap is rejected instead
+// of allocating the whole thing.
+{
+  const bomb = zip([{ path: 'bomb/blob.txt', data: Buffer.alloc(80 * 1024 * 1024), deflate: true }]);
+  assert.ok(bomb.length < 1024 * 1024, `bomb should be small, got ${bomb.length} bytes`);
+  assert.throws(() => unzip(bomb), /expands beyond/);
+  const r = importSkillZip(user, 'bomb', '', bomb.toString('base64'));
+  assert.ok('error' in r && /expands beyond/.test(r.error), `bomb was not rejected: ${JSON.stringify(r)}`);
+}
+
 // ── files: create dir, write, escape rejection, delete ──
 assert.ok('data' in createSkillDir(user, 'notes-skill', 'references'));
 assert.ok('data' in writeSkillFile(user, 'notes-skill', 'references/formats.md', 'md'));
