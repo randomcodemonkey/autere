@@ -30,7 +30,6 @@ import {
   type Role,
 } from './users.js';
 
-export { parseCookies };
 export type { Role } from './users.js';
 
 // ── Auth state ──
@@ -300,11 +299,15 @@ export function getAuthEnabled(): boolean {
   return authEnabled;
 }
 
-/** Remove and return all tokens belonging to a user (invalidates their sessions) */
-export function removeUserTokens(user: string): string[] {
+/**
+ * Remove and return the tokens belonging to a user (invalidates their
+ * sessions). `except` spares one token — the caller's own, so a password
+ * change does not log the person who made it out.
+ */
+export function removeUserTokens(user: string, except?: string | null): string[] {
   const removed: string[] = [];
   for (const [token, entry] of authTokens) {
-    if (entry.user === user) {
+    if (entry.user === user && token !== except) {
       authTokens.delete(token);
       removed.push(token);
     }

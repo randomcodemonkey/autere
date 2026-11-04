@@ -25,7 +25,7 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { isDeepStrictEqual } from 'node:util';
 import { ProcessManager, spawnOpts } from './process-manager.js';
-import { getUser, getUserRole, hasRole, verifyCredentials, checkAuth, requireAuth, authenticateOidc, isOidcAuthenticated, parseCookies, generateToken, addAuthToken, removeAuthToken, removeUserTokens, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, getLastSession, isRegisteredUser, userMustChangePassword, listApiTokens, createApiToken, deleteApiToken } from './auth.js';
+import { getUser, getUserRole, hasRole, verifyCredentials, checkAuth, requireAuth, authenticateOidc, isOidcAuthenticated, generateToken, addAuthToken, removeAuthToken, removeUserTokens, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, getLastSession, isRegisteredUser, userMustChangePassword, listApiTokens, createApiToken, deleteApiToken } from './auth.js';
 import { getClientSession, setClientSession, registerClient, broadcastToUser, viewedSessions, hubUsers } from './client-hub.js';
 import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword, getUserMountDockerSocket, getUserTheme, setUserTheme } from './users.js';
 import { withDedupSections, withJanitorSections } from './extension-handlers.js';
@@ -35,7 +35,7 @@ import { readExtensions } from './extensions.js';
 import { sendJSON, sendFile, getDashboardHTML, readSessionHistory } from './utils.js';
 import { getEnabledModelEntries, scopeModelsForSession } from './utils.js';
 import { isPiImagesInstalled } from './image-models.js';
-import { getPiEnvDir, ensurePiEnv, validateSandboxImage } from './pi-env.js';
+import { getPiEnvDir, ensurePiEnv, resolveSandboxImage, validateSandboxImage } from './pi-env.js';
 import { findPersona, listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
 import { readMessageEntries } from './stream-history.js';
 import { appendSessionInfo, findSessionFileBySessionId } from './sessions.js';
@@ -98,13 +98,13 @@ import { randomUUID, createHash } from 'crypto';
 import { vapidPublicKey, saveSubscription, deleteSubscription, validateSubscription, sendNotification } from './notifications.js';
 import { validateNotificationContent } from '../shared/notifications.js';
 import { API, API_PREFIX } from '../shared/api-paths.js';
-import { TASK_REPORT_MARKER, basePromptText } from '../shared/format.js';
+import { TASK_REPORT_MARKER, basePromptText, parseCookies } from '../shared/format.js';
 import { canRunTaskScripts } from '../shared/tasks.js';
 import { effectiveMessageType, type MessageType } from '../shared/messages.js';
 import { buildOpenApiSpec, type RouteDoc } from './openapi.js';
 import type { SessionInfo } from './types.js';
 
-import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getEditIgnorePaths, getFolderIgnores, getSummaryPromptComposition, getSummaryPromptGuardTokens, getSummaryPromptExtra, deleteUserSettings } from './user-settings.js';
+import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getEditIgnorePaths, getFolderIgnores, getSummaryPromptComposition, getSummaryPromptGuardTokens, getSummaryPromptExtra, deleteUserSettings } from './user-settings.js';
 
 const startsWithLocal = (p: unknown): boolean => String(typeof p === 'string' ? p : (p as { source?: string })?.source || '').startsWith('local:');
 
@@ -150,6 +150,13 @@ function getClientId(req: IncomingMessage): string | null {
   return (req.headers['x-autere-client-id'] as string | undefined)
     || parseCookies(req.headers.cookie || '')['autere-client-id']
     || null;
+}
+
+/** True when the request reached us over TLS — directly (node https) or via a
+ *  proxy that set x-forwarded-proto. Used for the Secure cookie flag. */
+function isHttps(req: IncomingMessage): boolean {
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  return proto === 'https' || !!(req.socket as any)?.encrypted;
 }
 
 /** Reverse-proxy base path: only a plain path segment list is accepted.
@@ -511,7 +518,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       const basePath = detectBasePath(c.req) || detectBasePathFromURL(c.req.url || '/');
       c.res.writeHead(200, {
         'Content-Type': 'application/json',
-        'Set-Cookie': `autere-token=${token}; Path=${basePath || '/'}; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(getAuthTokenExpiry() / 1000)}`,
+        'Set-Cookie': `autere-token=${token}; Path=${basePath || '/'}; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(getAuthTokenExpiry() / 1000)}${isHttps(c.req) ? '; Secure' : ''}`,
       });
       // `token` in the body: non-browser clients (TUI) authenticate with
       // Authorization: Bearer — they can't read the HttpOnly cookie.
@@ -586,6 +593,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       const { oldPassword, newPassword } = await readBody(c.req);
       const err = await changeOwnPassword(c.user, String(oldPassword ?? ''), String(newPassword ?? ''));
       if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
+      // A rotated password must not leave the old 30-day cookies/API tokens
+      // valid; the caller keeps their own session.
+      const kept = removeUserTokens(c.user, getTokenFromRequest(c.req));
+      log.auth.info(`Password changed for "${c.user}" — ${kept.length} other session(s) invalidated`);
       sendJSON(c.res, { success: true });
     },
   });
@@ -642,8 +653,14 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     role: 'admin', tag: 'Users', summary: 'Update a user (role, password reset, allowed directories)',
     handler: async (c, m) => {
       const patch = await readBody(c.req);
-      const err = await updateUser(c.user, decodeURIComponent(m![1]), patch);
+      const name = decodeURIComponent(m![1]);
+      const err = await updateUser(c.user, name, patch);
       if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
+      // An admin password reset invalidates that user's sessions too.
+      if (patch && typeof patch === 'object' && typeof (patch as any).password === 'string') {
+        const removed = removeUserTokens(name);
+        if (removed.length) log.auth.info(`Password reset for "${name}" — ${removed.length} session(s) invalidated`);
+      }
       sendJSON(c.res, { success: true });
     },
   });
@@ -2175,9 +2192,19 @@ ${text.trim()}`).catch((err) => settle(err as Error));
 
   route({
     method: 'PUT', path: RE.mcpServer, template: `${API_PREFIX}/settings/mcp/:name`,
-    role: 'control', tag: 'Settings', summary: 'Create or replace an MCP server (body: server config)',
+    role: 'control', tag: 'Settings', summary: 'Create or replace an MCP server (body: server config) — admin only when pi runs on the host',
     handler: async (c, match) => {
       const name = match?.[1] as string;
+      // An MCP stdio server is a command pi executes. Inside the sandbox that
+      // is the same power the agent already has; on the host it is a shell as
+      // the server user, so it stays an admin capability there.
+      if (getUserRole(c.user) !== 'admin') {
+        const image = resolveSandboxImage(c.user, getUserSetting(c.user, 'piSandboxImage', ''), process.env.AUTERE_SANDBOX_IMAGE);
+        if (!image) {
+          sendJSON(c.res, { success: false, error: 'MCP servers can run commands on this host — configuring them requires the admin role while the sandbox is off' }, 403);
+          return;
+        }
+      }
       const server = await readBody(c.req);
       try {
         setMcpServer(c.user, name, server);

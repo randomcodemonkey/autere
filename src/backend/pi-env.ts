@@ -40,8 +40,10 @@ import { sanitizeUserName } from '../shared/format.js';
 /** Directories to share via symlink (heavy, read-mostly) */
 const SHARED_DIRS = ['npm', 'extensions', 'skills', 'themes', 'bin', 'tmp'];
 
-/** Files copied into each user environment on first use */
-const SEED_FILES = ['settings.json', 'auth.json', 'models-store.json', 'models.json', 'mcp.json'];
+/** Files copied into each user environment on first use. mcp.json is NOT
+ *  seeded: MCP servers are per user (a master entry usually carries env/headers
+ *  secrets, which must not land in every user's settings). */
+const SEED_FILES = ['settings.json', 'auth.json', 'models-store.json', 'models.json'];
 
 /** Strip the legacy npm pi-9router-ext from the env's settings.json packages
  *  list. The 9router provider now comes from the bundled extras/pi-9router-ext

@@ -117,8 +117,10 @@ export function getUserSetting(user: string, key: string, defaultValue?: any): a
   const envKey = key.replace(/([A-Z])/g, '_$1').toUpperCase().replace(/^_/, '');
   if (process.env[envKey] !== undefined) return process.env[envKey];
 
-  // 3. INITIAL_PASSWORD fallback
-  if (key === 'nineRouterPassword' && process.env.INITIAL_PASSWORD) {
+  // 3. INITIAL_PASSWORD fallback — the ADMIN's bootstrap password, so only the
+  //    admin may inherit it: any other user reading it would learn the admin
+  //    credential (GET /settings is chat-role).
+  if (key === 'nineRouterPassword' && user === 'admin' && process.env.INITIAL_PASSWORD) {
     return process.env.INITIAL_PASSWORD;
   }
 
@@ -964,7 +966,7 @@ function getUserSettingsDefaults(user: string): UserSettings {
   // 9router settings (always available)
   const nineRouterConfig = getPiConfig('9router-config.json');
   defaults.nineRouterBaseUrl = nineRouterConfig?.baseUrl || '';
-  defaults.nineRouterPassword = process.env.INITIAL_PASSWORD || '';
+  defaults.nineRouterPassword = user === 'admin' ? (process.env.INITIAL_PASSWORD || '') : '';
 
   // pi-images: selected image model (stored in 9router-config.json)
   defaults.imageModel = nineRouterConfig?.imageModel || '';
@@ -1013,7 +1015,7 @@ function getUserSettingsDefaults(user: string): UserSettings {
   defaults.packages = getEnabledPackages(user);
   defaults.codemode = false;
   defaults.sessionTabLimit = DEFAULT_SESSION_TAB_LIMIT;
-  // MCP servers live in the env's mcp.json (seeded from master); the
+  // MCP servers live in the user's own env mcp.json (never seeded); the
   // settings UI edits that file through the mcp CRUD routes — the value
   // here is only what the schema renderer reads on load.
   try {

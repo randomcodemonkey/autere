@@ -1,13 +1,13 @@
 import { join, dirname } from 'path';
-import { writeFileSync, renameSync } from 'fs';
+import { mkdirSync, writeFileSync, renameSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { readJsonCached, invalidateCache } from './user-settings.js';
 import { getPiEnvDir } from './pi-env.js';
 
 /**
- * Per-user MCP server configuration (pi 1.0 mcp.json). Each user's pi env
- * has its own mcp.json, seeded from the master ~/.pi/agent/mcp.json by
- * ensurePiEnv (SEED_FILES); these helpers read/write that env copy.
+ * Per-user MCP server configuration (pi 1.0 mcp.json) in the user's own pi
+ * env. Never seeded from the master env: a shared entry would carry its
+ * env/headers secrets into every user's settings page.
  */
 export interface McpServerConfig {
   /** stdio */ command?: string;
@@ -39,6 +39,7 @@ function readMcp(user: string): Record<string, McpServerConfig> {
 
 function writeMcp(user: string, servers: Record<string, McpServerConfig>): void {
   const p = mcpPath(user);
+  mkdirSync(dirname(p), { recursive: true });   // the env may not exist yet
   const tmp = join(dirname(p), `.mcp-tmp-${randomUUID()}`);
   writeFileSync(tmp, JSON.stringify({ mcpServers: servers }, null, 2), 'utf-8');
   renameSync(tmp, p);
