@@ -9,7 +9,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import type { ExtensionHandler, ExtensionInfo, ExtensionSection } from './types.js';
 import { PI_DIR } from './constants.js';
-import { PI_ENVS_DIR } from './pi-env.js';
+import { getPiEnvDir, PI_ENVS_DIR } from './pi-env.js';
 import { sanitizeUserName } from '../shared/format.js';
 import { getUserSetting } from './user-settings.js';
 import { log } from './logger.js';
@@ -128,9 +128,9 @@ const nineRouterHandler: ExtensionHandler = {
   displayName: '9Router',
   configPaths: [NINE_ROUTER_CONFIG_PATH],
 
-  async enrich(info: ExtensionInfo): Promise<ExtensionInfo> {
+  async enrich(info: ExtensionInfo, user: string): Promise<ExtensionInfo> {
     // Read config via user settings (falls back to 9router-config.json)
-    const config = getUserSetting('admin', 'nineRouter', {});
+    const config = getUserSetting(user, 'nineRouter', {});
     if (config && typeof config === 'object') {
       info.details = { ...info.details, ...config };
       info.hasConfig = Object.keys(config).length > 0;
@@ -140,9 +140,9 @@ const nineRouterHandler: ExtensionHandler = {
     }
 
     // Check connection status
-    const baseUrl = info.details.baseUrl || getUserSetting('admin', 'nineRouterBaseUrl', '');
+    const baseUrl = info.details.baseUrl || getUserSetting(user, 'nineRouterBaseUrl', '');
     if (baseUrl) {
-      const apiKey = info.details.apiKey || getUserSetting('admin', 'nineRouterApiKey', '');
+      const apiKey = info.details.apiKey || getUserSetting(user, 'nineRouterApiKey', '');
       const result = await checkNineRouterStatus(baseUrl, apiKey);
       info.status = result.ok ? 'ok' : 'error';
       info.statusText = result.ok ? 'Connected' : 'Error';
@@ -155,7 +155,7 @@ const nineRouterHandler: ExtensionHandler = {
       // Fetch recent requests for the details modal
       if (result.ok) {
         // Password from user-scored settings (reads INITIAL_PASSWORD env var for now)
-        const password = getUserSetting('admin', 'nineRouterPassword', '');
+        const password = getUserSetting(user, 'nineRouterPassword', '');
         if (password) {
           const requests = await fetchRecentRequests(baseUrl, password);
           if (requests.length > 0) {
@@ -174,16 +174,13 @@ const nineRouterHandler: ExtensionHandler = {
 
 // ── pi-memory handler ──
 
-// pi-memory storage: $HOME/.pi/agent/memory by default; per-user pi envs get
-// PI_MEMORY_DIR=<env>/memory at spawn, so the admin env's memory lives there.
-// (Handler enrichment follows the 9router handler's admin-scoped pattern.)
-const MEMORY_DIR_CANDIDATES = [
-  join(PI_ENVS_DIR, sanitizeUserName('admin'), 'memory'), // per-user env (via PI_MEMORY_DIR)
-  join(PI_DIR, 'memory'), // master pi agent dir
-];
-
-function memoryDir(): string | null {
-  for (const dir of MEMORY_DIR_CANDIDATES) {
+// pi-memory storage: per-user pi envs get PI_MEMORY_DIR=<env>/memory at spawn,
+// so each user reads their OWN memory. The master ~/.pi/agent/memory dir is a
+// fallback for the admin only — it is the shared agent's data, not a guest's.
+function memoryDir(user: string): string | null {
+  const candidates = [join(getPiEnvDir(user), 'memory')];
+  if (user === 'admin') candidates.push(join(PI_DIR, 'memory'));
+  for (const dir of candidates) {
     if (existsSync(dir)) return dir;
   }
   return null;
@@ -199,11 +196,11 @@ const memoryHandler: ExtensionHandler = {
   name: 'pi-memory',
   displayName: 'Memory',
 
-  async enrich(info: ExtensionInfo): Promise<ExtensionInfo> {
+  async enrich(info: ExtensionInfo, user: string): Promise<ExtensionInfo> {
     // pi-memory is config-less: its state is the memory directory
     // (MEMORY.md + daily/ logs + recovery/ records). Surface that as
     // generic sections for the details modal.
-    const dir = memoryDir();
+    const dir = memoryDir(user);
     if (!dir) {
       info.status = 'neutral';
       info.statusText = 'Not configured';
@@ -281,13 +278,13 @@ const piImagesHandler: ExtensionHandler = {
   displayName: 'Images',
   configPaths: [NINE_ROUTER_CONFIG_PATH],
 
-  async enrich(info: ExtensionInfo): Promise<ExtensionInfo> {
+  async enrich(info: ExtensionInfo, user: string): Promise<ExtensionInfo> {
     const { getRouterConfig, fetchImageModels } = await import('./image-models.js');
-    const config = getRouterConfig('admin');
+    const config = getRouterConfig(user);
     info.configPath = NINE_ROUTER_CONFIG_PATH;
     info.hasConfig = existsSync(NINE_ROUTER_CONFIG_PATH);
 
-    const selectedModel = getUserSetting('admin', 'imageModel', '');
+    const selectedModel = getUserSetting(user, 'imageModel', '');
     if (selectedModel) info.details.selectedModel = selectedModel;
 
     if (!config.baseUrl) {
@@ -336,9 +333,9 @@ const piWebSearchHandler: ExtensionHandler = {
   name: 'pi-web-search',
   displayName: 'Web Search',
 
-  enrich(info: ExtensionInfo): ExtensionInfo {
+  enrich(info: ExtensionInfo, user: string): ExtensionInfo {
     // Config precedence mirrors the extension: per-user env dir first.
-    const envAgentDir = join(PI_ENVS_DIR, sanitizeUserName('admin'));
+    const envAgentDir = getPiEnvDir(user);
     const configPath = process.env.PI_WEB_SEARCH_CONFIG
       || join(existsSync(envAgentDir) ? envAgentDir : PI_DIR, 'web-search.json');
     info.configPath = configPath;

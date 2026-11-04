@@ -12,21 +12,22 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── Scoped models from user settings ──
 
-export function getEnabledModelPatterns(): string[] {
-  return getUserSetting('admin', 'enabledModels', []);
+export function getEnabledModelPatterns(user: string): string[] {
+  return getUserSetting(user, 'enabledModels', []);
 }
 
-/** Filter models to only those matching the enabled/scoped models list */
-export function filterScopedModels(models: any[]): any[] {
-  return filterModelsByPatterns(models, getEnabledModelPatterns());
+/** Filter models to only those matching the CALLER's enabled/scoped list
+ *  (the setting is per user — an admin's list must not scope other users). */
+export function filterScopedModels(models: any[], user: string): any[] {
+  return filterModelsByPatterns(models, getEnabledModelPatterns(user));
 }
 
 /**
  * Filter to enabled models, always keeping the session's actual current model
  * (visible even if it isn't in the enabled list).
  */
-export function scopeModelsForSession(models: any[], current?: { provider?: string; id?: string; name?: string } | null): any[] {
-  const scoped = filterScopedModels(models).map((m: any) => ({
+export function scopeModelsForSession(models: any[], current: { provider?: string; id?: string; name?: string } | null | undefined, user: string): any[] {
+  const scoped = filterScopedModels(models, user).map((m: any) => ({
     provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
   }));
   if (current?.id && !scoped.some((m: any) => m.id === current.id && m.provider === (current.provider || ''))) {
@@ -40,8 +41,8 @@ export function scopeModelsForSession(models: any[], current?: { provider?: stri
  * enabledModels entries are "provider/model" or bare "model" strings; no
  * richer metadata is available without a router dependency.
  */
-export function getEnabledModelEntries(): any[] {
-  return getEnabledModelPatterns().map((p) => {
+export function getEnabledModelEntries(user: string): any[] {
+  return getEnabledModelPatterns(user).map((p) => {
     const slash = p.indexOf('/');
     if (slash > 0) return { provider: p.slice(0, slash), id: p.slice(slash + 1), name: p.slice(slash + 1), thinkingLevel: undefined };
     return { provider: '', id: p, name: p, thinkingLevel: undefined };

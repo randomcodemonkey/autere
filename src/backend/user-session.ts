@@ -862,7 +862,7 @@ export class UserSession {
             if (this.state.availableModels.length > 0)
               // WS consumers (chat model dropdown) are enabled-scoped; the raw
               // catalog stays in state for the settings table
-              this.broadcast({ type: 'models', data: scopeModelsForSession(this.state.availableModels, this.state.sessionState?.model) });
+              this.broadcast({ type: 'models', data: scopeModelsForSession(this.state.availableModels, this.state.sessionState?.model, this.user) });
             return;
           }
           await new Promise((r) => setTimeout(r, 1000));

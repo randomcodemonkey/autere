@@ -17,6 +17,7 @@ import { extensionsState } from './state.js';
 import { PI_ENVS_DIR } from './pi-env.js';
 import { getExtensionHandler } from './extension-handlers.js';
 import { getUserSetting, getEnabledPackages } from './user-settings.js';
+import { listUsers } from './users.js';
 import { log } from './logger.js';
 
 // ── Extension discovery ──
@@ -56,7 +57,12 @@ function discoverNpmExtensions(): DiscoveredExtension[] {
   const globalPackages = (() => {
     try { return JSON.parse(readFileSync(join(PI_DIR, 'settings.json'), 'utf-8'))?.packages || []; } catch { return []; }
   })();
-  const userPackages = getUserSetting('admin', 'packages', []) as (string | { source?: string })[];
+  // Union EVERY user's enabled packages: discovery lists what is installed
+  // on disk, and enabledExtensionsFor() later filters per user — keying
+  // discovery on the admin's list hid packages other users had enabled.
+  const userPackages = listUsers().flatMap(
+    (u: any) => getUserSetting(u.username, 'packages', []) as (string | { source?: string })[],
+  );
   const pkgSource = (p: string | { source?: string }): string => typeof p === 'string' ? p : p?.source || '';
   const packages = new Set([...userPackages.map(pkgSource), ...globalPackages.map(pkgSource)].filter(Boolean));
   const discovered: DiscoveredExtension[] = [];
@@ -220,7 +226,8 @@ const localExtensionNames = new Set<string>();
 
 /** Handler enrichment is expensive (network probes, stats files) and was
  *  being repeated on every poll tick with no client watching. Results are
- *  reused for a short TTL; discovery itself stays cheap.
+ *  reused for a short TTL, keyed per USER: enrichment reads the caller's own
+ *  settings and pi env, so one user's result must never reach another.
  *  ponytail: a fixed TTL, no invalidation hook — a settings change shows up
  *  within a minute, which is what the card polls at anyway. Add a per-name
  *  invalidate call if that ever feels slow. */
@@ -230,6 +237,37 @@ const enrichCache = new Map<string, { at: number; info: ExtensionInfo }>();
 /** Drop enrichment results (e.g. after the extension settings changed). */
 export function invalidateExtensionEnrichment(): void {
   enrichCache.clear();
+}
+
+/**
+ * Enrich the caller's enabled extensions with THEIR status/details. Handler
+ * enrichment is user-scoped (9router probe, memory dir, image models), so it
+ * runs here rather than in the global discovery pass.
+ */
+export async function enrichExtensionsFor(user: string, source: ExtensionInfo[] = enabledExtensionsFor(user)): Promise<ExtensionInfo[]> {
+  const now = Date.now();
+  for (const [key, entry] of enrichCache) if (now - entry.at >= ENRICH_TTL_MS) enrichCache.delete(key);
+  const out: ExtensionInfo[] = [];
+  for (const ext of source) {
+    const handler = getExtensionHandler(ext.name);
+    if (!handler) { out.push(ext); continue; }
+    const key = `${user}::${ext.name}`;
+    const cached = enrichCache.get(key);
+    let info: ExtensionInfo;
+    if (cached) {
+      info = { ...cached.info, configPath: ext.configPath, hasConfig: ext.hasConfig, details: { ...ext.details, ...cached.info.details } };
+    } else {
+      try {
+        info = await handler.enrich({ ...ext, details: { ...ext.details } }, user);
+      } catch (err) {
+        log.extensions.error(`Extension handler error for ${ext.name} (${user}):`, err);
+        info = { ...ext, status: 'error', statusText: 'Error' };
+      }
+      enrichCache.set(key, { at: now, info });
+    }
+    out.push(info);
+  }
+  return out;
 }
 
 export async function readExtensions(): Promise<void> {
@@ -245,14 +283,13 @@ export async function readExtensions(): Promise<void> {
   // to this name, and only the copy pi actually loads should be listed.
   const localIds = new Set(localExts.map((e) => e.id));
   const allDiscovered = [...npmExts.filter((e) => !localIds.has(e.id)), ...localExts];
-  const now = Date.now();
   const seen = new Set<string>();
 
   for (const ext of allDiscovered) {
     seen.add(ext.id);
     const { configPath, config } = findExtensionConfig(ext);
 
-    let info: ExtensionInfo = {
+    const info: ExtensionInfo = {
       name: ext.id,
       displayName: ext.displayName,
       configPath,
@@ -265,29 +302,13 @@ export async function readExtensions(): Promise<void> {
       details: config,
     };
 
-    // Apply handler enrichment if one exists — cached for ENRICH_TTL_MS.
-    const handler = getExtensionHandler(ext.id);
-    if (handler) {
-      const cached = enrichCache.get(ext.id);
-      if (cached && now - cached.at < ENRICH_TTL_MS) {
-        info = { ...cached.info, configPath, hasConfig: configPath !== null, details: { ...config, ...cached.info.details } };
-      } else {
-        try {
-          info = await handler.enrich(info);
-        } catch (err) {
-          log.extensions.error(`Extension handler error for ${ext.id}:`, err);
-          info.status = 'error';
-          info.statusText = 'Error';
-        }
-        enrichCache.set(ext.id, { at: now, info });
-      }
-    }
-
+    // Handler enrichment is per user — see enrichExtensionsFor(); the global
+    // state carries discovery only, so no user's details leak into it.
     extensions.push(info);
   }
 
   // Forget enrichment of extensions that are no longer installed
-  for (const name of [...enrichCache.keys()]) if (!seen.has(name)) enrichCache.delete(name);
+  for (const key of [...enrichCache.keys()]) if (!seen.has(key.slice(key.indexOf('::') + 2))) enrichCache.delete(key);
 
   // Update the shared state array in place
   extensionsState.length = 0;

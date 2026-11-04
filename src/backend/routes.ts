@@ -81,7 +81,7 @@ function piVersion(): string {
 import { getHistoryLimit } from './user-settings.js';
 import { getMcpServers, setMcpServer, deleteMcpServer } from './mcp-config.js';
 import { extensionsState } from './state.js';
-import { enabledExtensionsFor, invalidateExtensionEnrichment } from './extensions.js';
+import { enrichExtensionsFor, invalidateExtensionEnrichment } from './extensions.js';
 import { pathIsIgnored } from '../shared/edit-ignore.js';
 import { userFileRoots, resolveInRoots, browseList, browseRead, browseWrite, browseDelete, type BrowseResult } from './files.js';
 import { listSkills, createSkill, deleteSkill, skillTree, readSkillFile, writeSkillFile, deleteSkillFile, createSkillDir, importSkillZip, readSkillTemplate, writeSkillTemplate, deleteSkillTemplate, type SkillResult } from './skills.js';
@@ -414,8 +414,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         streamHistory,
         historySessionId: disk.id,
         availableSessions: pm.listSessions(user, c.viewed),
-        availableModels: getEnabledModelEntries(),
-        extensions: enabledExtensionsFor(user),
+        availableModels: getEnabledModelEntries(user),
+        extensions: await enrichExtensionsFor(user),
       };
     }
     // Prefer the LIVE in-memory history buffer: mid-turn it holds the
@@ -448,7 +448,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // resolved yet.
       availableModels: await (sess
         ? (sess.state.availableModels.length > 0
-          ? scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model)
+          ? scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model, user)
           : (async () => {
               try {
                 const models = await Promise.race([
@@ -459,10 +459,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
                   provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
                 }));
               } catch { /* wedged provider — ship the fallback list */ }
-              return scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model);
+              return scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model, user);
             })())
-        : getEnabledModelEntries()),
-      extensions: extensionsState,
+        : getEnabledModelEntries(user)),
+      extensions: await enrichExtensionsFor(user),
     };
   };
 
@@ -1293,10 +1293,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
           }
         }
         // Active session: pi's models, scoped — current session model always shown.
-        data = scopeModelsForSession(t.state.availableModels, t.state.sessionState.model);
+        data = scopeModelsForSession(t.state.availableModels, t.state.sessionState.model, c.user);
       } else {
         // Idle session (lazy spawn): no pi process to ask — enabled models only.
-        data = getEnabledModelEntries();
+        data = getEnabledModelEntries(c.user);
       }
       sendJSON(c.res, { success: true, data });
     },
@@ -1745,7 +1745,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // Dedup/janitor stats are per-user (each pi env has its own counters)
       // and are injected per request — global state must never carry them, or
       // any logged-in user could read other users' (user)names and counts.
-      const data = enabledExtensionsFor(c.user).map((e) => {
+      const data = (await enrichExtensionsFor(c.user)).map((e) => {
         if (e.name === 'pi-dedup') {
           const patched = withDedupSections(e, c.user);
           return { ...e, sections: patched.sections, status: patched.status, statusText: patched.statusText };
@@ -2802,21 +2802,33 @@ ${text.trim()}`).catch((err) => settle(err as Error));
   // Both payloads are compared against the last one sent and skipped when
   // unchanged — sessions carry live active/streaming flags and lastActivity,
   // so a real change still reaches every client within one tick.
-  const lastSent = { extensions: '', sessions: new Map<string, string>() };
+  const lastSent = { extensions: '', sessions: new Map<string, string>(), extensionsAt: 0 };
+  /** Enrichment is user-scoped and cached for a minute — push it on the same
+   *  cadence so per-user details (9router status, memory stats) refresh
+   *  without re-probing on every tick. */
+  const ENRICH_PUSH_MS = 60_000;
   readExtensions();
   sessionRefreshInterval = setInterval(async () => {
     const users = hubUsers();
     await readExtensions();
     const extJson = JSON.stringify(extensionsState);
-    if (extJson !== lastSent.extensions) {
+    const now = Date.now();
+    if (extJson !== lastSent.extensions || now - lastSent.extensionsAt >= ENRICH_PUSH_MS) {
       lastSent.extensions = extJson;
+      lastSent.extensionsAt = now;
       // Push the updated extension list to every running process's state
-      // and broadcast to all connected clients of all users.
+      // and broadcast to all connected clients of all users. Enrichment runs
+      // in parallel (one network probe per user, cached for a minute) so a
+      // slow 9router cannot stall this tick.
+      const enriched = new Map(
+        await Promise.all([...new Set([...users, ...pm.allSessions().map((x: any) => x.user)])]
+          .map(async (u) => [u, await enrichExtensionsFor(u)] as const)),
+      );
       for (const session of pm.allSessions()) {
-        session.state.extensionsState = enabledExtensionsFor(session.user);
+        session.state.extensionsState = enriched.get(session.user) ?? [];
       }
       for (const u of users) {
-        broadcastToUser(u, { type: 'extensions', data: enabledExtensionsFor(u) });
+        broadcastToUser(u, { type: 'extensions', data: enriched.get(u) ?? [] });
       }
     }
     // Per-user session refresh, with live active/streaming flags. File-less

@@ -34,7 +34,8 @@ export interface ExtensionHandler {
    * Called to enrich the extension info with custom status/details.
    * Return the modified info, or null to skip this extension.
    */
-  enrich(info: ExtensionInfo): Promise<ExtensionInfo> | ExtensionInfo;
+  /** Enrich with the CALLING user's data — never another user's env or settings. */
+  enrich(info: ExtensionInfo, user: string): Promise<ExtensionInfo> | ExtensionInfo;
 }
 
 // ── Session types ──
