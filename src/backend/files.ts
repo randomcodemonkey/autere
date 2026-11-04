@@ -9,9 +9,12 @@
 
 import { constants as fsConstants, realpathSync } from 'fs';
 import { open, readdir, lstat, stat, mkdir, unlink, writeFile } from 'fs/promises';
+import { mkdirSync } from 'fs';
 import { resolve, dirname, join } from 'path';
 import { homedir } from 'os';
-import { getUserAllowedDirs } from './users.js';
+import { getUserAllowedDirs, getUserRole } from './users.js';
+import { AUTERE_DIR, AUTH_TOKENS_FILE, PI_DIR, USERS_FILE } from './constants.js';
+import { sanitizeUserName } from '../shared/format.js';
 import { log } from './logger.js';
 
 export interface FileRoot { path: string; access: 'read' | 'rw' }
@@ -24,10 +27,48 @@ export type BrowseResult<T = any> = { data: T } | { error: string; status: numbe
 const MAX_LIST_ENTRIES = 500;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
+/**
+ * Paths no file-browser request may touch, whatever the roots say: autere's
+ * own state (auth tokens for EVERY user, the user registry) and pi's
+ * credential store. A chat-role user with the default $HOME root could
+ * otherwise read ~/.autere/autere-auth-tokens.json and become admin.
+ */
+let deniedCache: { dirs: string[]; files: string[] } | null = null;
+function deniedPaths(): { dirs: string[]; files: string[] } {
+  deniedCache ??= {
+    dirs: [safeReal(resolve(AUTERE_DIR)), safeReal(resolve(PI_DIR))],
+    files: [safeReal(resolve(AUTH_TOKENS_FILE)), safeReal(resolve(USERS_FILE))],
+  };
+  return deniedCache;
+}
+
+/** Per-user work dirs for users without allowedDirs (inside AUTERE_DIR, so
+ *  exempted from the state denial — they only hold user files). */
+function workDirFor(user: string): string {
+  return join(AUTERE_DIR, 'work', sanitizeUserName(user));
+}
+
+function isDenied(abs: string): boolean {
+  const { dirs, files } = deniedPaths();
+  if (files.includes(abs)) return true;
+  if (under(safeReal(resolve(AUTERE_DIR, 'work')), abs)) return false;
+  return dirs.some((d) => under(d, abs));
+}
+
+/** Where a user's files are when the admin configured no allowedDirs:
+ *  the admin gets $HOME (single-user dashboard as before), everyone else a
+ *  dedicated work dir — never the whole home, which holds the token store. */
+function defaultRootFor(user: string): FileRoot {
+  if (getUserRole(user) === 'admin') return { path: homedir(), access: 'rw' };
+  const work = workDirFor(user);
+  try { mkdirSync(work, { recursive: true, mode: 0o700 }); } catch { /* listing reports the error */ }
+  return { path: work, access: 'rw' };
+}
+
 function rootsFor(user: string): FileRoot[] {
   const dirs = getUserAllowedDirs(user);
   if (dirs.length > 0) return dirs;
-  return [{ path: homedir(), access: 'rw' }];
+  return [defaultRootFor(user)];
 }
 
 /** True if abs is root itself or somewhere under it (plain string prefix) */
@@ -68,11 +109,12 @@ export function resolveInRoots(user: string, path: string): { abs: string; acces
     }
   }
   if (!best) return { error: 'Path is outside your file roots', status: 403 };
+  if (isDenied(abs)) return { error: 'Path is outside your file roots', status: 403 };
   return best;
 }
 
 export function userFileRoots(user: string): FileRoot[] {
-  return rootsFor(user).map((r) => ({ ...r }));
+  return rootsFor(user).filter((r) => !isDenied(safeReal(resolve(r.path)))).map((r) => ({ ...r }));
 }
 
 /** One directory listing: readdir + concurrent lstat (async — a 500-entry
