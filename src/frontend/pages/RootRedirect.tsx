@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API } from '../api-paths';
 import { apiJSON, apiBody, JSON_HEADERS } from '../api';

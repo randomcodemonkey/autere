@@ -58,7 +58,7 @@ function formatTime(ts?: number): string {
   return new Date(ts).toLocaleString();
 }
 
-function formatDuration(rec: TaskRunRecord): string {
+function formatRunDuration(rec: TaskRunRecord): string {
   if (!rec.finishedAt) return '';
   const s = Math.max(0, Math.round((rec.finishedAt - rec.startedAt) / 1000));
   if (s < 60) return `${s}s`;
@@ -580,7 +580,7 @@ export const ScheduledTasksCard: React.FC<ScheduledTasksCardProps> = ({ sseConne
                                 </td>
                                 <td data-label="Started"><span className="sched-run-time">{formatTime(rec.startedAt)}</span></td>
                                 <td data-label="Trigger"><span className="sched-run-trigger">{rec.trigger}</span></td>
-                                <td data-label="Duration"><span className="sched-run-duration">{formatDuration(rec)}</span></td>
+                                <td data-label="Duration"><span className="sched-run-duration">{formatRunDuration(rec)}</span></td>
                                 <td data-label="Log"><button className="btn btn-row sched-run-log-btn" onClick={() => handleViewLog(rec)}>Log</button></td>
                               </tr>
                             ))}

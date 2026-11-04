@@ -1,3 +1,5 @@
+export type { SettingField, SettingSection } from '../../shared/settings.js';
+
 export interface SessionState {
   model: { provider: string; id: string; name: string } | null;
   thinkingLevel: string;
@@ -83,20 +85,7 @@ export interface StreamMessage {
   id?: string;
 }
 
-export interface ActiveTool {
-  id: string;
-  name: string;
-  cmd: string;
-  args: any;
-  startTime: number;
-}
 
-export interface RecentTool {
-  name: string;
-  isError: boolean;
-  timestamp: number;
-  args: any;
-}
 
 export interface ExtensionSection {
   header: string;
@@ -121,31 +110,6 @@ export interface AvailableModel {
   thinkingLevel?: string;
 }
 
-export interface SettingField {
-  key: string;
-  label: string;
-  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel' | 'folderIgnores' | 'mcpServers';
-  min?: number;
-  max?: number;
-  placeholder?: string;
-  options?: { value: string; label: string }[];
-  description?: string;
-  listPlaceholder?: string;
-  listAddLabel?: string;
-  /** Renderer config for type 'perModel': one control per entry of enabledModels */
-  perModel?: {
-    control: 'select' | 'number';
-    options?: { value: string; label: string }[];
-    min?: number;
-    max?: number;
-  };
-}
-
-export interface SettingSection {
-  id: string;
-  label: string;
-  fields: SettingField[];
-}
 
 export interface Persona {
   id: string;

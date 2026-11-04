@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { API } from '../../shared/api-paths';
 import { THEMES, applyTheme, activeTheme, type ThemeId } from '../theme';
 import { apiSend } from '../api';

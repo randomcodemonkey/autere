@@ -108,10 +108,6 @@ export class ProcessManager {
     this.resumeLastSession = options.resumeLastSession !== false;
   }
 
-  private key(user: string, sessionFile: string): string {
-    return `${user}::${sessionFile}`;
-  }
-
   /**
    * Get the running process for a session file, or spawn one bound to it.
    * sessionFile=null spawns a fresh session (pi picks id/file; the entry is

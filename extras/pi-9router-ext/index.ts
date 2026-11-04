@@ -42,6 +42,7 @@ import {
 	webRoutesSummary,
 	type NineRouterWebRoute,
 } from "./web.js";
+import { fetchWithTimedBody } from "./fetch.js";
 
 // =============================================================================
 // Types
@@ -371,43 +372,6 @@ function clearDiscoveryCache(config: NineRouterConfig) {
 // =============================================================================
 // Fetch Helpers
 // =============================================================================
-
-function createTimeoutSignal(signal: AbortSignal | undefined, timeoutMs: number) {
-	const controller = new AbortController();
-	const abort = () => controller.abort();
-	const timer = setTimeout(abort, timeoutMs);
-	timer.unref?.();
-
-	if (signal?.aborted) {
-		abort();
-	} else {
-		signal?.addEventListener("abort", abort, { once: true });
-	}
-
-	return {
-		signal: controller.signal,
-		cleanup() {
-			clearTimeout(timer);
-			signal?.removeEventListener("abort", abort);
-		},
-	};
-}
-
-async function fetchWithTimedBody<T>(
-	url: string,
-	init: RequestInit = {},
-	signal: AbortSignal | undefined,
-	timeoutMs: number,
-	consume: (response: Response) => Promise<T>,
-): Promise<T> {
-	const timeout = createTimeoutSignal(signal, timeoutMs);
-	try {
-		const response = await fetch(url, { ...init, signal: timeout.signal });
-		return await consume(response);
-	} finally {
-		timeout.cleanup();
-	}
-}
 
 function errorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);

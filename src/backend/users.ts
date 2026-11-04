@@ -223,7 +223,7 @@ export function listUsers(): PublicUser[] {
 }
 
 /** Admin guards: last-admin and self protections shared by update/delete */
-function guardAdminRemoval(actor: string, name: string, removingAdmin: boolean): string | null {
+function guardAdminRemoval(name: string, removingAdmin: boolean): string | null {
   const admins = Object.keys(registry).filter((u) => registry[u].role === 'admin');
   if (removingAdmin && admins.length <= 1 && admins.includes(name)) {
     return 'Cannot remove the last admin account';
@@ -274,7 +274,7 @@ export async function updateUser(actor: string, username: string, patch: {
     // Last-admin guard: demoting the last admin would lock everyone out.
     const demotingAdmin = entry.role === 'admin' && patch.role !== 'admin';
     if (demotingAdmin) {
-      const gErr = guardAdminRemoval(actor, username, true);
+      const gErr = guardAdminRemoval(username, true);
       if (gErr) return gErr;
     }
   }
@@ -314,7 +314,7 @@ export function deleteUser(actor: string, username: string): string | null {
   const entry = registry[username];
   if (!entry) return 'User not found';
   if (actor === username) return 'Cannot delete your own account';
-  const gErr = guardAdminRemoval(actor, username, entry.role === 'admin');
+  const gErr = guardAdminRemoval(username, entry.role === 'admin');
   if (gErr) return gErr;
   delete registry[username];
   saveRegistry();

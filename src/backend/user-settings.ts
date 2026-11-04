@@ -26,6 +26,7 @@ import { isPiImagesInstalled } from './image-models.js';
 import { matchModelMap } from '../shared/format.js';
 import { log } from './logger.js';
 import { writePrivateFile } from './private-file.js';
+import type { SettingSection } from '../shared/settings.js';
 
 interface UserSettings {
   [key: string]: any;
@@ -33,31 +34,6 @@ interface UserSettings {
 
 // ── Settings schema types ──
 
-export interface SettingField {
-  key: string;
-  label: string;
-  type: 'text' | 'password' | 'number' | 'toggle' | 'select' | 'list' | 'packages' | 'textarea' | 'perModel' | 'folderIgnores' | 'mcpServers';
-  min?: number;
-  max?: number;
-  placeholder?: string;
-  options?: { value: string; label: string }[];
-  description?: string;
-  listPlaceholder?: string;
-  listAddLabel?: string;
-  /** Renderer config for type 'perModel': one control per entry of enabledModels */
-  perModel?: {
-    control: 'select' | 'number';
-    options?: { value: string; label: string }[];
-    min?: number;
-    max?: number;
-  };
-}
-
-export interface SettingSection {
-  id: string;
-  label: string;
-  fields: SettingField[];
-}
 
 // ── Cache ──
 
