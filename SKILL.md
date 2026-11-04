@@ -222,7 +222,10 @@ src/backend/
                         # kind, {title, body, path}) for four kinds (explicit /
                         # taskStart / turnEnd / allDone); 256-char limit lives in
                         # shared/notifications.ts (backend + tests)
-  extension-handlers.ts # Named extension handlers (9router status, memory, dedup)
+  extension-handlers.ts # Named extension handlers (9router status, memory, dedup);
+                        # enrich(info, user) reads the CALLING user's settings/env
+                        # only — applied per user by extensions.ts
+                        # enrichExtensionsFor() (check: extension-enrich.check.ts)
   stream-history.ts     # StreamMessage building, extractImages (shared)
   shared/format.ts      # Formatting shared with frontend
   image-models.ts       # Image-capable model discovery (9router)
@@ -374,7 +377,8 @@ SKILL.md               # This file — canonical, in-repo
   `npx tsx src/backend/agui.check.ts
 npx tsx src/backend/message-end.check.ts
 npx tsx src/backend/idle-timeout.check.ts`): `stream_delta` -> TEXT/REASONING
-  message events (cumulative text -> deltas), `tool_start`/`tool_end` +
+  message events (one-to-one: the event already carries only the new chunk;
+  a `history_upsert` snapshot passes through the same helper with full=true), `tool_start`/`tool_end` +
   `toolResult` history entries -> TOOL_CALL_START/ARGS/END/RESULT, `status`/
   `stats` -> STATE_SNAPSHOT (deduped). `turn_settled` (internal, emitted on
   agent_settled) -> RUN_FINISHED; `agent_end` cannot be used because it also
@@ -394,9 +398,11 @@ npx tsx src/backend/idle-timeout.check.ts`): `stream_delta` -> TEXT/REASONING
 ## Streaming & Image Pipeline (important invariants)
 
 - **Per-token updates**: `text_delta`/`thinking_delta` broadcast a tiny
-  `stream_delta` payload (role + entry text only) — NEVER the full history
-  buffer. Re-broadcasting history with multi-MB base64 images on every token
-  caused multi-GB memory spikes, event-loop lag, OOM, and client freezes.
+  `stream_delta` payload — `{role, id, text}` where `text` is ONLY the new
+  chunk (the client appends). Re-sending the message so far made a long answer
+  O(n^2) bytes; every `STREAM_SNAPSHOT_CHARS` (8 KB) the backend sends a full
+  `history_upsert` instead, which heals a lost delta. NEVER broadcast the full
+  history buffer per token — multi-MB base64 images caused OOM/client freezes.
 - **Full snapshots** (`stream_history`) carry images; sent on load, entry
   creation, message_end, tool events, session switch.
 - **Streamed tool output** travels as `tool_output` deltas (`{id, text,
@@ -580,6 +586,16 @@ The admin account comes from `AUTERE_ADMIN_USER`/`AUTERE_ADMIN_PASSWORD`
 shared `user` account (monitor password) has the `control` role and only
 exists when a monitor password is configured.
 
+## MCP servers
+
+Per user, in `~/.autere/pi-envs/<user>/mcp.json` (`mcp-config.ts`, routes
+`GET/PUT /api/v1/settings/mcp/:name`). It is **not** on the env `SEED_FILES`
+list: a master entry usually carries `env`/`headers` secrets, and seeding it
+put the admin's tokens in every user's settings page. Writes create the env
+dir, so a user who never ran pi can still configure servers (check:
+`npx tsx src/backend/mcp-config.check.ts`). `GET` strips `env`/`headers`/
+`oauth`; stdio config is `control` inside the sandbox, `admin` otherwise.
+
 ## User management
 
 Admin-managed account registry in `~/.autere/monitor-users.json`
@@ -597,7 +613,13 @@ delete the file to re-seed). Passwords are scrypt hashes (`s2:salt:hash`).
 - Endpoints: `GET/POST /api/users`, `POST/DELETE /api/users/<name>` (admin),
   `POST /api/auth/change-password` (self, any role).
 - File browser: `GET /api/browse/roots|list|read`, `POST /api/browse/write|delete`
-  (src/backend/files.ts). Roots = the user's `allowedDirs`, fallback `$HOME`;
+  (src/backend/files.ts). Roots = the user's `allowedDirs`; without any, the
+  admin gets `$HOME` and everyone else a dedicated `~/.autere/work/<user>` dir
+  (a chat user with a `$HOME` root could read `autere-auth-tokens.json` and
+  become admin). `AUTERE_DIR` (except `work/`), `PI_DIR`, the token file and
+  the users file are refused for every user/root — `resolveInRoots` is the one
+  gate, symlinks are realpath-resolved first. self-check:
+  `npx tsx src/backend/file-roots.check.ts`.
   list/read are chat-level, write/delete need `control` AND an `rw` root,
   enforced server-side per request.
 - Forced password change: new users (and admin password resets) get
