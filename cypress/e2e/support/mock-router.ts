@@ -162,7 +162,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
             // "long output" → a bash call that keeps producing output, so the
             // streamed tool-call card can be expanded mid-run.
             if (toolCalls.length === 0 && /long output/i.test(lastUserText) && lastRole !== 'tool') {
-                toolCalls.push({ id: 'mock-call-1', name: 'bash', arguments: { command: 'for i in $(seq 1 120); do echo line $i; sleep 0.1; done' } });
+                toolCalls.push({ id: 'mock-call-1', name: 'bash', arguments: { command: 'for i in $(seq 1 120); do echo line $i; sleep 0.15; done' } });
             }
             if (toolCalls.length === 0 && /command|use bash|tool/i.test(lastUserText) && lastRole !== 'tool') {
                 toolCalls.push({ id: 'mock-call-1', name: 'bash', arguments: { command: 'echo hello' } });

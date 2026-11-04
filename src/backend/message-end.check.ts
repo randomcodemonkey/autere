@@ -113,5 +113,26 @@ onEvent({ type: 'queue_update', steering: ['still queued\n\n[Attached file saved
 assert.notEqual(s.history().find((e: any) => e.text === 'queued question').pending, true);
 assert.equal(s.history().find((e: any) => e.text === 'still queued').pending, true);
 
+// Cancelling a queued message: pi's clearQueue() emits an empty queue_update
+// before its RPC response, which must not retire the other badges; the
+// cancelled copy must leave the chat instead of looking sent.
+s.rpc.clearQueue = async () => {
+  onEvent({ type: 'queue_update', steering: [], followUp: [] }); // pi's own emission
+  return { steering: ['drop me', 'keep me'], followUp: [] };
+};
+const requeued: string[] = [];
+s.rpc.steer = async (t: string) => { requeued.push(t); };
+s.rpc.followUp = async () => {};
+s.addUserEntry('drop me', true);
+s.addUserEntry('keep me', true);
+const removed: string[] = [];
+s.broadcast = (m: any) => { if (m.type === 'history_remove') removed.push(...m.data); };
+assert.equal(await s.cancelPending('drop me'), true);
+const texts = s.history().filter((e: any) => e.role === 'user').map((e: any) => e.text);
+assert.ok(!texts.includes('drop me'), 'cancelled message stayed in chat');
+assert.equal(removed.length, 1, 'client was not told to drop the cancelled message');
+assert.equal(s.history().find((e: any) => e.text === 'keep me').pending, true, 'remaining queued message lost its pending marker');
+assert.deepEqual(requeued, ['keep me']);
+
 try { await s.stop(); } catch { /* never started */ } // clears the idle timer
 console.log('message-end.check: OK');

@@ -549,10 +549,33 @@ export class UserSession {
    * — the chat entry would stay on PENDING after the answer has arrived.
    */
   private retireConsumedPending(steering: unknown, followUp: unknown): void {
+    // pi's clearQueue() emits an empty queue_update; that is our own cancel or
+    // abort, not consumption — retiring here would strip the PENDING marker off
+    // messages that are about to be re-queued.
+    if (this.expectEmptyQueueUpdate) {
+      this.expectEmptyQueueUpdate = false;
+      return;
+    }
     const queued = new Set([...queuedTexts(steering), ...queuedTexts(followUp)]);
     const retired = this.history().filter((e: any) => e.pending && !queued.has(e.text));
     for (const e of retired) e.pending = false;
     this.broadcastHistoryUpsert(retired);
+  }
+
+  /** Ids of the queued (still pending) user copies in the history buffer */
+  private pendingUserIds(filter: (entry: any) => boolean = () => true): string[] {
+    return this.history().filter((e: any) => e.role === 'user' && e.pending && filter(e)).map((e: any) => e.id);
+  }
+
+  /** Drop entries from the buffer and tell clients to drop them too */
+  private dropHistoryEntries(ids: string[]): void {
+    if (ids.length === 0) return;
+    const buf = this.history();
+    const kept = buf.filter((e: any) => !ids.includes(e.id));
+    if (kept.length === buf.length) return;
+    this.historyBuf.length = 0;
+    this.historyBuf.push(...kept);
+    this.broadcast({ type: 'history_remove', sessionId: this.state.sessionState.sessionId, data: ids });
   }
 
   /**
@@ -566,22 +589,13 @@ export class UserSession {
    * (same ceiling as cancelPending). Round-trip images if that matters.
    */
   async abortAndRequeue(): Promise<void> {
+    const staleIds = this.pendingUserIds();
+    this.expectEmptyQueueUpdate = true;
     const cleared = await this.rpc.clearQueue();
     await this.rpc.abort();
     const texts = [...cleared.steering, ...cleared.followUp].filter(Boolean);
     if (texts.length === 0) return;
-    const sessionId = this.state.sessionState.sessionId;
-    const buf = this.history();
-    const dropped: string[] = [];
-    const wanted = texts.map(basePromptText);
-    for (let i = buf.length - 1; i >= 0; i--) {
-      const e = buf[i];
-      if (e.role === 'user' && (e as any).pending && wanted.includes(e.text)) {
-        dropped.push(e.id);
-        buf.splice(i, 1);
-      }
-    }
-    if (dropped.length) this.broadcast({ type: 'history_remove', sessionId, data: dropped });
+    this.dropHistoryEntries(staleIds);
     // Session is idle after abort — prompt() starts the new turn.
     for (const text of texts) {
       this.addUserEntry(basePromptText(text));
@@ -597,6 +611,11 @@ export class UserSession {
    * would lose them. Add image round-tripping if that ever matters.
    */
   async cancelPending(text: string): Promise<boolean> {
+    const base = basePromptText(text);
+    // Capture the pending copy first: the queue_update clearQueue() emits
+    // retires every pending flag, so matching on it afterwards finds nothing.
+    const queuedEntryId = this.pendingUserIds((e) => basePromptText(e.text) === base);
+    this.expectEmptyQueueUpdate = true;
     const cleared = await this.rpc.clearQueue();
     let cancelled = false;
     const prune = (arr: string[]) => {
@@ -608,17 +627,9 @@ export class UserSession {
     for (const t of cleared.steering) await this.rpc.steer(t);
     for (const t of cleared.followUp) await this.rpc.followUp(t);
     if (!cancelled) return false;
-    // Drop the pending copy from the history buffer (optimistic client
-    // copies are removed by the caller)
-    const sessionId = this.state.sessionState.sessionId;
-    const buf = this.history();
-    for (let i = buf.length - 1; i >= 0; i--) {
-      if (buf[i].role === 'user' && (buf[i] as any).pending && buf[i].text === basePromptText(text)) {
-        const [removed] = buf.splice(i, 1);
-        this.broadcast({ type: 'history_remove', sessionId, data: [removed.id] });
-        break;
-      }
-    }
+    // Drop the pending copy from the history buffer: the message never reached
+    // the model, so it must not stay in chat looking sent.
+    this.dropHistoryEntries(queuedEntryId);
     return true;
   }
 
@@ -1838,6 +1849,8 @@ export class UserSession {
 
   /** Model change requested mid-turn — applied at agent_settled. */
   private pendingModel: { provider: string; modelId: string } | null = null;
+  /** Our own clearQueue() emits an empty queue_update — see retireConsumedPending */
+  private expectEmptyQueueUpdate = false;
 
   /**
    * Change the session model. Mid-turn switches leave the new model with a
