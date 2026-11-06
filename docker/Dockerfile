@@ -17,6 +17,8 @@ USER root
 ENV DEBIAN_FRONTEND=noninteractive
 # ubuntu:resolute ships ca-certificates without a usable trust bundle
 # (postinst trigger bug) — reinstall before ANY TLS fetch.
+# sbt is pinned to the last 1.x release: sbt 2.x is a different launcher and
+# would change how existing 1.x projects are resolved.
 RUN apt-get -y -qq update \
     && apt-get install -y -qq --reinstall ca-certificates \
     && apt-get -y -qq upgrade \
@@ -36,7 +38,7 @@ RUN apt-get -y -qq update \
       less \
       maven \
       netcat-openbsd \
-      openjdk-21-jdk-headless \
+      openjdk-25-jdk-headless \
       openssh-client \
       python3 \
       ripgrep \
@@ -56,7 +58,7 @@ RUN apt-get -y -qq update \
       docker-ce-cli \
       docker-buildx-plugin \
       nodejs \
-      sbt \
+      sbt=1.13.1 \
     && rm -rf /usr/lib/jvm/*/jmods \
     && apt-get -y clean \
     && rm -rf /var/lib/apt/lists/*
