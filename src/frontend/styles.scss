@@ -1283,6 +1283,8 @@ body {
 .files-row .files-name {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;   /* a long name shrinks, it must not wrap the row */
+  min-width: 0;          /* flex child: allow shrinking below content width */
 }
 
 .files-row.files-dir .files-name {
@@ -5340,6 +5342,10 @@ textarea.settings-input {
   color: inherit;
   cursor: pointer;
   font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .skills-tree-item.dir {

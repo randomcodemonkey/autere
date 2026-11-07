@@ -104,7 +104,9 @@ describe('SkillsSection', () => {
     cy.contains('.data-table tbody tr', 'pdf-tools').contains('button', 'Edit').click();
     cy.get('.modal-skills-edit').should('exist');
     cy.get('.modal-skills-edit textarea').should('contain.value', '# pdf-tools');
-    cy.get('.modal-skills-edit').contains('.skills-tree-item', 'extract.sh').should('exist');
+    cy.get('.modal-skills-edit').contains('.skills-tree-item', 'extract.sh').should('exist')
+      // The file name can be clipped in the narrow tree — hover shows the path.
+      .and('have.attr', 'title', 'scripts/extract.sh');
     cy.get('.modal-skills-edit textarea').type('\nmore');
     cy.get('.modal-skills-edit').contains('button', 'Save').click();
     cy.window({ log: false }).then((win) => {

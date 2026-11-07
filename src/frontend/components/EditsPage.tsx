@@ -621,7 +621,7 @@ const FileBrowser: React.FC<{
               }}
             >
             <span className="files-chev">{r.type !== 'file' ? (r.expanded ? '▾' : '▸') : ''}</span>
-            <span className={`files-name${gitStatusFor(r.path) ? ` files-git-${gitStatusFor(r.path)}` : ''}`}>{r.name}{!reposMode && isModified(r.path) && <span className="files-mod-dot" title="Modified this session">•</span>}</span>
+            <span className={`files-name${gitStatusFor(r.path) ? ` files-git-${gitStatusFor(r.path)}` : ''}`} title={r.name}>{r.name}{!reposMode && isModified(r.path) && <span className="files-mod-dot" title="Modified this session">•</span>}</span>
             {r.type === 'root' && (
               <>
                 {/* ReposMode roots: Status opens the details pane (repo details

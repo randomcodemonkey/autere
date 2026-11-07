@@ -369,6 +369,7 @@ const SkillEditModal: React.FC<{ skill: SkillInfo; onClose: () => void }> = ({ s
                   type="button"
                   className={`skills-tree-item${entry.path === path ? ' active' : ''}${entry.type === 'dir' ? ' dir' : ''}`}
                   style={{ paddingLeft: `${8 + entry.path.split('/').length * 10}px` }}
+                  title={entry.path}
                   onClick={() => { if (entry.type === 'file') loadFile(entry.path); }}
                 >
                   {entry.type === 'dir' ? '▸ ' : ''}{entry.path.split('/').pop()}

@@ -21,7 +21,7 @@ interface Call { url: string; opts?: any }
  * SRC_ENTRIES, other dirs ROOT_ENTRIES. File read returns "hello world".
  * Every call is recorded for assertions.
  */
-function stubFetch(): { calls: Call[]; fetch: any } {
+function stubFetch(fixture: { files?: any[] } = {}): { calls: Call[]; fetch: any } {
   const calls: Call[] = [];
   const fetch = (u: any, opts?: any) => {
     calls.push({ url: String(u), opts });
@@ -30,7 +30,9 @@ function stubFetch(): { calls: Call[]; fetch: any } {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true, data: [ROOT] }) });
     }
     if (s.includes('/api/v1/browse/list')) {
-      const list = decodeURIComponent(s.split('path=')[1] || '').endsWith('/src') ? SRC_ENTRIES : ROOT_ENTRIES;
+      const list = decodeURIComponent(s.split('path=')[1] || '').endsWith('/src')
+        ? SRC_ENTRIES
+        : (fixture.files ?? ROOT_ENTRIES);
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true, data: list }) });
     }
     if (s.includes('/api/v1/browse/read')) {
@@ -278,6 +280,21 @@ describe('EditsPage — Repositories tab', () => {
       const post = s.calls.find((c) => c.opts?.method === 'POST' && c.url.includes('/git/repos/init'));
       expect(post, 'init POST happened').to.be.ok;
       expect(JSON.parse(post!.opts.body)).to.deep.eq({ path: '/home/test/plain', remote: 'http://git:3000/xenic/newrepo.git' });
+    });
+  });
+
+  it('truncates a long name with an ellipsis and keeps it in the title', () => {
+    const long = 'a-very-long-file-name-that-cannot-possibly-fit-in-the-tree.scss';
+    const s = stubFetch({ files: [{ name: long, type: 'file', size: 1, mtime: 1 }] });
+    cy.stub(window, 'fetch').callsFake(s.fetch);
+    mountEdits(<div style={{ height: 500, width: 240, display: 'flex', flexDirection: 'column' }}><EditsPage sessionId="s1" userRole="control" /></div>);
+    cy.contains('.files-name', 'a-very-long', { timeout: 10000 }).then(($el) => {
+      const el = $el[0] as HTMLElement;
+      expect(el.getAttribute('title'), 'full name on hover').to.eq(long);
+      const cs = getComputedStyle(el);
+      expect(cs.textOverflow).to.eq('ellipsis');
+      expect(cs.whiteSpace).to.eq('nowrap');
+      expect(el.scrollWidth, 'name is actually clipped').to.be.greaterThan(el.clientWidth);
     });
   });
 });
