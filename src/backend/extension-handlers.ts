@@ -730,18 +730,20 @@ function mergeTotals(into: CopilotTotals, t: CopilotTotals): void {
 	into.costUsd += t.costUsd;
 }
 
-export function copilotStatsFor(user: string): { session: CopilotTotals; month: CopilotTotals } {
+/** `all` sums every session file in the user's env (lifetime, not the current
+ *  session — this endpoint is per user, not per session). */
+export function copilotStatsFor(user: string): { all: CopilotTotals; month: CopilotTotals } {
 	const monthKey = new Date().toISOString().slice(0, 7);
-	const session = emptyTotals();
+	const all = emptyTotals();
 	const month = emptyTotals();
 	for (const s of readSessions(user)) {
 		const usage = usageOfFile(s.sessionFile);
 		if (!usage) continue;
-		mergeTotals(session, usage.totals);
+		mergeTotals(all, usage.totals);
 		const m = usage.byMonth.get(monthKey);
 		if (m) mergeTotals(month, m);
 	}
-	return { session: finalize(session), month: finalize(month) };
+	return { all: finalize(all), month: finalize(month) };
 }
 
 const piCopilotHandler: ExtensionHandler = {
@@ -751,7 +753,7 @@ const piCopilotHandler: ExtensionHandler = {
 		// User-agnostic enrichment — real per-user numbers swap in per request
 		// (same pattern as pi-dedup/pi-janitor).
 		info.sections = [
-			{ header: 'AI credit usage (this env)', items: [{ 'Copilot turns': 0, 'Input tokens': 0, 'Output tokens': 0, 'Session usage': '0 AIC', 'This month': '0 AIC' }] },
+			{ header: 'AI credit usage (this env)', items: [{ 'Copilot turns': 0, 'Input tokens': 0, 'Output tokens': 0, 'All sessions': '0 AIC', 'This month': '0 AIC' }] },
 		];
 		return info;
 	},

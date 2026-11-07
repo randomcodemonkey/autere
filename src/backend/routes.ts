@@ -1773,14 +1773,16 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         }
         if (e.name === 'copilot-credit-usage') {
           // Real per-user numbers (reads the CALLER's session files only)
-          const { session, month } = copilotStatsFor(c.user);
+          const { all, month } = copilotStatsFor(c.user);
           const aic = (t: CopilotTotals) => `${Math.round(t.credits).toLocaleString()} AIC`;
           return {
             ...e,
             sections: [{
               header: 'Copilot AI credit usage',
               items: [
-                { 'Copilot turns': session.turns, 'Input tokens': session.input, 'Output tokens': session.output, 'Cache-read tokens': session.cacheRead, 'This session': aic(session), 'This month (all sessions)': aic(month) },
+                // `all` is every session file in this user's env, not the live
+                // session — the endpoint is per user, so label it as a total.
+                { 'Copilot turns': all.turns, 'Input tokens': all.input, 'Output tokens': all.output, 'Cache-read tokens': all.cacheRead, 'All sessions': aic(all), 'This month': aic(month) },
               ],
             }],
             status: 'ok',

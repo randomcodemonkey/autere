@@ -53,6 +53,8 @@ writeFileSync(sesFile, [
   JSON.stringify({ type: 'session', id: 'sid-1', cwd: process.env.HOME || '/home/autere' }),
   JSON.stringify({ type: 'message', timestamp: now, message: { role: 'assistant', provider: 'github-copilot', model: 'claude-sonnet-4-5', usage: { input: 1000, output: 100, cacheRead: 2000, cost: { total: 0.5 } } } }),
   JSON.stringify({ type: 'message', timestamp: now, message: { role: 'assistant', provider: 'other', usage: { input: 99999, cost: { total: 9 } } } }),
+  // an older month: it belongs to the lifetime total, not to this month
+  JSON.stringify({ type: 'message', timestamp: '2020-01-15T00:00:00.000Z', message: { role: 'assistant', provider: 'github-copilot', model: 'claude-sonnet-4-5', usage: { input: 1000, output: 100, cacheRead: 2000, cost: { total: 0.5 } } } }),
 ].join('\n'));
 
 
@@ -63,8 +65,8 @@ const users = await import(join(REPO, 'src/backend/users.ts'));
 
 const handlers = await import(join(REPO, 'src/backend/extension-handlers.js'));
 const { copilotStatsFor } = handlers as any;
-const { session, month } = copilotStatsFor('tester');
-check('statsFor session totals', session.turns === 1 && Math.abs(session.credits - 50) < 1e-6);
+const { all, month } = copilotStatsFor('tester');
+check('statsFor lifetime totals', all.turns === 2 && Math.abs(all.credits - 100) < 1e-6);
 check('statsFor month totals', month.turns === 1 && Math.abs(month.credits - 50) < 1e-6);
 
 // 6: handler enrich returns the zero placeholder section
