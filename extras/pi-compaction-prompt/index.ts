@@ -13,12 +13,15 @@
  *   identical to vanilla pi - only the prompt gains the extra focus block.
  *   Falls back to the vanilla flow on error. Manual /compact instructions
  *   are combined with the stored prompt.
- * - turn_end: optional overrun guard. When context tokens reach
- *   compactAtTokens while the run still has queued work (a next turn is
- *   coming), a compaction is chained at this turn boundary and the turn
+ * - turn_end: overrun guard. When the run still has queued work (a next turn
+ *   is coming), a compaction is chained at this turn boundary and the turn
  *   continues afterwards - instead of pi compacting only after the run ends.
- *   Compaction drafts bypass session_before_compact, so the prompt is passed
- *   explicitly here.
+ *   pi cannot do this itself: its thresholds use the STATIC reserveTokens and
+ *   pi-token-reserve's agent_end hook bails while messages are pending, so a
+ *   queued chain let the context grow to the model window. The trigger is
+ *   compactAtTokens when set, else the reserve-% policy of pi-token-reserve
+ *   (window - reserve), so one policy knob rules both. Compaction drafts
+ *   bypass session_before_compact, so the prompt is passed explicitly here.
  *
  * Config: <agent-dir>/pi-compaction-prompt-config.json (mtime-cached, live-read)
  *   {"summaryPromptExtra": "...", "compactAtTokens": 123456}
@@ -27,16 +30,22 @@
  * empty prompt or no compactAtTokens -> inert (pi default behavior).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { compact as defaultCompact, DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "@earendil-works/pi-coding-agent";
+import { compact as defaultCompact, DEFAULT_COMPACTION_SETTINGS, getPackageDir } from "@earendil-works/pi-coding-agent";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const CONFIG_NAME = "pi-compaction-prompt-config.json";
+const RESERVE_CONFIG_NAME = "pi-token-reserve-config.json";
+
+function agentDir(): string {
+	return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+}
 
 function configPath(): string {
-	return join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), CONFIG_NAME);
+	return join(agentDir(), CONFIG_NAME);
 }
 
 /**
@@ -91,9 +100,14 @@ async function compactWithFallbacks(
 		const modelIsTheLimit = Math.floor(0.5 * reserveTokens) >= modelCap;
 		let fallback: any;
 		if (modelIsTheLimit) {
-			fallback = branchEntries?.length
-				? prepareCompaction(branchEntries, { ...preparation.settings, keepRecentTokens: 0 })
-				: undefined;
+			try {
+				const { prepareCompaction } = await loadCompactionModule();
+				fallback = branchEntries?.length
+					? prepareCompaction(branchEntries, { ...preparation.settings, keepRecentTokens: 0 })
+					: undefined;
+			} catch {
+				throw error; // no internals, no rebuild - report the primary failure
+			}
 		} else {
 			fallback = {
 				...preparation,
@@ -130,6 +144,80 @@ function readConfig(): { prompt?: string; compactAtTokens?: number } {
 }
 
 /**
+ * pi's root entry point does NOT export prepareCompaction (internal function),
+ * yet a compaction draft needs exactly the preparation pi's own flow builds.
+ * Load the compiled module from pi's package dir, resolved through its public
+ * getPackageDir() - reimplementing the cut-point logic here would drift from
+ * pi on every upgrade. Works under pi's extension loader (verified);
+ * unavailable -> the guard is skipped and pi's own threshold still applies.
+ */
+let internalCompaction: Promise<any> | null = null;
+
+function loadCompactionModule(): Promise<any> {
+	internalCompaction ??= import(pathToFileURL(join(getPackageDir(), "dist", "core", "compaction", "compaction.js")).href);
+	return internalCompaction;
+}
+
+/**
+ * Reserve-% policy (pi-token-reserve's config, same agent dir). Standalone
+ * copy of its reader: extras are installed per directory, so importing across
+ * the two packages would break when only one of them is enabled.
+ */
+const MAX_PERCENT = 90;
+let reserveCache: { mtime: number; percent: number; perModel: Record<string, unknown> } | null = null;
+
+function clampPercent(n: unknown): number {
+	const num = typeof n === "number" ? n : parseInt(String(n), 10);
+	return Number.isFinite(num) ? Math.min(MAX_PERCENT, Math.max(0, Math.floor(num))) : 0;
+}
+
+/** Keys match `provider/id`, bare `id`, or any key whose id suffix is the id. */
+function matchPercent(perModel: Record<string, unknown>, model: any): number | undefined {
+	const id: string | undefined = model?.id;
+	if (typeof id !== "string" || !id) return undefined;
+	const bare = id.includes("/") ? id.slice(id.indexOf("/") + 1) : id;
+	for (const key of model?.provider ? [`${model.provider}/${id}`, id] : [id]) {
+		if (key in perModel) return clampPercent(perModel[key]);
+	}
+	for (const [key, value] of Object.entries(perModel)) {
+		const slash = key.indexOf("/");
+		if (slash > 0 && key.slice(slash + 1) === bare) return clampPercent(value);
+	}
+	return undefined;
+}
+
+function reserveConfig(): { percent: number; perModel: Record<string, unknown> } {
+	const path = join(agentDir(), RESERVE_CONFIG_NAME);
+	if (!existsSync(path)) return { percent: 0, perModel: {} };
+	try {
+		const mtime = statSync(path).mtimeMs;
+		if (reserveCache && reserveCache.mtime === mtime) return reserveCache;
+		const raw = JSON.parse(readFileSync(path, "utf-8"));
+		const perModel = raw?.perModel && typeof raw.perModel === "object" && !Array.isArray(raw.perModel) ? raw.perModel : {};
+		const cfg = { percent: clampPercent(raw?.percent), perModel };
+		reserveCache = { mtime, ...cfg };
+		return cfg;
+	} catch {
+		return { percent: 0, perModel: {} };
+	}
+}
+
+/**
+ * Context size at which the mid-run guard compacts. compactAtTokens wins; else
+ * the reserve-% policy (window - reserve), which has no other mid-run trigger.
+ * Exported for the smoke test.
+ */
+export function forceCompactAt(model: any, compactAtTokens: number | undefined): number | undefined {
+	if (compactAtTokens) return compactAtTokens;
+	const window = model?.contextWindow > 0 ? model.contextWindow : 0;
+	if (window <= 0) return undefined;
+	const { percent, perModel } = reserveConfig();
+	const pct = matchPercent(perModel, model) ?? percent;
+	if (pct <= 0) return undefined;
+	return window - Math.floor((window * pct) / 100);
+}
+
+/**
  * Resolve request-time auth exactly like pi does for its own summaries
  * (AgentSession._getSummarizationRequestAuth): the credential may pin a
  * provider host (Copilot mints tokens for a specific `proxy-ep`), and compact()
@@ -153,7 +241,7 @@ async function summaryRequest(ctx: any): Promise<{ model: any; apiKey?: string; 
 	return { model: ctx.model };
 }
 
-function combined(user: string | undefined, extra: string): string {
+function combined(user: string | undefined, extra: string | undefined): string {
 	const parts = [user?.trim(), extra].filter((p) => p !== undefined && p.length > 0);
 	return parts.join("\n\n");
 }
@@ -179,18 +267,28 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("turn_end", async (event: any, ctx: any) => {
-		const { prompt, compactAtTokens } = readConfig();
-		if (!prompt || !compactAtTokens) return;
-		// Run is ending or no next turn queued -> pi's post-run threshold flow
-		// handles compaction; only force it mid-flight.
-		if (!event.continue || !event.context.canContinue || event.context.pendingMessages.length === 0) return;
-		if (event.entries.some((draft: any) => draft.type === "compaction")) return;
 		if (ctx.model === undefined) return;
+		// Only mid-flight: with no next turn queued the run ends and pi's
+		// post-run flow handles compaction. event.continue is the value
+		// accumulated from EARLIER handlers (always false for the first one),
+		// not pi's decision to continue; context.canContinue is the signal.
+		if (!event.context?.canContinue || event.context.pendingMessages.length === 0) return;
+		if (event.entries.some((draft: any) => draft.type === "compaction")) return;
+		const { prompt, compactAtTokens } = readConfig();
+		const limit = forceCompactAt(ctx.model, compactAtTokens);
+		if (limit === undefined) return;
 		const usage = ctx.getContextUsage?.();
-		if (!usage || (usage.tokens ?? 0) < compactAtTokens) return;
+		if (!usage || (usage.tokens ?? 0) < limit) return;
 		const settings = { ...DEFAULT_COMPACTION_SETTINGS, ...(ctx.getSettings?.()?.compaction ?? {}) };
 		if (!settings.enabled) return; // pi would not compact either
-		const preparation = prepareCompaction(ctx.sessionManager.getBranch(), settings);
+		let preparation: any;
+		try {
+			const { prepareCompaction } = await loadCompactionModule();
+			preparation = prepareCompaction(ctx.sessionManager.getBranch(), settings);
+		} catch (error) {
+			ctx.ui.notify(`pi-compaction-prompt: guard unavailable (${error instanceof Error ? error.message : String(error)})`, "warning");
+			return;
+		}
 		if (!preparation) return;
 		const req = await summaryRequest(ctx);
 		try {

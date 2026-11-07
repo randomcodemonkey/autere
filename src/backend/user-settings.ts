@@ -1156,7 +1156,7 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
         key: 'summaryPromptGuardTokens',
         label: 'Force compaction above (tokens)',
         type: 'number',
-        description: 'Compaction trigger fallback: when context reaches this many tokens mid-run with queued work, the session compacts at that turn boundary and continues - even when pi\'s own threshold (reserved context %) never fires because the model reports the wrong context window or usage. 0 = off; needs compaction summary instructions to matter (it exists to apply that prompt mid-run). Applies without a pi restart.',
+        description: 'Mid-run compaction trigger. 0 = derive it from the reserved-context percentage (context window - reserve), which otherwise never fires while messages are queued: pi only checks between runs and the reserve extension bails on pending messages, so a queued chain grows to the model window. When the limit is reached and the run still has queued work, the session compacts at that turn boundary and continues. Applies without a pi restart.',
       },
       {
         key: 'sendImagesToChatModel',

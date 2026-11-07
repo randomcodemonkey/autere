@@ -272,8 +272,16 @@ extras/pi-token-reserve/ # pi extension: compaction reserveTokens as % of the mo
                        # config written per user env as pi-token-reserve-config.json)
 extras/pi-compaction-prompt/ # pi extension: custom compaction summary prompt — user text
                        # appended to pi's default summary prompt ("Additional
-                       # focus"), applied live to every compaction; optional
-                       # mid-run force-compaction guard at a token cutoff
+                       # focus"), applied live to every compaction; plus the
+                       # mid-run compaction guard: at a turn_end that continues
+                       # into queued messages it compacts at the boundary when
+                       # context passes compactAtTokens, else the reserve-%
+                       # policy (window - reserve). pi cannot: its thresholds
+                       # use the static reserveTokens and pi-token-reserve's
+                       # agent_end hook bails while messages are pending.
+                       # Needs pi's internal prepareCompaction (not a root
+                       # export) - loaded from getPackageDir(), guard skips
+                       # itself if that ever breaks
                        # (symlinked into ~/.pi/agent/extensions/pi-compaction-prompt;
                        # config written per user env as pi-compaction-prompt-config.json)
 extras/pi-personas/    # pi extension: puts the session's bound persona into the SYSTEM
