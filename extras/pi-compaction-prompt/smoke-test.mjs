@@ -10,7 +10,7 @@ process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "compact-guard-test
 const dir = process.env.PI_CODING_AGENT_DIR;
 const reserveCfg = join(dir, "pi-token-reserve-config.json");
 
-const { default: factory, forceCompactAt } = await import("./index.ts");
+const { default: factory, forceCompactAt, compactWithFallbacks } = await import("./index.ts");
 
 let mt = 0;
 const write = (path, obj) => {
@@ -69,5 +69,39 @@ const over = await handlers.turn_end(boundary(true, [{ role: "user" }]), ctx(900
 assert.strictEqual(usageCalls, 1);
 assert.strictEqual(over, undefined);
 assert.deepStrictEqual(notifies, []);
+
+// 7. The session thinking level must reach the summarization request: without
+// it pi-ai sends `thinking: {type: "disabled"}`, which Copilot's Claude
+// rejects ("send between_tools instead") - the reported compaction failure.
+const prep = {
+	firstKeptEntryId: "keep-1",
+	messagesToSummarize: [{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 }],
+	turnPrefixMessages: [],
+	isSplitTurn: false,
+	tokensBefore: 1000,
+	fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+	settings: { reserveTokens: 16384, keepRecentTokens: 20000, enabled: true },
+};
+const model = { id: "claude-sonnet-5-5", provider: "github-copilot", reasoning: true, contextWindow: 200_000, maxTokens: 64_000 };
+const ok = () => ({ result: async () => ({ content: [{ type: "text", text: "Summary." }], stopReason: "stop", usage: { input: 1, output: 1, cost: { total: 0.001 } } }) });
+const calls = [];
+const capture = async (_m, _ctx, options) => { calls.push(options); return ok(); };
+const res = await compactWithFallbacks(prep, [], model, "key", {}, "instructions", undefined, undefined, "medium", capture);
+assert.strictEqual(calls.length, 1);
+assert.strictEqual(calls[0].reasoning, "medium", "session thinking level never reached the request");
+assert.ok(res.summary.includes("Summary."), "compaction result missing the summary");
+
+// 8. A between_tools rejection retries once with thinking on.
+calls.length = 0;
+let first = true;
+const rejecting = async (_m, _ctx, options) => {
+	calls.push(options);
+	if (first) { first = false; throw new Error('Summarization failed: 400 To turn thinking off on this model, send "thinking": {"type": "between_tools"} instead of {"type": "disabled"}.'); }
+	return ok();
+};
+const res2 = await compactWithFallbacks(prep, [], model, "key", {}, "instructions", undefined, undefined, undefined, rejecting);
+assert.strictEqual(calls.length, 2, "no retry on the between_tools rejection");
+assert.strictEqual(calls[1].reasoning, "low", "retry must not repeat the rejected disabled marker");
+assert.ok(res2.summary.includes("Summary."), "retry result missing the summary");
 
 console.log("pi-compaction-prompt smoke-test: OK");

@@ -76,8 +76,12 @@ function widenBudget(preparation: any, model: any): any {
  *   budget.
  * - otherwise raise reserveTokens for the same preparation (already computed,
  *   so it only widens the output budget).
+ *
+ * thinkingLevel mirrors pi's own compact() call: without it pi-ai sends
+ * `thinking: {type: "disabled"}`, which some endpoints reject (Claude via
+ * Copilot wants `between_tools` there) - see the retry below.
  */
-async function compactWithFallbacks(
+export async function compactWithFallbacks(
 	preparation: any,
 	branchEntries: any[] | undefined,
 	model: any,
@@ -86,16 +90,29 @@ async function compactWithFallbacks(
 	instructions: string,
 	signal: any,
 	env: any,
+	thinkingLevel?: any,
+	streamFn?: any,
 ): Promise<any> {
-	const run = (prep: any) =>
-		defaultCompact(prep, model, apiKey, headers, instructions, signal, undefined, undefined, env, undefined, undefined, uuidv7());
+	const run = (prep: any, level: any) =>
+		defaultCompact(prep, model, apiKey, headers, instructions, signal, level, streamFn, env, undefined, undefined, uuidv7());
 	preparation = widenBudget(preparation, model);
 	const reserveTokens = preparation?.settings?.reserveTokens ?? 16384;
 	const modelCap = model?.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY;
 	const isTokenCapFailure = (error: unknown) => /token cap/i.test(error instanceof Error ? error.message : String(error));
 	try {
-		return await run(preparation);
+		return await run(preparation, thinkingLevel);
 	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		// Copilot's Claude rejects the explicit "disabled" marker pi-ai builds
+		// for a missing/off level ("send between_tools instead"). Thinking ON is
+		// accepted - exactly what pi's own fallback does - so retry once.
+		if (/between_tools/.test(message)) {
+			try {
+				return await run(preparation, "low");
+			} catch {
+				throw error; // report the primary failure, not the retry's
+			}
+		}
 		if (!isTokenCapFailure(error)) throw error;
 		const modelIsTheLimit = Math.floor(0.5 * reserveTokens) >= modelCap;
 		let fallback: any;
@@ -116,7 +133,7 @@ async function compactWithFallbacks(
 		}
 		if (!fallback || fallback === preparation) throw error;
 		try {
-			return await run(fallback);
+			return await run(fallback, thinkingLevel);
 		} catch {
 			throw error; // report the primary failure, not the fallback's
 		}
@@ -224,7 +241,7 @@ export function forceCompactAt(model: any, compactAtTokens: number | undefined):
  * has no baseUrl parameter — so the host must travel on the model itself.
  * Missing registry (older pi) -> pi's env credentials apply unchanged.
  */
-async function summaryRequest(ctx: any): Promise<{ model: any; apiKey?: string; headers?: any; env?: Record<string, string> }> {
+async function summaryRequest(ctx: any): Promise<{ model: any; apiKey?: string; headers?: any; env?: Record<string, string>; thinkingLevel?: any }> {
 	try {
 		const auth = await ctx.modelRegistry?.getApiKeyAndHeaders(ctx.model);
 		if (auth?.ok) {
@@ -233,12 +250,13 @@ async function summaryRequest(ctx: any): Promise<{ model: any; apiKey?: string; 
 				apiKey: auth.apiKey,
 				headers: auth.headers,
 				env: auth.env,
+				thinkingLevel: ctx.getThinkingLevel?.(),
 			};
 		}
 	} catch {
 		// Registry unavailable — let pi resolve its own credentials
 	}
-	return { model: ctx.model };
+	return { model: ctx.model, thinkingLevel: ctx.getThinkingLevel?.() };
 }
 
 function combined(user: string | undefined, extra: string | undefined): string {
@@ -256,7 +274,7 @@ export default function (pi: ExtensionAPI) {
 		if (user === event.customInstructions?.trim()) return;
 		const req = await summaryRequest(ctx);
 		try {
-			const result = await compactWithFallbacks(event.preparation, event.branchEntries, req.model, req.apiKey, req.headers, user, event.signal, req.env);
+			const result = await compactWithFallbacks(event.preparation, event.branchEntries, req.model, req.apiKey, req.headers, user, event.signal, req.env, req.thinkingLevel);
 			return { compaction: result };
 		} catch (error) {
 			// The request host is the usual culprit for auth failures; show it.
@@ -292,7 +310,7 @@ export default function (pi: ExtensionAPI) {
 		if (!preparation) return;
 		const req = await summaryRequest(ctx);
 		try {
-			const result = await compactWithFallbacks(preparation, ctx.sessionManager.getBranch(), req.model, req.apiKey, req.headers, combined(undefined, prompt), undefined, req.env);
+			const result = await compactWithFallbacks(preparation, ctx.sessionManager.getBranch(), req.model, req.apiKey, req.headers, combined(undefined, prompt), undefined, req.env, req.thinkingLevel);
 			ctx.ui.notify("Compaction forced mid-run (context over the configured token limit), continuing", "info");
 			return {
 				entries: [
