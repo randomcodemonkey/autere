@@ -591,23 +591,65 @@ export class UserSession {
    * not drain the queue), and steer/follow_up can't start a run when idle —
    * only prompt() does. So: clear the queue BEFORE the abort (pi's documented
    * clear_queue-then-abort salvage pattern), drop the stale pending history
-   * copies, and re-send the texts as prompts once the session is idle.
+   * copies, and park the texts in the outbox until pi takes them.
    * ponytail: re-send is text-only; queued images would lose attachments
    * (same ceiling as cancelPending). Round-trip images if that matters.
    */
   async abortAndRequeue(): Promise<void> {
-    const staleIds = this.pendingUserIds();
+    const texts = await this.clearQueueSalvage();
+    await this.rpc.abort();
+    this.park(texts);
+  }
+
+  /**
+   * Clear pi's queues and return what was queued, without retiring the PENDING
+   * badges: our own clearQueue() emits an empty queue_update, which
+   * retireConsumedPending would otherwise read as "everything was consumed".
+   */
+  async clearQueueSalvage(): Promise<string[]> {
     this.expectEmptyQueueUpdate = true;
     const cleared = await this.rpc.clearQueue();
-    await this.rpc.abort();
-    const texts = [...cleared.steering, ...cleared.followUp].filter(Boolean);
-    if (texts.length === 0) return;
-    this.dropHistoryEntries(staleIds);
-    // Session is idle after abort — prompt() starts the new turn.
-    for (const text of texts) {
-      this.addUserEntry(basePromptText(text));
-      await this.rpc.prompt(basePromptText(text));
-    }
+    return [...cleared.steering, ...cleared.followUp].filter(Boolean);
+  }
+
+  /**
+   * Park cleared queued messages and deliver them once pi is free. Used by
+   * every path that discards pi's queue (abort, compaction abort): the texts
+   * must survive whatever runs next — typically an automatic compaction,
+   * which refuses a prompt while it runs.
+   */
+  park(texts: string[]): void {
+    const kept = [...new Set(texts.map(basePromptText).filter(Boolean))];
+    if (kept.length === 0) return;
+    this.dropHistoryEntries(this.pendingUserIds((e) => kept.includes(e.text)));
+    for (const text of kept) this.addUserEntry(text);
+    this.outbox.push(...kept);
+    this.deliverOutbox();
+  }
+
+  /**
+   * Hand the next salvaged message to pi as a new run. One at a time: prompt()
+   * resolves when the whole run (including any compaction it triggers) is
+   * over, so the loop cannot race itself. A failure leaves the text queued and
+   * the next idle event retries — compaction_end / agent_settled / session_start.
+   */
+  private deliverOutbox(): void {
+    if (this.outboxBusy || this.outbox.length === 0) return;
+    const st = this.state.sessionState;
+    if (st.isStreaming || st.compacting) return;   // pi would refuse the prompt
+    const text = this.outbox[0];
+    this.outboxBusy = true;
+    this.rpc.prompt(text)
+      .then(() => {
+        const idx = this.outbox.indexOf(text);
+        if (idx >= 0) this.outbox.splice(idx, 1);
+        this.outboxBusy = false;
+        this.deliverOutbox();
+      })
+      .catch((err: any) => {
+        this.outboxBusy = false;   // retried by the next idle event
+        userLog(this.user).warn(`queued message not delivered yet (${this.outbox.length} waiting): ${err?.message ?? err}`);
+      });
   }
 
   /**
@@ -796,6 +838,7 @@ export class UserSession {
     }
     // A dialog pi was blocked on can never be answered now.
     this.dismissExtensionUi();
+    this.outbox = [];   // a stopped session must not fire salvaged prompts
     // Clients stay connected to the hub — they may simply switch to another
     // session's process. Only their own actions terminate the connection.
     userLog(this.user).info('pi process stopped');
@@ -951,6 +994,8 @@ export class UserSession {
       switch (event.type) {
         case 'session_start':
           this.handleSessionStart(event);
+          // A respawn is another chance to deliver salvaged messages.
+          this.deliverOutbox();
           break;
         case 'session_info_changed':
           this.handleSessionInfoChanged(event);
@@ -1019,6 +1064,7 @@ export class UserSession {
           // the run is fully over, including queued model changes and retries.
           // `agent_end` alone fires between auto-retries, so it cannot be used.
           if (event.type === 'agent_settled') this.emitLocal({ type: 'turn_settled' });
+          this.deliverOutbox();
           break;
         }
         case 'queue_update':
@@ -1099,6 +1145,7 @@ export class UserSession {
         case 'compaction_end':
           s.sessionState.compacting = false;
           s.sessionState.isStreaming = false;
+          this.deliverOutbox();
           this.broadcast({ type: 'status', data: { ...s.sessionState } });
           if (event.errorMessage) {
             this.pushSystemNotice(`Compaction failed: ${event.errorMessage}`);
@@ -1895,6 +1942,16 @@ export class UserSession {
   private pendingModel: { provider: string; modelId: string } | null = null;
   /** Our own clearQueue() emits an empty queue_update — see retireConsumedPending */
   private expectEmptyQueueUpdate = false;
+
+  /**
+   * Texts salvaged from an abort, waiting for pi to accept them. An abort can
+   * hand control straight to an automatic compaction, and pi's prompt()
+   * refuses ("Cannot submit a prompt while compaction is in progress") — the
+   * queue was already cleared by then, so without this the messages were
+   * simply gone. Delivered one run at a time from deliverOutbox().
+   */
+  private outbox: string[] = [];
+  private outboxBusy = false;
 
   /**
    * Change the session model. Mid-turn switches leave the new model with a

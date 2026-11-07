@@ -165,5 +165,33 @@ assert.deepEqual(requeued, ['keep me']);
   s.setHistory([]);
 }
 
+// Aborting while an automatic compaction starts: pi refuses the prompt and the
+// queue was already cleared, so the salvaged texts have to wait, not vanish.
+{
+  s.setHistory([]);
+  const prompts: string[] = [];
+  let busy = 0;
+  s.rpc.clearQueue = async () => ({ steering: ['one'], followUp: ['two', 'three'] });
+  s.rpc.abort = async () => {
+    // pi hands control to auto-compaction right after the abort
+    busy = 1;
+  };
+  s.rpc.prompt = async (text: string) => {
+    if (busy) throw new Error('Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.');
+    prompts.push(text);
+  };
+  for (const t of ['one', 'two', 'three']) s.addUserEntry(t, true);
+  await s.abortAndRequeue();
+  await new Promise((r) => setTimeout(r, 0));   // let the refusal land
+  assert.deepEqual(prompts, [], 'a prompt was sent into the compaction');
+  const texts = s.history().filter((e: any) => e.role === 'user').map((e: any) => e.text);
+  assert.deepEqual(texts, ['one', 'two', 'three'], 'salvaged messages left the chat');
+  busy = 0;   // compaction finished
+  onEvent({ type: 'compaction_end', aborted: false });
+  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(prompts, ['one', 'two', 'three'], `delivered ${JSON.stringify(prompts)}`);
+  s.setHistory([]);
+}
+
 try { await s.stop(); } catch { /* never started */ } // clears the idle timer
 console.log('message-end.check: OK');

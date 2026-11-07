@@ -1556,15 +1556,15 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         // file tears the session down (dispose() -> abortCompaction()) and
         // reloads it from disk — lossless, since no CompactionEntry is
         // written until compaction succeeds. Teardown discards queued
-        // messages, so capture and re-queue them.
+        // messages, so capture them and park them for delivery (a refused
+        // prompt while compaction unwinds must not drop them).
         // Flag BEFORE the switch: the in-flight compact() promise rejects
         // the moment teardown fires, racing this handler's remaining awaits.
         sessionState.compactionAborted = true;
-        const cleared = await t.rpc.clearQueue();
+        const queued = await t.clearQueueSalvage();
         await t.rpc.switchSession(sessionState.sessionFile);
-        for (const text of cleared.steering) await t.rpc.steer(text);
-        for (const text of cleared.followUp) await t.rpc.followUp(text);
         sessionState.compacting = false;
+        t.park(queued);
         t.broadcast({ type: 'status', data: { ...sessionState } });
         sendJSON(c.res, { success: true });
       } catch (err: any) {
