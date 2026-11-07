@@ -1,7 +1,7 @@
 // Self-check for streamed tool-call arguments.
 // Run: npx tsx src/backend/toolcall-args.check.ts
 import assert from 'node:assert';
-import { ToolArgStream, partialToolArgs, toolCallPreview } from './toolcall-args.js';
+import { ToolArgStream, partialToolArgs, toolCallPreview, openToolArg } from './toolcall-args.js';
 
 // ── partialToolArgs: only complete "key": "value" pairs ──
 assert.deepEqual(partialToolArgs('{"path":"a/b.txt","content":"unfinis'), { path: 'a/b.txt' });
@@ -15,6 +15,15 @@ assert.equal(toolCallPreview('write', '{"path":"platform/standalone/deploy.py","
 assert.equal(toolCallPreview('bash', '{"command":"ls -l'), '');
 assert.equal(toolCallPreview('bash', '{"command":"ls -l"}'), 'ls -l');
 assert.equal(toolCallPreview('write', `{"path":"${'x'.repeat(500)}"}`).length, 403);
+
+// ── openToolArg: the value still being written (the streamed content) ──
+assert.deepEqual(openToolArg('{"path":"a.js","content":"unfinis'), { key: 'content', value: 'unfinis' });
+assert.equal(openToolArg('{"path":"a\\"b')?.value, 'a"b', 'escaped quote decoded');
+assert.equal(openToolArg('{"path":"line1\\nli')?.value, 'line1\nli', 'escaped newline decoded');
+assert.equal(openToolArg('{"path":"a.js"}'), null, 'nothing open once the pair closes');
+assert.equal(openToolArg('{"path":"a.js","content":"x"}'), null);
+assert.equal(openToolArg('{'), null);
+assert.equal(openToolArg('{"timeout":3'), null, 'non-string values are not content');
 
 // ── stream bookkeeping: keyed by contentIndex, adopted by id ──
 const stream = new ToolArgStream();

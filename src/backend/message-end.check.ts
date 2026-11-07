@@ -193,5 +193,35 @@ assert.deepEqual(requeued, ['keep me']);
   s.setHistory([]);
 }
 
+// Streamed tool arguments (Claude-style): the file's content stays an
+// incomplete JSON pair for the WHOLE stream, so the body must carry it while
+// it streams - via the same tool_output delta channel as tool output.
+{
+  s.setHistory([]);
+  s.toolArgs.drain();
+  const sent: any[] = [];
+  s.broadcast = (m: any) => sent.push(m);
+  update({ type: 'toolcall_start', contentIndex: 1, id: 'toolu_1', toolName: 'write' });
+  update({ type: 'toolcall_delta', contentIndex: 1, delta: '{"path":"a.js","content":"function f(' });
+  const first = sent.filter((m) => m.type === 'history_upsert').at(-1);
+  assert.equal(first.data[0].partial, 'function f(', 'body did not start streaming');
+  assert.equal(first.data[0].toolCall.cmd, 'a.js', 'header preview lost');
+  await new Promise((r) => setTimeout(r, 130));   // preview throttle
+  update({ type: 'toolcall_delta', contentIndex: 1, delta: ') { return 1; }' });
+  const out = sent.filter((m) => m.type === 'tool_output').at(-1);
+  assert.deepEqual({ id: out.data.id, text: out.data.text, replace: out.data.replace },
+    { id: 'toolu_1', text: ') { return 1; }', replace: false }, 'args delta malformed');
+  // toolcall_end flushes the throttled tail with the complete value
+  update({ type: 'toolcall_end', contentIndex: 1, toolCall: { id: 'toolu_1', name: 'write', arguments: { path: 'a.js', content: 'function f() { return 1; }' } } });
+  assert.equal(s.history()[0].partial, 'function f() { return 1; }', 'throttled tail not flushed at end');
+  // execution adopts the card; the first output REPLACES the args preview
+  onEvent({ type: 'tool_execution_start', toolCallId: 'toolu_1', toolName: 'write', args: { path: 'a.js', content: 'x' } });
+  onEvent({ type: 'tool_execution_update', toolCallId: 'toolu_1', partialResult: { content: [{ type: 'text', text: 'written ok' }] } });
+  const res = sent.filter((m) => m.type === 'tool_output').at(-1);
+  assert.deepEqual({ text: res.data.text, replace: res.data.replace },
+    { text: 'written ok', replace: true }, 'output appended after the args preview instead of replacing it');
+  s.setHistory([]);
+}
+
 try { await s.stop(); } catch { /* never started */ } // clears the idle timer
 console.log('message-end.check: OK');

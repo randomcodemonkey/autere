@@ -417,6 +417,10 @@ npx tsx src/backend/idle-timeout.check.ts`): `stream_delta` -> TEXT/REASONING
   replace}`) appended to the streaming `toolCall` entry — the buffer keeps the
   whole output (2 MB cap, then a tail with an ellipsis and `replace: true`), so
   an expanded card shows everything; a snapshot resend would be MB/s.
+  The same channel carries streamed tool ARGUMENTS (Claude writes a file's
+  content as one long JSON string): the value still being written fills the
+  body while the call streams (replaced, not appended, when the open value
+  switches keys), and the first output replaces it again.
 - **History entries** carry stable server-assigned `id`s (monotonic) —
   frontend React keys prefer them so expansion state and scroll anchoring
   survive broadcasts. toolCall→toolResult replacement inherits the id.

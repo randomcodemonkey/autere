@@ -21,6 +21,10 @@ export interface PendingToolCall {
   json: string;
   /** last preview broadcast (throttling is the caller's business) */
   at: number;
+  /** body text already delivered to clients (delta transport) */
+  sent?: string;
+  /** key of the value whose text streams into the body (flushed at end) */
+  openKey?: string;
   /** streaming history entry this call renders into */
   entry?: any;
 }
@@ -40,6 +44,19 @@ export function partialToolArgs(json: string): Record<string, string> {
     if (Object.keys(out).length >= 8) break;
   }
   return out;
+}
+
+/**
+ * The key/string value still being written ("key": "value-so-far...). A
+ * single big argument (a file's content, generated code) stays an INCOMPLETE
+ * pair for the whole stream, so partialToolArgs can never see it before the
+ * call ends. That value is exactly what is worth watching stream; the card
+ * body shows it. Decoded best effort; null while nothing is open.
+ */
+export function openToolArg(json: string): { key: string; value: string } | null {
+	const m = /"([A-Za-z0-9_-]+)"\s*:\s*"((?:[^"\\]|\\.)*)$/.exec(json);
+	if (!m) return null;
+	try { return { key: m[1], value: JSON.parse(`"${m[2]}"`) }; } catch { return { key: m[1], value: m[2] }; }
 }
 
 /** Cap for the streamed preview — the full command arrives on toolcall_end */

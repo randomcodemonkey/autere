@@ -29,7 +29,7 @@ import {
   extractImages,
 } from './stream-history.js';
 import { formatToolArgs } from '../shared/format.js';
-import { ToolArgStream, partialToolArgs, toolCallPreview } from './toolcall-args.js';
+import { ToolArgStream, partialToolArgs, toolCallPreview, openToolArg } from './toolcall-args.js';
 import { basePromptText, streamRoleForUserText } from '../shared/format.js';
 import { clipNotification, shouldNotifyAllDone, workedLongEnough } from '../shared/notifications.js';
 
@@ -1726,9 +1726,11 @@ export class UserSession {
   }
 
   /**
-   * Arguments still streaming: fill the card with a best-effort preview of
-   * the fields that are already complete (path/command). Throttled — every
-   * upsert re-sends the whole entry to every client.
+   * Arguments still streaming: the header carries the best-effort preview of
+   * the complete fields (path/command), the body the value still being
+   * written (a file's content, generated code) - that is what is worth
+   * watching stream. Throttled; the body travels as deltas like tool output
+   * (arguments can be megabytes, a full snapshot per tick would be O(n^2)).
    */
   private handleToolCallDelta(evt: any): void {
     const rec = this.toolArgs.delta(evt);
@@ -1736,11 +1738,36 @@ export class UserSession {
     const now = Date.now();
     if (now - rec.at < UserSession.TOOLCALL_PREVIEW_INTERVAL_MS) return;
     rec.at = now;
+    const entry = rec.entry;
     const cmd = toolCallPreview(rec.name, rec.json);
-    if (!cmd || cmd === rec.entry.toolCall?.cmd) return;
-    rec.entry.text = cmd;
-    rec.entry.toolCall = { ...rec.entry.toolCall, name: rec.name, cmd };
-    this.broadcastHistoryUpsert([rec.entry]);
+    const open = openToolArg(rec.json);
+    const body = open?.value;
+    const cmdChanged = !!cmd && cmd !== entry.toolCall?.cmd;
+    const bodyChanged = !!body && body !== entry.partial;
+    if (!cmdChanged && !bodyChanged) return;
+    if (cmdChanged) {
+      entry.text = cmd;
+      entry.toolCall = { ...entry.toolCall, name: rec.name, cmd };
+    }
+    if (bodyChanged) {
+      entry.partial = body;
+      rec.openKey = open!.key;
+    }
+    // A full snapshot whenever the card changes beyond its body (or when the
+    // call has no id to delta against); otherwise only the new body text.
+    const deltaable = !cmdChanged && !!entry.toolCallId && !!body;
+    if (!deltaable) {
+      if (body) rec.sent = body; // the snapshot carried the body
+      this.broadcastHistoryUpsert([entry]);
+      return;
+    }
+    const sent = rec.sent || '';
+    // The open value can switch keys mid-stream (path done, content starts) -
+    // then the old body must be replaced, not appended to.
+    const replace = !!sent && !body.startsWith(sent);
+    const delta = replace ? body : body.slice(sent.length);
+    rec.sent = body;
+    if (delta) this.broadcast({ type: 'tool_output', sessionId: this.state.sessionState.sessionId, data: { id: entry.toolCallId, text: delta, replace } });
   }
 
   /** Arguments complete — the tool is about to execute; keep the same card. */
@@ -1753,6 +1780,9 @@ export class UserSession {
     entry.text = cmd;
     if (rec.id) entry.toolCallId = rec.id;
     entry.toolCall = { ...entry.toolCall, name: rec.name, cmd };
+    // Throttled tail-chunks never went out - flush with the complete value.
+    const full = rec.openKey ? (evt.toolCall?.arguments ?? {})[rec.openKey] : undefined;
+    if (typeof full === 'string') entry.partial = full;
     this.broadcastHistoryUpsert([entry]);
   }
 
@@ -1810,6 +1840,10 @@ export class UserSession {
       entry.streaming = true;
       entry.toolCallId = event.toolCallId;
       entry.toolCall = callInfo;
+      // The client already shows the streamed arguments in the body - the
+      // first output must REPLACE them (handleToolUpdate compares against
+      // what was sent), not append after them.
+      toolEntry.sentText = entry.partial || '';
     }
     // handleToolUpdate mutates this entry in place and re-broadcasts it by id.
     toolEntry.entry = entry;
