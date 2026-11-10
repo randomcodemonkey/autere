@@ -195,7 +195,11 @@ src/backend/
                         # shown as running forever. A live run ends on pi's
                         # agent_settled (NOT on an assistant message_end with
                         # text: tool-only/empty final messages exist) and fails
-                        # fast when its pi process exits.
+                        # fast when its pi process exits. The run timeout is an
+                        # INACTIVITY budget: every pi event re-arms it, so a
+                        # slow-but-working run (polling an external item, a
+                        # long tool) is never killed for taking >15 min.
+                        # Self-check: scheduler.check.ts
                         # Runs inherit cwd/workdirs from the creating session
                         # (`session` id passed by schedule_task, resolved by the
                         # backend) or use task-form/API workdirs (which force

@@ -53,7 +53,8 @@ export interface SchedulerOptions {
   args?: string[];
   /** Tick interval in ms (default 20s) */
   tickMs?: number;
-  /** Max duration of one agent run in ms (default 15 min) */
+  /** Max silence of one agent run in ms — the run is failed only after this
+   *  long with no pi event at all (default 15 min) */
   runTimeoutMs?: number;
   /** Persist spawn settings so retained run sessions resume with their workdirs. */
   persistSpawnOpts?: (user: string, sessionFile: string, opts: { cwd?: string; workdirs?: string[] }) => void;
@@ -745,7 +746,12 @@ export class Scheduler {
   /**
    * Resolves with the final assistant text of this run once the agent has
    * settled, `__AGENT_ERROR__:<message>` on an agent error, and rejects when
-   * the run is aborted, times out, or its pi process dies.
+   * the run is aborted, goes silent for `runTimeoutMs`, or its pi process dies.
+   *
+   * The timeout measures INACTIVITY, not total duration: a run waiting on
+   * something external (a polling loop, a long tool) keeps emitting events and
+   * must not be killed for being slow - only a run that emits nothing for the
+   * whole budget is stuck.
    *
    * The completion signal is pi's `agent_settled` (no automatic work left),
    * NOT an assistant message: a run can legitimately end with a text-less
@@ -762,18 +768,25 @@ export class Scheduler {
       let lastText = '';
       let off: () => void = () => {};
       let offExit: () => void = () => {};
+      let timeout: ReturnType<typeof setTimeout> | null = null;
       const finish = (fn: () => void) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timeout);
+        if (timeout) clearTimeout(timeout);
         off();
         offExit();
         fn();
       };
-      const timeout = setTimeout(() => {
-        finish(() => reject(new Error(`Agent run timed out after ${this.runTimeoutMs}ms`)));
-      }, this.runTimeoutMs);
+      const arm = () => {
+        if (settled) return;
+        if (timeout) clearTimeout(timeout);
+        timeout = setTimeout(() => {
+          finish(() => reject(new Error(`Agent run produced no activity for ${this.runTimeoutMs}ms`)));
+        }, this.runTimeoutMs);
+      };
+      arm();
       off = rpc.onEvent((event: any) => {
+        arm(); // any event means the run is alive and working
         if (event.type === 'message_end' && event.message?.role === 'assistant') {
           const msg = event.message;
           if (msg.stopReason === 'error' || msg.errorMessage) {
