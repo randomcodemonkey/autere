@@ -189,6 +189,8 @@ src/backend/
                         # sessions are deleted when a new run starts; the
                         # running one is kept until the next). once: true runs
                         # at most once and auto-disables after its first run.
+                        # Save options are re-read when the run completes, so a
+                        # toggle made while it was in flight applies to it.
                         # Boot marks run records a previous backend left
                         # 'running' as error (interrupted) — in-memory runs
                         # never survive a restart, so they would otherwise be

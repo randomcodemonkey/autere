@@ -691,8 +691,11 @@ export class Scheduler {
         // 6. The run's session is disposable unless the task opted in — with
         //    saveSession/reuseSession/saveLastSession off the file is removed
         //    for good (the run record above is what survives). pi has exited
-        //    by now, so nothing rewrites the file.
-        if (runSessionFile && !task.saveSession && !task.reuseSession && !task.saveLastSession) {
+        //    by now, so nothing rewrites the file. Re-read the task so an
+        //    option toggled while the run was in flight applies to its
+        //    completion (a task deleted mid-run keeps the snapshot's choice).
+        const settledTask = getTask(user, task.id) ?? task;
+        if (runSessionFile && !settledTask.saveSession && !settledTask.reuseSession && !settledTask.saveLastSession) {
           try {
             rmSync(runSessionFile, { force: true });
             addLog('Run session removed (save task sessions is off)');

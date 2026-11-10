@@ -163,6 +163,45 @@ describe('autere — scheduled tasks', () => {
     cy.get('.scheduled-task', { timeout: 5000 }).should('contain', `${TASK_NAME}-renamed`);
   });
 
+  it('applies a save option toggled while the run is in flight', function() {
+    this.timeout(180000);
+    const MIDRUN = `e2e-midrun-${Date.now()}`;
+    let taskId = '';
+
+    // Saves nothing by default; the seed script keeps the run busy long
+    // enough to flip the option while it is still running.
+    cy.request('POST', '/api/v1/scheduler/tasks', {
+      name: MIDRUN, schedule: '0 5 * * 1', prompt: 'Reply with exactly: OK',
+      seedScript: 'sleep 5', once: true,
+    }).its('body.data.id').then((id) => { taskId = id; });
+
+    openTasks();
+    cy.get('.scheduled-task', { timeout: 5000 }).contains(MIDRUN).parents('.scheduled-task')
+      .find('.scheduled-run-btn').click();
+
+    // Opt in mid-flight: the run's completion must honour the new value
+    cy.request('/api/v1/scheduler/tasks').then((res) => {
+      const task = (res.body.data.tasks || []).find((t: any) => t.id === taskId);
+      cy.request('PUT', `/api/v1/scheduler/tasks/${task.id}`, { ...task, saveSession: true });
+    });
+
+    cy.get('.sched-run-status.sched-run-success', { timeout: 150000 }).should('exist');
+
+    cy.request('/api/v1/scheduler/runs').then((res) => {
+      const run = (res.body.data || []).find((r: any) => r.taskId === taskId);
+      expect(run.status, 'run status').to.equal('success');
+      return cy.request(`/api/v1/scheduler/runs/${taskId}/${run.runId}`);
+    }).then((res) => {
+      const lines = (res.body.data.log || []).map((l: any) => l.line).join('\n');
+      expect(lines, 'mid-run save keeps the session').to.not.contain('Run session removed');
+    });
+
+    cy.request('/api/v1/sessions').then((res) => {
+      const kept = (res.body.data || []).filter((s: any) => String(s.sessionName || '').includes('[task]'));
+      expect(kept.length, 'task session on disk').to.be.greaterThan(0);
+    });
+  });
+
   it('deletes the task', () => {
     openTasks();
     cy.on('window:confirm', () => true);
