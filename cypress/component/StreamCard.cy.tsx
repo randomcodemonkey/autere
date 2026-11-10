@@ -242,10 +242,10 @@ describe('StreamCard', () => {
         onNewSession={cy.stub()}
       />,
     );
-    // Collapsed: only the tail is rendered, with a toggle to expand
+    // Collapsed on arrival: the head is rendered, with a toggle to expand
     cy.get('.stream-text-truncated').should('exist');
-    cy.contains('output line 0').should('not.exist');
-    cy.contains('output line 59').should('exist'); // the tail stays visible
+    cy.contains('output line 0').should('exist'); // the preview does not scroll
+    cy.contains('output line 59').should('not.exist');
     cy.contains('more characters - click to expand').should('exist');
   });
 

@@ -297,20 +297,15 @@ export const ChatMessage = memo<ChatMessageProps>(({ msg, role, displayText, isA
   if (!msg.streaming && hasBody && !emptyThinking && !(msg.images && msg.images.length > 0) && !msg.file) return null;
 
   const isCallOnly = role === 'toolCall' && !!msg.toolCall;
-  // Streaming tool calls show the tail of their partial output under the
-  // command header (the backend streams it in full as deltas); the final
-  // result replaces the whole entry.
+  // Streaming tool calls render their partial output under the command header
+  // (the backend streams it in full as deltas); the final result replaces the
+  // whole entry.
   const bodyText = isCallOnly ? (msg.partial || '') : displayText;
   // Truncate long messages even while streaming — the expand toggle works
   // mid-stream. Bounded height also keeps autoscroll stable on long turns.
-  // A streaming call shows the TAIL of its output: the head is stale by then.
-  // Expanded always renders the text as-is: a tail preview with an ellipsis is
-  // only ever the collapsed form.
-  const showText = expanded || !isLong
-    ? bodyText
-    : isCallOnly && bodyText.length > truncLen
-      ? '...' + bodyText.slice(-truncLen)
-      : bodyText.slice(0, truncLen);
+  // The collapsed form is always the START of the content, streamed tool calls
+  // included: a tail preview would scroll on every delta.
+  const showText = expanded || !isLong ? bodyText : bodyText.slice(0, truncLen);
   const roleClass = role === 'user' ? 'stream-role-user' : role === 'assistant' ? 'stream-role-assistant' : `stream-role-${role}`;
   // Task deliveries (scheduled-task reports committed as user-role messages)
   // read like assistant output: markdown body, distinct "task" sender.

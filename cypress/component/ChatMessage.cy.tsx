@@ -95,7 +95,7 @@ describe('ChatMessage — ANSI tool output', () => {
 });
 
 describe('ChatMessage — streaming tool call', () => {
-  it('shows the partial output tail and the timeout while the tool runs', () => {
+  it('shows the streamed partial output and the timeout while the tool runs', () => {
     cy.mount(
       <ChatMessage
         msg={{ ...base, streaming: true, partial: '\u001b[32mcompiling\u001b[0m 3/4', toolCall: { name: 'bash', cmd: 'npm test', timeout: 300000 } } as any}
@@ -113,11 +113,12 @@ describe('ChatMessage — streaming tool call', () => {
     cy.get('.stream-tool-output > span').first().should('have.attr', 'style').and('contain', '--ansi-2');
   });
 
-  it('shows the whole streamed output when an active tool call is expanded', () => {
+  it('keeps the start of the streamed output and grows the rest count when collapsed', () => {
     const full = Array.from({ length: 50 }, (_, i) => `full line ${i}`).join('\n');
-    cy.mount(
+    const more = `${full}\nline arriving later`;
+    const mount = (partial: string) => cy.mount(
       <ChatMessage
-        msg={{ ...base, streaming: true, toolCallId: 'call1', toolCall: { name: 'bash', cmd: 'build' }, partial: full } as any}
+        msg={{ ...base, streaming: true, toolCallId: 'call1', toolCall: { name: 'bash', cmd: 'build' }, partial } as any}
         role="toolCall"
         displayText=""
         isAssistant={false}
@@ -126,10 +127,20 @@ describe('ChatMessage — streaming tool call', () => {
         truncLen={128}
       />,
     );
-    // Collapsed: tail preview only, starting with an ellipsis
-    cy.get('.stream-tool-output:not(.expanded)').should('contain', '...').and('contain', 'full line 49');
+
+    mount(full);
+    // Collapsed: the head, not a tail that scrolls with every delta
+    cy.get('.stream-tool-output:not(.expanded)').should('contain', 'full line 0').and('not.contain', 'full line 49');
+    cy.get('.stream-text-truncated').should('contain', `${full.length - 128} more characters`);
+
+    // More output streams in: the preview still starts at the top, the count grows
+    mount(more);
+    cy.get('.stream-tool-output:not(.expanded)').should('contain', 'full line 0');
+    cy.get('.stream-text-truncated').should('contain', `${more.length - 128} more characters`);
+
+    // Expanded always renders the whole stream
     cy.get('.stream-text-truncated').click();
-    cy.get('.stream-tool-output.expanded').should('contain', 'full line 0').and('contain', 'full line 49');
+    cy.get('.stream-tool-output.expanded').should('contain', 'full line 0').and('contain', 'line arriving later');
   });
 
   it('renders an empty thinking block while streaming', () => {

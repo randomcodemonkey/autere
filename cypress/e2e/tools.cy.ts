@@ -30,7 +30,9 @@ describe('autere — tools', () => {
     // The card is still streaming when the collapsed toggle shows up, so this
     // is the live view and not the finalized result (which is complete anyway).
     cy.get('.tool-call-header', { timeout: 90000 }).should('exist');
-    cy.get('.stream-text-truncated', { timeout: 60000 }).first().click();
+    // Collapsed, the preview is the start of the output, not a scrolling tail
+    cy.get('.stream-tool-output:not(.expanded)').should('contain', 'line 1');
+    cy.get('.stream-text-truncated', { timeout: 60000 }).first().should('contain', 'more characters').click();
     // The body starts at the first line — a tail preview could never contain
     // line 1, let alone the beginning of the run.
     cy.get('.stream-tool-output.expanded', { timeout: 30000 })
