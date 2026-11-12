@@ -233,6 +233,10 @@ src/backend/
                         # only — applied per user by extensions.ts
                         # enrichExtensionsFor() (check: extension-enrich.check.ts)
   stream-history.ts     # StreamMessage building, extractImages (shared)
+  error-text.ts         # cleanProviderError(): an HTML error page from a provider
+                        # (GitHub "Unicorn!" 503 through Copilot) becomes one
+                        # readable line; used for chat notices, task run errors,
+                        # persona + AG-UI errors (check: error-text.check.ts)
   shared/format.ts      # Formatting shared with frontend
   image-models.ts       # Image-capable model discovery (9router)
 src/frontend/

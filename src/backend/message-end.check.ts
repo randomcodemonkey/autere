@@ -223,5 +223,26 @@ assert.deepEqual(requeued, ['keep me']);
   s.setHistory([]);
 }
 
+// Provider errors that arrive as an HTML page (GitHub's "Unicorn!" 503 page
+// through Copilot) must not dump markup into the chat: one readable line.
+{
+  s.setHistory([]);
+  s.handleMessageEnd({
+    message: {
+      role: 'assistant', stopReason: 'error',
+      errorMessage: 'github-copilot API error (503): 503 <!DOCTYPE html><html><head><title>Unicorn! &middot; GitHub</title></head><body><h1>Unicorn!</h1><p>This page is taking too long to load.</p></body></html>',
+    },
+  });
+  const entries = s.history();
+  assert.equal(entries.length, 1, `expected 1 system entry, got ${entries.length}`);
+  assert.equal(entries[0].role, 'system');
+  assert.equal(entries[0].isError, true);
+  assert.ok(!entries[0].text.includes('<'), `markup leaked: ${entries[0].text}`);
+  assert.ok(entries[0].text.startsWith('github-copilot API error (503):'), entries[0].text);
+  assert.ok(entries[0].text.includes('Unicorn!'), entries[0].text);
+  assert.ok(entries[0].text.includes('KB of HTML omitted'), entries[0].text);
+  s.setHistory([]);
+}
+
 try { await s.stop(); } catch { /* never started */ } // clears the idle timer
 console.log('message-end.check: OK');

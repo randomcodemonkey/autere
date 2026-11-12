@@ -32,6 +32,7 @@ import { formatToolArgs } from '../shared/format.js';
 import { ToolArgStream, partialToolArgs, toolCallPreview, openToolArg } from './toolcall-args.js';
 import { basePromptText, streamRoleForUserText } from '../shared/format.js';
 import { clipNotification, shouldNotifyAllDone, workedLongEnough } from '../shared/notifications.js';
+import { cleanProviderError } from './error-text.js';
 
 /** Sandbox spawn options for a (user, cwd, workdirs) spawn — shared by
  *  interactive sessions AND scheduled-task runs so both inherit the same
@@ -1148,7 +1149,7 @@ export class UserSession {
           this.deliverOutbox();
           this.broadcast({ type: 'status', data: { ...s.sessionState } });
           if (event.errorMessage) {
-            this.pushSystemNotice(`Compaction failed: ${event.errorMessage}`);
+            this.pushSystemNotice(`Compaction failed: ${cleanProviderError(event.errorMessage)}`);
           } else if (event.aborted && !s.sessionState.compactionAborted) {
             this.pushSystemNotice('Compaction aborted.');
           } else if (event.willRetry) {
@@ -1177,7 +1178,7 @@ export class UserSession {
           log.userSession.forSession(s.sessionState.sessionId).warn(
             `summarization retry ${event.attempt}/${event.maxAttempts} scheduled in ${event.delayMs}ms: ${event.errorMessage || 'unknown error'}`);
           this.pushSystemNotice(
-            `Summarization failed (${event.errorMessage || 'unknown error'}) — retrying ${event.attempt}/${event.maxAttempts} in ${Math.max(1, Math.round((event.delayMs || 0) / 1000))}s.`);
+            `Summarization failed (${cleanProviderError(event.errorMessage || 'unknown error')}) — retrying ${event.attempt}/${event.maxAttempts} in ${Math.max(1, Math.round((event.delayMs || 0) / 1000))}s.`);
           break;
         case 'summarization_retry_attempt_start':
           log.userSession.forSession(s.sessionState.sessionId).debug(
@@ -1679,7 +1680,7 @@ export class UserSession {
     const msg = event.message;
     let errorText: string | null = null;
     if (msg.role !== 'toolResult' && (msg.stopReason === 'error' || msg.errorMessage)) {
-      errorText = msg.errorMessage || 'An error occurred';
+      errorText = cleanProviderError(msg.errorMessage || 'An error occurred');
     }
     if (errorText) {
       const entry = this.tagEntry({ role: 'system', text: errorText, streaming: false, timestamp: Date.now(), isError: true });

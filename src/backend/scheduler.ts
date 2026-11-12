@@ -36,6 +36,7 @@ import { sendNotification } from './notifications.js';
 import { getUserRole } from './users.js';
 import { broadcastToUser } from './client-hub.js';
 import { canRunTaskScripts } from '../shared/tasks.js';
+import { cleanProviderError } from './error-text.js';
 
 import type {
   ScheduledTask,
@@ -793,7 +794,7 @@ export class Scheduler {
         if (event.type === 'message_end' && event.message?.role === 'assistant') {
           const msg = event.message;
           if (msg.stopReason === 'error' || msg.errorMessage) {
-            finish(() => resolve(`__AGENT_ERROR__:${msg.errorMessage || 'Agent returned an error'}`));
+            finish(() => resolve(`__AGENT_ERROR__:${cleanProviderError(msg.errorMessage || 'Agent returned an error')}`));
             return;
           }
           const content = Array.isArray(msg.content) ? msg.content : [];

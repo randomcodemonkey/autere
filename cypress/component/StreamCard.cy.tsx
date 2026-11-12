@@ -18,6 +18,23 @@ describe('StreamCard', () => {
     cy.get('.card-title').should('contain', 'Chat');
   });
 
+  it('shows the session name next to the title when set', () => {
+    cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={cy.stub()} sessionName="Kymi threshold watch" />);
+    cy.get('.card-title .chat-session-name').should('have.text', 'Kymi threshold watch');
+    cy.get('.card-title').should('contain', 'Chat');
+    cy.get('.chat-session-name').should('have.attr', 'title', 'Kymi threshold watch');
+    cy.get('.chat-session-name').should('have.css', 'text-transform', 'none');
+    cy.get('.chat-session-name').should('have.css', 'text-overflow', 'ellipsis');
+  });
+
+  it('hides the session name when the session has none', () => {
+    cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={cy.stub()} sessionId="01a188d2-4de0-77a9-80d5-3fa7ab365e9c" sessionName={null} />);
+    cy.get('.chat-session-name').should('not.exist');
+    cy.get('.card-title').should('not.contain', '01a188d2');
+    cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={cy.stub()} sessionName="   " />);
+    cy.get('.chat-session-name').should('not.exist');
+  });
+
   it('renders filter buttons', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={cy.stub()} />);
     cy.get('.stream-toggle').should('have.length', 3);

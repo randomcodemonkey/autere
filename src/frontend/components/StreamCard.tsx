@@ -34,6 +34,8 @@ interface StreamCardProps {
   onCancelPending?: (text: string) => Promise<boolean>;
   /** Active session id — passed to ChatInput for draft persistence */
   sessionId?: string | null;
+  /** pi session title (pi's /name); shown next to the card title when set */
+  sessionName?: string | null;
 }
 
 /** Truncation limits per role (characters), for non-edit messages */
@@ -50,8 +52,9 @@ const TRUNC_LEN: Record<string, number> = {
 /** Collapse edit diffs longer than this many diff rows */
 const EDIT_COLLAPSE_ROWS = 12;
 
-export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onGoToView, onSetModel, onSetPersona, modelNames, onCompact, onCommandError, steerPending, followUpPending, steerQueue, followUpQueue, model, models, activeModelId, onModelsFetched, onSent, onCancelPending, onModifyPending, sessionId }) => {
+export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onGoToView, onSetModel, onSetPersona, modelNames, onCompact, onCommandError, steerPending, followUpPending, steerQueue, followUpQueue, model, models, activeModelId, onModelsFetched, onSent, onCancelPending, onModifyPending, sessionId, sessionName }) => {
   const boxRef = useRef<HTMLDivElement>(null);
+  const sessionLabel = (sessionName ?? '').trim();
   const [filters, setFilters] = useState({
     thinking: localStorage.getItem('autere-filter-thinking') !== 'off',
     toolResult: localStorage.getItem('autere-filter-toolResult') !== 'off',
@@ -298,7 +301,12 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   return (
     <div className={`card stream-card${isStreaming ? ' working' : ''}`}>
       <div className="card-title">
-        <span>Chat</span>
+        <span className="chat-title">
+          Chat
+          {sessionLabel && (
+            <span className="chat-session-name" title={sessionLabel}>{sessionLabel}</span>
+          )}
+        </span>
         <div className="stream-filters">
           <button
             className={`stream-toggle${filters.thinking ? ' active' : ''}`}

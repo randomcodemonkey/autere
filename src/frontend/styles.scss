@@ -964,6 +964,27 @@ body {
 
 // Keep all card headers the same height whether they contain buttons or
 // only a title — titles without buttons otherwise render visibly shorter.
+// Chat card title: the session name sits next to the label when pi has one,
+// in normal case (it is user data, not a section label) and cut short so the
+// thinking/tools/edits toggles keep their room.
+.card-title .chat-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.chat-session-name {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--c-text-2);
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-wrapper * .card-header .card-title {
   line-height: 2.4rem;
 }

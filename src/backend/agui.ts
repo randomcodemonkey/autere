@@ -33,6 +33,7 @@ import type { RpcImage } from './rpc-client.js';
 import type { UserSession } from './user-session.js';
 import { log } from './logger.js';
 import { sanitizeUserName } from '../shared/format.js';
+import { cleanProviderError } from './error-text.js';
 
 // ── Limits (mirror the /session/messages attachment rules) ──
 
@@ -834,7 +835,7 @@ export async function handleAguiRun(opts: AguiRunOptions): Promise<void> {
     if (event?.type === 'error') {
       // Not a run failure (e.g. a failed auto-compaction) — surface it as a
       // custom event and let the turn finish normally.
-      writeSse(res, { type: 'CUSTOM', name: 'autere.error', value: { message: String(event.data?.message || 'Agent error') }, timestamp: Date.now() });
+      writeSse(res, { type: 'CUSTOM', name: 'autere.error', value: { message: cleanProviderError(String(event.data?.message || 'Agent error')) }, timestamp: Date.now() });
       return;
     }
     try { emit(event); } catch (err) {

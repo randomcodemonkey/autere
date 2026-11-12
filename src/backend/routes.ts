@@ -325,6 +325,7 @@ async function runHandler(route: RouteDef, match: RegExpMatchArray | null, c: Ct
 }
 
 import { MonitorRpcClient } from './rpc-client.js';
+import { cleanProviderError } from './error-text.js';
 
 export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?: Scheduler): ReturnType<typeof createServer> {
   // Base URL the pi-autere extension uses to reach this server (persisted
@@ -1951,7 +1952,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
             off = oneShot.onEvent((event: any) => {
               if (event.type !== 'message_end' || event.message?.role !== 'assistant') return;
               if (event.message.stopReason === 'error' || event.message.errorMessage) {
-                settle(new Error(event.message.errorMessage || 'Model returned an error'));
+                settle(new Error(cleanProviderError(event.message.errorMessage || 'Model returned an error')));
                 return;
               }
               const content = (event.message.content || [])
