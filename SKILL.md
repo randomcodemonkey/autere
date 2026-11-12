@@ -365,6 +365,9 @@ extras/pi-autere/      # pi extension: agent-facing autere API — schedule/list
                        # messages, deliver a message to another session (an idle
                        # target is woken with a prompt; a mid-turn target gets
                        # it queued as a steer — the result reports queued:true),
+                       # query a session's file changes (autere_session_changes: the
+                       # Changes-tab log - path filter, optional diffs - so "did we
+                       # change X in this session" survives a lost context),
                        # bind a
                        # persona to the calling session (autere_persona: list /
                        # name-or-id / "none"; pi-personas re-reads the binding

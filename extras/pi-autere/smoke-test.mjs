@@ -71,6 +71,11 @@ const server = createServer((req, res) => {
         ? [{ role: "user", text: "hello there" }, { role: "assistant", text: "hi, what can I do" }]
         : [{ role: "user", text: "other session" }]);
     }
+    const changes = path.match(/^\/sessions\/(s\d+)\/file-changes$/);
+    if (req.method === "GET" && changes) {
+      // mirrors the real route: per-session append-only change log
+      return data(res, changes[1] === "s1" ? state.fileChanges : []);
+    }
     if (req.method === "GET" && path === "/personas") {
       return data(res, [
         { id: "p1", name: "BPMN Agent", description: "diagram mapper", prompt: "You map BPMN." },
@@ -122,6 +127,11 @@ state.sessions = [
   { id: "s2", sessionName: "Beta", sessionFile: `${envDir}/sessions/s2.jsonl`, lastActivity: 1700000100000, active: true, streaming: true },
 ];
 state.runs = [{ runId: "r1", taskId: "task-1", taskName: "Alpha task", trigger: "schedule", startedAt: 1700000200000, status: "success", agentResult: "condition not met yet" }];
+state.fileChanges = [
+  { ts: 1700000000000, path: "src/app.ts", tool: "write", change: "created", diff: "Create src/app.ts\n\n@@ -0,0 +1 @@\n+export const app = 1;" },
+  { ts: 1700000005000, path: "README.md", tool: "bash", change: "modified", diff: "Modified README.md\n\n@@ -1 +1 @@\n-old\n+new" },
+  { ts: 1700000010000, path: "src/app.ts", tool: "edit", change: "modified", diff: "Modified src/app.ts\n\n@@ -1 +1 @@\n-export const app = 1;\n+export const app = 2;" },
+];
 
 const finish = (code) => {
   server.close();
@@ -146,7 +156,7 @@ try {
   const tools = {};
   const { default: factory } = await import("./index.ts");
   factory({ registerTool: (t) => (tools[t.name] = t) });
-  for (const name of ["autere_schedule_task", "autere_list_tasks", "autere_set_task_enabled", "autere_find_sessions", "autere_send_to_session", "autere_persona", "send_notification"]) {
+  for (const name of ["autere_schedule_task", "autere_list_tasks", "autere_set_task_enabled", "autere_find_sessions", "autere_session_changes", "autere_send_to_session", "autere_persona", "send_notification"]) {
     assert.ok(tools[name], `${name} registered`);
   }
   const run = (name, params, ctx) => tools[name].execute("call-1", params, undefined, undefined, ctx);
@@ -286,6 +296,25 @@ try {
   assert.strictEqual(cleared.details.persona, null, "cleared");
   assert.strictEqual(state.persona, null, "cleared server-side");
   await assert.rejects(run("autere_persona", { persona: "ghost" }, ctx), /available: BPMN Agent, Reviewer/, "unknown persona names the valid ones");
+
+  // 8e. session file changes — summary, path filter, diffs, empty result
+  const summaryText = text(await run("autere_session_changes", {}, ctx));
+  assert.ok(summaryText.includes("2 file(s) changed in this session (3 change(s))"), summaryText);
+  assert.ok(summaryText.includes("src/app.ts"), summaryText);
+  assert.ok(summaryText.includes("README.md"), summaryText);
+
+  const filtered = text(await run("autere_session_changes", { path: "APP.TS" }, ctx));
+  assert.ok(filtered.includes('2 change(s) matching "APP.TS"'), filtered);
+  assert.ok(filtered.includes("Modified src/app.ts"), "path filter shows the change header");
+
+  const withDiff = await run("autere_session_changes", { path: "app.ts", includeDiff: true }, ctx);
+  assert.ok(text(withDiff).includes("+export const app = 2;"), "diff body included");
+  assert.ok(!text(withDiff).includes("README.md"), "other files filtered out");
+  assert.strictEqual(withDiff.details.entries.length, 2, "details carry one entry per change");
+
+  const noMatch = text(await run("autere_session_changes", { path: "nope.txt" }, ctx));
+  assert.ok(noMatch.includes('No recorded change matching "nope.txt"'), noMatch);
+  assert.strictEqual((await run("autere_session_changes", { session: "s2" }, ctx)).details.total, 0, "other session has no changes");
 
   // 9. every call authenticated with the minted token
   assert.deepStrictEqual([...state.auth], [`Bearer ${token}`], "backend saw exactly the agent token");

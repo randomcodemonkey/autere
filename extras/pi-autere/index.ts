@@ -1,11 +1,12 @@
 /**
  * pi-autere — the agent's side of the autere dashboard.
  *
- * Registers six tools:
+ * Registers the agent-facing tools:
  *   autere_schedule_task      — create a recurring background task
  *   autere_list_tasks         — inspect scheduled tasks + latest run outcome
  *   autere_set_task_enabled   — stop/resume a task (the "goal reached" step)
  *   autere_find_sessions      — sessions and their latest messages
+ *   autere_session_changes  — files changed in a session (Changes tab log)
  *   autere_send_to_session    — deliver a message to another session
  *   autere_persona            — list personas / bind one to this session
  *   send_notification         — OS-level notification on the user's devices
@@ -322,6 +323,78 @@ export default function (pi: ExtensionAPI) {
 					id: s.id, name: s.sessionName ?? null, active: !!s.active, streaming: !!s.streaming, lastActivity: s.lastActivity,
 				})),
 			});
+		},
+	});
+
+	pi.registerTool({
+		name: "autere_session_changes",
+		label: "Session file changes",
+		promptSnippet: "autere_session_changes — files changed in a session, with diffs on request",
+		description:
+			"List the files changed in a session — the log behind autere's Changes tab (writes, edits, deletes recorded from the file tools and bash commands), each with tool, change kind and time.\n\n" +
+			"Use it when the user asks whether something was changed in this session: the answer survives even when the file's content has left your context. Pass `path` to narrow to one file (case-insensitive fragment) and `includeDiff` to get the recorded diff text. Defaults to the calling session; pass `session` to read another one.\n\n" +
+			"The log is append-only: one entry per change, so a file edited three times appears three times. Paths are relative to the session's working directory unless absolute. Changes made outside the agent (an editor, another machine) are not recorded.",
+		parameters: Type.Object({
+			path: Type.Optional(Type.String({ description: 'Only entries whose path contains this fragment, case-insensitive (e.g. "src/app.ts")' })),
+			session: Type.Optional(Type.String({ description: 'Session id to read; omit for the calling session ("current" also works)' })),
+			includeDiff: Type.Optional(Type.Boolean({ description: "Include diff text (last 10 matching entries, 4000 chars each)" })),
+		}),
+		annotations: { readOnlyHint: true },
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const wanted = String(params.session ?? "").trim();
+			const sessionId = wanted && wanted !== "current" ? wanted : currentSessionId(ctx);
+			if (!sessionId) throw new Error('no session context here — pass an explicit `session` id (see autere_find_sessions)');
+			const all: any[] = (await api("GET", `/sessions/${encodeURIComponent(sessionId)}/file-changes`, undefined, signal)) ?? [];
+			const rows = (Array.isArray(all) ? all : []).filter((e) => e && e.path);
+			const needle = String(params.path ?? "").trim().toLowerCase();
+			const matched = needle ? rows.filter((e) => String(e.path).toLowerCase().includes(needle)) : rows;
+
+			if (matched.length === 0) {
+				const text = needle
+					? `No recorded change matching "${params.path}" in this session (${rows.length} change(s) to other files).`
+					: "No file changes recorded in this session.";
+				return ok(text, { session: sessionId, total: rows.length, entries: [] });
+			}
+
+			if (!needle) {
+				const files = new Map<string, { changes: Set<string>; tools: Set<string>; count: number; last: number }>();
+				for (const e of matched) {
+					const f = files.get(e.path) ?? { changes: new Set<string>(), tools: new Set<string>(), count: 0, last: 0 };
+					if (e.change) f.changes.add(String(e.change));
+					if (e.tool) f.tools.add(String(e.tool));
+					f.count++;
+					f.last = Math.max(f.last, Number(e.ts) || 0);
+					files.set(e.path, f);
+				}
+				const ordered = [...files.entries()].sort((a, b) => b[1].last - a[1].last || a[0].localeCompare(b[0]));
+				const shown = ordered.slice(0, 60);
+				const lines = shown.map(([p, f]) =>
+					`- ${p} — ${[...f.changes].join("/") || "changed"} (${[...f.tools].join(", ") || "?"}), ${f.count}x, last ${iso(f.last)}`);
+				if (ordered.length > shown.length) lines.push(`... and ${ordered.length - shown.length} more file(s)`);
+				return ok(
+					`${ordered.length} file(s) changed in this session (${matched.length} change(s)):\n${lines.join("\n")}`,
+					{ session: sessionId, total: matched.length, files: ordered.length,
+						entries: shown.map(([p, f]) => ({ path: p, changes: [...f.changes], tools: [...f.tools], count: f.count, last: f.last })) },
+				);
+			}
+
+			const tail = matched.slice(-10);
+			const blocks = tail.map((e, i) => {
+				const head = `  ${i + 1}. ${iso(e.ts)} — ${e.tool || "?"} (${e.change || "changed"})`;
+				if (!params.includeDiff) {
+					const firstLine = String(e.diff ?? "").split("\n")[0]?.trim();
+					return firstLine ? `${head}\n     ${firstLine}` : head;
+				}
+				const diff = String(e.diff ?? "");
+				const body = diff.length > 4000 ? `${diff.slice(0, 4000)}\n... (${diff.length - 4000} chars clipped)` : diff;
+				return `${head}\n${body.replace(/^/gm, "     ")}`;
+			});
+			const skipped = matched.length - tail.length;
+			return ok(
+				`${matched.length} change(s) matching "${params.path}" in this session${skipped > 0 ? ` (showing the last ${tail.length})` : ""}:\n${blocks.join("\n")}`,
+				{ session: sessionId, total: matched.length,
+					entries: tail.map((e: any) => ({ path: e.path, change: e.change ?? null, tool: e.tool ?? null, ts: e.ts ?? null })) },
+			);
 		},
 	});
 
