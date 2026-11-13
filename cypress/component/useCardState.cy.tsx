@@ -1,4 +1,5 @@
 import React from 'react';
+import { storageKey } from '../../src/frontend/storage';
 import { useCardState } from '../../src/frontend/hooks/useCardState';
 
 // Test wrapper component for the hook
@@ -37,15 +38,15 @@ describe('useCardState', () => {
     cy.get('[data-testid="collapsed"]').should('contain', 'true');
     // Check localStorage was updated
     cy.window().then((win) => {
-      const stored = win.localStorage.getItem('autere-card-test-desktop');
+      const stored = win.localStorage.getItem(storageKey('autere-card-test-desktop'));
       expect(stored).to.equal('1');
     });
   });
 
   it('uses different keys for mobile vs desktop', () => {
     // Set different values for mobile and desktop
-    localStorage.setItem('autere-card-test-desktop', '1');
-    localStorage.setItem('autere-card-test-mobile', '0');
+    localStorage.setItem(storageKey('autere-card-test-desktop'), '1');
+    localStorage.setItem(storageKey('autere-card-test-mobile'), '0');
     
     cy.mount(<TestComponent cardId="test" />);
     // Desktop should be collapsed (stored as '1')

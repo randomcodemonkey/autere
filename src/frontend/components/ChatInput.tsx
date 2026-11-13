@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useState, useRef, useCallback, useEffect } from 
 import { API } from '../api-paths';
 import { apiJSON, JSON_HEADERS } from '../api';
 import { PendingMessagesModal } from './PendingMessagesModal';
+import { getStored, setStored } from '../storage';
 import type { PendingType } from './PendingMessagesModal';
 
 // CodeMirror markdown editor loads as a separate chunk — it's only used on
@@ -87,7 +88,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
   const draftKey = `autere:draft:${sessionId ?? ''}`;
   const [value, setValue] = useState(() => {
     try {
-      return localStorage.getItem(draftKey) ?? '';
+      return getStored(draftKey) ?? '';
     } catch {
       return '';
     }
@@ -96,7 +97,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
   // session switch while chat view stays mounted).
   useEffect(() => {
     try {
-      setValue(localStorage.getItem(draftKey) ?? '');
+      setValue(getStored(draftKey) ?? '');
     } catch {
       /* ignore */
     }
@@ -105,7 +106,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onNewSession, onGoToView, 
     (v: string) => {
       setValue(v);
       try {
-        localStorage.setItem(draftKey, v);
+        setStored(draftKey, v);
       } catch {
         /* quota/private mode — in-memory value still works */
       }

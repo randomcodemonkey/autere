@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { basePath, url } from './base-path';
 import { getClientId, CLIENT_ID_HEADER } from './client-id';
+import { applyCachedTheme } from './theme';
 import ErrorBoundary from './components/ErrorBoundary';
 import './styles.scss';
 
@@ -21,6 +22,10 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
   }
   return origFetch(input, init);
 };
+
+// Paint this backend's last theme before the first frame; /auth/status
+// re-applies the authoritative one.
+applyCachedTheme();
 
 declare const __BUILD_ID__: string;
  

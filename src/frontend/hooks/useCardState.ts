@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { getStored, setStored } from '../storage';
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -20,7 +21,7 @@ export function useCardState(cardId: string, defaultCollapsed = false) {
   const storageKey = `autere-card-${cardId}-${isMobile ? 'mobile' : 'desktop'}`;
 
   const [collapsed, setCollapsed] = useState(() => {
-    const stored = localStorage.getItem(storageKey);
+    const stored = getStored(storageKey);
     if (stored !== null) return stored === '1';
     // No stored preference: mobile defaults to collapsed (except chat and
     // the status-view cards, which stack full-height)
@@ -32,7 +33,7 @@ export function useCardState(cardId: string, defaultCollapsed = false) {
   // When switching between mobile/desktop, load the preference for that layout
   useEffect(() => {
     const key = `autere-card-${cardId}-${isMobile ? 'mobile' : 'desktop'}`;
-    const stored = localStorage.getItem(key);
+    const stored = getStored(key);
     if (stored !== null) {
       setCollapsed(stored === '1');
     } else {
@@ -47,7 +48,7 @@ export function useCardState(cardId: string, defaultCollapsed = false) {
     setCollapsed((prev) => {
       const next = !prev;
       const key = `autere-card-${cardId}-${isMobile ? 'mobile' : 'desktop'}`;
-      localStorage.setItem(key, next ? '1' : '0');
+      setStored(key, next ? '1' : '0');
       return next;
     });
   }, [cardId, isMobile]);

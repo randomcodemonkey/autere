@@ -20,13 +20,14 @@ import { uiSessionName } from '../session-name';
 import { useSessionStream } from '../hooks/useSessionStream';
 import { ExtensionUiModal } from '../components/ExtensionUiModal';
 import type { SSEMessage, SessionInfo } from '../types';
+import { getStored, setStored } from '../storage';
 
 /** Combine base auth/SSE status with session streaming state */
 const PINNED_SESSION_FILES_KEY = 'autere:pinned-session-files';
 
 function readPinnedSessionFiles(): string[] {
   try {
-    const value = JSON.parse(window.localStorage.getItem(PINNED_SESSION_FILES_KEY) || '[]');
+    const value = JSON.parse(getStored(PINNED_SESSION_FILES_KEY) || '[]');
     return Array.isArray(value) ? value.filter((file): file is string => typeof file === 'string') : [];
   } catch (error) {
     console.warn('Could not read pinned sessions from local storage', error);
@@ -116,7 +117,7 @@ export function AppPage({
   const [pinnedSessionFiles, setPinnedSessionFiles] = useState(readPinnedSessionFiles);
   useEffect(() => {
     try {
-      window.localStorage.setItem(PINNED_SESSION_FILES_KEY, JSON.stringify(pinnedSessionFiles));
+      setStored(PINNED_SESSION_FILES_KEY, JSON.stringify(pinnedSessionFiles));
     } catch (error) {
       console.warn('Could not save pinned sessions to local storage', error);
     }
