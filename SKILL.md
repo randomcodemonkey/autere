@@ -206,6 +206,10 @@ src/backend/
                         # (`session` id passed by schedule_task, resolved by the
                         # backend) or use task-form/API workdirs (which force
                         # sandboxing even when user/global sandboxing is off).
+                        # A task created by an agent stores originSessionId; its run
+                        # sessions are linked to that session for cross-session
+                        # messaging (session-links.ts, depth 1) and the link is
+                        # dropped when the run session file is removed.
                         # Each run's pi process is a UserSession adopted into the
                         # ProcessManager (adopted after start, released when the
                         # run ends), so the run's session shows as active in the
@@ -233,6 +237,11 @@ src/backend/
                         # only — applied per user by extensions.ts
                         # enrichExtensionsFor() (check: extension-enrich.check.ts)
   stream-history.ts     # StreamMessage building, extractImages (shared)
+  session-links.ts      # Cross-session messaging graph: parent<->child (a task
+                        # run and the session that created it) and user-granted
+                        # peers, symmetric, depth 1 (no transitivity). Enforced
+                        # for agent tools only - requests without ?fromSession=
+                        # (dashboard, CLI) act as the user (check: session-links.check.ts)
   error-text.ts         # cleanProviderError(): an HTML error page from a provider
                         # (GitHub "Unicorn!" 503 through Copilot) becomes one
                         # readable line; used for chat notices, task run errors,
@@ -368,6 +377,12 @@ extras/pi-autere/      # pi extension: agent-facing autere API — schedule/list
                        # query a session's file changes (autere_session_changes: the
                        # Changes-tab log - path filter, optional diffs - so "did we
                        # change X in this session" survives a lost context),
+                       # and only within the session's messaging links: tools pass
+                       # ?fromSession / body.fromSession, so find_sessions lists,
+                       # send_to_session reaches and session_changes reads only the
+                       # parent, own task runs and user-paired sessions; task
+                       # mutations are limited to tasks the session created
+                       # (session-links.ts, Sessions -> Edit session -> Messaging),
                        # bind a
                        # persona to the calling session (autere_persona: list /
                        # name-or-id / "none"; pi-personas re-reads the binding

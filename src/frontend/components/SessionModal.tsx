@@ -82,7 +82,7 @@ interface SessionViewProps {
   /** Admin-only: show the sandbox workdir field in the new-session form */
   canSetWorkdir?: boolean;
   /** Creates the session: chosen persona id (null = none) + form name + sandbox workdirs + docker.sock opt-in. clearSessionId deletes that session after the new one is bound ("clear" flow) */
-  onNewSession: (personaId: string | null, sessionName: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string) => void;
+  onNewSession: (personaId: string | null, sessionName: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string, peers?: string[]) => void;
   onSwitchSession: (sessionId: string) => void;
   pinnedSessionFiles?: string[];
   onTogglePinnedSession?: (session: SessionSearchResult) => void;
@@ -242,14 +242,29 @@ export const SessionView: React.FC<SessionViewProps> = ({
     }
   }, [cloneTarget, cloneName, cloneWorkdirs, canSetWorkdir]);
 
+  // Sessions the new session may message (applied right after creation).
+  const [newPeers, setNewPeers] = useState<string[]>([]);
+  const [peerCandidates, setPeerCandidates] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    if (view !== 'new') return;
+    let cancelled = false;
+    setNewPeers([]);
+    apiJSON(API.sessions.list)
+      .then((list: any[]) => {
+        if (!cancelled) setPeerCandidates((list || []).map((s: any) => ({ id: s.id, name: s.sessionName || s.id })));
+      })
+      .catch(() => { if (!cancelled) setPeerCandidates([]); });
+    return () => { cancelled = true; };
+  }, [view]);
+
   const openNewSessionForm = useCallback(() => {
     setNewNameInput(uiSessionName());
     setView('new');
   }, []);
 
   const createNewSession = useCallback(() => {
-    onNewSession(personaId || null, newNameInput.trim(), canSetWorkdir ? newWorkdirs : undefined, canSetWorkdir ? newMountDockerSocket : false);
-  }, [onNewSession, personaId, newNameInput, newWorkdirs, canSetWorkdir, newMountDockerSocket]);
+    onNewSession(personaId || null, newNameInput.trim(), canSetWorkdir ? newWorkdirs : undefined, canSetWorkdir ? newMountDockerSocket : false, undefined, newPeers);
+  }, [onNewSession, personaId, newNameInput, newWorkdirs, canSetWorkdir, newMountDockerSocket, newPeers]);
 
   const visibleSessions = activeOnly ? results.filter((s) => s.active || s.streaming) : results;
 
@@ -330,6 +345,15 @@ export const SessionView: React.FC<SessionViewProps> = ({
             ) : null)}
           </div>
         )}
+        <div className="settings-field session-messaging">
+          <label className="settings-label">Messaging</label>
+          <div className="settings-description">Sessions this one may message, and be messaged by. Agents can only reach their parent, their own task runs and the sessions paired here.</div>
+          <SessionPeerPicker
+            candidates={peerCandidates}
+            selected={newPeers}
+            onToggle={(id, on) => setNewPeers((prev) => (on ? [...new Set([...prev, id])] : prev.filter((p) => p !== id)))}
+          />
+        </div>
       </div>
       <div className="btn-group">
         <button className="btn btn-primary session-create-btn" onClick={createNewSession} disabled={switching || workdirsInvalid || wdCheck?.checking}>
@@ -375,6 +399,8 @@ export const SessionView: React.FC<SessionViewProps> = ({
             onSwitching={onSwitchSession}
           />
         )}
+
+        <SessionMessaging sessionId={sessionId} />
       </div>
 
       <div className="sessions-section">
@@ -531,6 +557,113 @@ export const SessionView: React.FC<SessionViewProps> = ({
           </div>
         </Modal>
       )}
+    </div>
+  );
+};
+
+/**
+ * Checkbox list of sessions: which of them the viewed session may message.
+ * Shown in Create session (applied right after creation) and in Edit session.
+ */
+const SessionPeerPicker: React.FC<{
+  candidates: { id: string; name: string; relationship?: string | null }[];
+  selected: string[];
+  disabled?: boolean;
+  onToggle: (id: string, on: boolean) => void;
+}> = ({ candidates, selected, disabled, onToggle }) => {
+  if (!candidates.length) {
+    return <div className="settings-description">No other sessions yet.</div>;
+  }
+  return (
+    <div className="session-peers">
+      {candidates.map((c) => (
+        <label key={c.id} className="session-peer-row">
+          <input
+            type="checkbox"
+            className="session-peer-check"
+            checked={selected.includes(c.id)}
+            disabled={disabled}
+            onChange={(e) => onToggle(c.id, e.target.checked)}
+          />
+          <span className="session-peer-name">{c.name}</span>
+          {c.relationship && c.relationship !== 'peer' && (
+            <span className="session-peer-rel">{c.relationship}</span>
+          )}
+        </label>
+      ))}
+    </div>
+  );
+};
+
+/**
+ * Cross-session messaging grants for the CURRENT session: a session may
+ * message its parent (the session that created its task), its own task runs,
+ * and the sessions paired here. Parent/child edges are derived from tasks and
+ * shown read-only; grants are symmetric and apply immediately.
+ */
+const SessionMessaging: React.FC<{ sessionId: string | null }> = ({ sessionId }) => {
+  const [links, setLinks] = useState<any | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!sessionId) return;
+    const data = await apiJSON(`${API.session.links}?sessionId=${encodeURIComponent(sessionId)}`);
+    setLinks(data);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    setLinks(null);
+    setError('');
+    load().catch((err) => setError(err?.message || 'Failed to load messaging links'));
+  }, [sessionId, load]);
+
+  const toggle = async (peerId: string, on: boolean) => {
+    if (!sessionId || saving) return;
+    const current = (links?.peers ?? []).map((p: any) => p.id);
+    const peers = on ? [...current, peerId] : current.filter((p: string) => p !== peerId);
+    setSaving(true);
+    setError('');
+    try {
+      await apiSend(API.session.links, 'PUT', { sessionId, peers });
+      await load();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save messaging links');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!sessionId) return null;
+  const selected: string[] = (links?.peers ?? []).map((p: any) => p.id);
+  const parent = links?.parent ?? null;
+  const children: { id: string; name: string }[] = links?.children ?? [];
+  return (
+    <div className="session-messaging settings-field">
+      <label className="settings-label">Messaging</label>
+      <div className="settings-description">
+        Sessions that may message this one, and be messaged by it. Agents can only reach their parent, their own task runs and the sessions paired here.
+      </div>
+      {parent && (
+        <div className="session-messaging-link">parent: <b>{parent.name}</b></div>
+      )}
+      {children.length > 0 && (
+        <div className="session-messaging-link">
+          task runs: <b>{children.map((c) => c.name).join(', ')}</b>
+        </div>
+      )}
+      {links === null ? (
+        <div className="settings-description">Loading…</div>
+      ) : (
+        <SessionPeerPicker
+          candidates={links.candidates ?? []}
+          selected={selected}
+          disabled={saving}
+          onToggle={(id, on) => void toggle(id, on)}
+        />
+      )}
+      {error && <div className="settings-description" style={{ color: 'var(--c-danger-strong)' }}>{error}</div>}
     </div>
   );
 };

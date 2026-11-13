@@ -46,6 +46,35 @@ describe('SessionModal', () => {
   beforeEach(() => {
     cy.intercept('GET', '**/api/v1/sessions/search*', { success: true, data: [] }).as('search');
     cy.intercept('GET', '**/api/v1/sessions', { success: true, data: SESSIONS }).as('sessions');
+    cy.intercept('GET', '**/api/v1/session/links*', {
+      success: true,
+      data: { parent: null, children: [], peers: [], candidates: [] },
+    }).as('links');
+  });
+
+  it('edits the current session\'s messaging grants', () => {
+    cy.intercept('GET', '**/api/v1/session/links*', {
+      success: true,
+      data: {
+        parent: { id: 'pppp0000-0000', name: 'Task creator' },
+        children: [{ id: 'cccc3333-0000', name: 'Task run' }],
+        peers: [{ id: 'bbbb2222-0000', name: 'Second' }],
+        candidates: [
+          { id: 'bbbb2222-0000', name: 'Second', relationship: 'peer' },
+          { id: 'dddd4444-0000', name: 'Stranger', relationship: null },
+        ],
+      },
+    }).as('links');
+    cy.intercept('PUT', '**/api/v1/session/links', { success: true, data: {} }).as('saveLinks');
+
+    mountModal();
+    cy.get('.session-messaging-link').should('contain', 'Task creator').and('contain', 'Task run');
+    cy.get('.session-peer-row').should('have.length', 2);
+    cy.get('.session-peer-check').eq(0).should('be.checked');
+    // Granting a new peer PUTs the full selection (symmetric on the backend)
+    cy.get('.session-peer-check').eq(1).check({ force: true });
+    cy.wait('@saveLinks').its('request.body').should('deep.include', { sessionId: 'aaaa1111-0000' }).and('have.property', 'peers')
+      .and('deep.equal', ['bbbb2222-0000', 'dddd4444-0000']);
   });
 
   it('lists sessions with the current one highlighted', () => {

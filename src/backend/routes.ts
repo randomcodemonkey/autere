@@ -25,6 +25,7 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { isDeepStrictEqual } from 'node:util';
 import { ProcessManager, spawnOpts } from './process-manager.js';
+import { canTalk, forgetSession, linksOf, relationship, setPeers } from './session-links.js';
 import { getUser, getUserRole, hasRole, verifyCredentials, checkAuth, requireAuth, authenticateOidc, isOidcAuthenticated, generateToken, addAuthToken, removeAuthToken, removeUserTokens, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, getLastSession, isRegisteredUser, userMustChangePassword, listApiTokens, createApiToken, deleteApiToken } from './auth.js';
 import { getClientSession, setClientSession, registerClient, broadcastToUser, viewedSessions, hubUsers } from './client-hub.js';
 import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword, getUserMountDockerSocket, getUserTheme, setUserTheme } from './users.js';
@@ -367,6 +368,29 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       }
     }
     return c.session;
+  };
+
+  /**
+   * The session an AGENT tool acts as. autere's tools pass the calling session
+   * id (?fromSession= / body.fromSession); a request without one - the
+   * dashboard, the CLI, probes - acts as the user and is not restricted.
+   * Returns null when the id is not one of this user's sessions.
+   */
+  const toolActor = (c: Ctx, from: unknown): string | null => {
+    const id = typeof from === 'string' ? from.trim() : '';
+    if (!id) return null;
+    return pm.findSession(c.user, id, c.viewed)?.id ?? null;
+  };
+
+  /** Refuse a cross-session tool call the link graph does not allow. */
+  const denyCrossSession = (c: Ctx, from: string, to: string, what: string): boolean => {
+    if (canTalk(c.user, from, to)) return false;
+    sendJSON(c.res, {
+      success: false,
+      error: `Session ${from} is not allowed to ${what} session ${to}: they are not related. ` +
+        'The user can allow it in Sessions -> Edit session -> Messaging (or run it as a child task with autere_schedule_task).',
+    }, 403);
+    return true;
   };
 
   let diskEntrySeq = 0;
@@ -862,7 +886,17 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
   route({
     method: 'GET', path: API.sessions.list, template: `${API_PREFIX}/sessions`,
     role: 'chat', tag: 'Sessions', summary: 'List the caller sessions',
-    handler: async (c) => sendJSON(c.res, { success: true, data: pm.listSessions(c.user, c.viewed) }),
+    handler: async (c) => {
+      const all = pm.listSessions(c.user, c.viewed);
+      // Tool call from a session: visibility follows messaging (see
+      // session-links.ts) — an unrelated session is not even listed.
+      const actor = toolActor(c, c.url.searchParams.get('fromSession'));
+      if (!actor) { sendJSON(c.res, { success: true, data: all }); return; }
+      const visible = all
+        .filter((s) => canTalk(c.user, actor, s.id))
+        .map((s) => ({ ...s, relationship: relationship(c.user, actor, s.id) }));
+      sendJSON(c.res, { success: true, data: visible });
+    },
   });
 
   route({
@@ -1095,6 +1129,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     handler: async (c, m) => {
       const sess = pm.findSession(c.user, m![1], c.viewed);
       if (!sess) { sendJSON(c.res, { success: true, data: [] }); return; }
+      const actor = toolActor(c, c.url.searchParams.get('fromSession'));
+      if (actor && denyCrossSession(c, actor, sess.id, 'read the file changes of')) return;
       // file-changes JSONL is named after the session filename
       const baseName = basename(sess.sessionFile, '.jsonl');
       const filePath = join(getPiEnvDir(c.user), 'file-changes', `${baseName}.jsonl`);
@@ -1199,6 +1235,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // archive when the file exists.
       const exists = sess.sessionFile && existsSync(sess.sessionFile);
       if (exists) renameSync(sess.sessionFile, join(deletedDir, basename(sess.sessionFile)));
+      forgetSession(c.user, sess.id);
       broadcastToUser(c.user, { type: 'sessions', data: pm.listSessions(c.user, c.viewed) });
       sendJSON(c.res, { success: true });
     },
@@ -1264,6 +1301,48 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
 
   const sendTargetMissing = (c: Ctx) =>
     sendJSON(c.res, { success: false, error: 'No active session — reload the page' }, 409);
+
+  // ── Cross-session messaging links ──
+  route({
+    method: 'GET', path: API.session.links, template: `${API_PREFIX}/session/links`,
+    role: 'chat', tag: 'Session', summary: 'Which sessions the viewed session may message (query: sessionId)',
+    handler: async (c) => {
+      const id = String(c.url.searchParams.get('sessionId') ?? '').trim();
+      if (!id) { sendJSON(c.res, { success: false, error: 'sessionId is required' }, 400); return; }
+      const links = linksOf(c.user, id);
+      // Relate the stored ids to the sessions they still name, so the UI can
+      // show names instead of uuids and drop deleted ones.
+      const all = pm.listSessions(c.user, c.viewed);
+      const label = (sid: string) => all.find((s) => s.id === sid)?.sessionName || sid;
+      const related = (ids: string[]) => ids.filter((sid) => all.some((s) => s.id === sid)).map((sid) => ({ id: sid, name: label(sid) }));
+      sendJSON(c.res, {
+        success: true,
+        data: {
+          parent: links.parent ? related([links.parent])[0] ?? null : null,
+          children: related(links.children),
+          peers: related(links.peers),
+          candidates: all.filter((s) => s.id !== id).map((s) => ({ id: s.id, name: s.sessionName || s.id, relationship: relationship(c.user, id, s.id) })),
+        },
+      });
+    },
+  });
+
+  route({
+    method: 'PUT', path: API.session.links, template: `${API_PREFIX}/session/links`,
+    role: 'chat', tag: 'Session', summary: 'Set which sessions the viewed session may message (body: sessionId, peers)',
+    handler: async (c) => {
+      const body = await readBody(c.req);
+      const id = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+      if (!id) { sendJSON(c.res, { success: false, error: 'sessionId is required' }, 400); return; }
+      if (!Array.isArray(body.peers)) { sendJSON(c.res, { success: false, error: 'peers must be an array of session ids' }, 400); return; }
+      // Only the user's own sessions can be linked; parent/child links are
+      // derived from tasks and are not editable here.
+      const own = new Set(pm.listSessions(c.user, c.viewed).map((s) => s.id));
+      const peers = (body.peers as unknown[]).filter((p): p is string => typeof p === 'string' && p !== id && own.has(p));
+      setPeers(c.user, id, peers);
+      sendJSON(c.res, { success: true, data: linksOf(c.user, id) });
+    },
+  });
 
   route({
     method: 'GET', path: API.session.state, template: `${API_PREFIX}/session/state`,
@@ -1631,6 +1710,8 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       const body = await readBody(c.req);
       const t = await resolveTarget(c, body.sessionId, true);
       if (!t) { sendTargetMissing(c); return; }
+      const actor = toolActor(c, body.fromSession);
+      if (actor && denyCrossSession(c, actor, t.state.sessionState.sessionId, 'message')) return;
       const sessionState = t.state.sessionState;
       const { message, type, images } = body;
       if ((!message || typeof message !== 'string' || !message.trim()) && !(Array.isArray(images) && images.length > 0)) {
@@ -2401,11 +2482,13 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         // (such sessions can drop out of the listing entirely).
         let cwd: string | undefined;
         let workdirs: string[] | undefined;
+        let originSessionId: string | undefined;
         if (typeof input.session === 'string' && input.session.trim()) {
           const sent = input.session.trim();
           const origin = pm.findSession(c.user, sent, new Set());
           const file = origin?.sessionFile ?? findSessionFileBySessionId(c.user, sent);
           if (file) {
+            originSessionId = origin?.id ?? sent;
             const live = pm.get(c.user, file);
             const saved = live ? undefined : spawnOpts(c.user, file);
             const wds = live ? live.rpc.getWorkdirs() : (saved?.workdirs ?? origin?.workdirs ?? []);
@@ -2426,6 +2509,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         }
         const task: ScheduledTask = {
           id: randomUUID(),
+          originSessionId,
           name: input.name.trim(),
           schedule: input.schedule.trim(),
           prompt: input.prompt,
@@ -2464,6 +2548,13 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         const existing = getTask(c.user, m![1]);
         if (!existing) { sendJSON(c.res, { success: false, error: 'Task not found' }, 404); return; }
         const input = await readBody(c.req);
+        // Agents manage only the tasks their own session created; the user
+        // (dashboard, CLI) may edit any task.
+        const actor = toolActor(c, input.fromSession);
+        if (actor && existing.originSessionId !== actor) {
+          sendJSON(c.res, { success: false, error: `Task "${existing.name}" was not created by this session - the user can change it in Scheduled Tasks.` }, 403);
+          return;
+        }
         const err = validateTaskInput(input);
         if (err) { sendJSON(c.res, { success: false, error: err }, 400); return; }
         if (!canRunTaskScripts(getUserRole(c.user)) && (input.seedScript || input.resultScript)) {
@@ -2525,6 +2616,12 @@ ${text.trim()}`).catch((err) => settle(err as Error));
     role: 'control', tag: 'Scheduler', summary: 'Delete a scheduled task',
     handler: async (c, m) => {
       try {
+        const actor = toolActor(c, c.url.searchParams.get('fromSession'));
+        const existing = actor ? getTask(c.user, m![1]) : undefined;
+        if (actor && existing && existing.originSessionId !== actor) {
+          sendJSON(c.res, { success: false, error: `Task "${existing.name}" was not created by this session - the user can delete it in Scheduled Tasks.` }, 403);
+          return;
+        }
         const deleted = deleteTask(c.user, m![1]);
         if (!deleted) { sendJSON(c.res, { success: false, error: 'Task not found' }, 404); return; }
         sendJSON(c.res, { success: true });

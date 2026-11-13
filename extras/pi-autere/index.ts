@@ -103,6 +103,18 @@ function currentSessionId(ctx: any): string | null {
 	}
 }
 
+/**
+ * Tool requests carry the calling session so the backend can enforce the
+ * cross-session messaging rules (session-links.ts): a session may talk to its
+ * parent, its task runs and the sessions the user paired with it. Without the
+ * id the request would act as the user, which is why every tool call that
+ * touches another session passes it.
+ */
+function actorQuery(ctx: any, sep: "?" | "&" = "?"): string {
+	const id = currentSessionId(ctx);
+	return id ? `${sep}fromSession=${encodeURIComponent(id)}` : "";
+}
+
 /** "current" → this session, "none" → null, anything else → that session id. */
 function resolveReportTarget(reportTo: string, ctx: any): string | null {
 	const value = String(reportTo ?? "").trim();
@@ -269,18 +281,21 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: "autere_set_task_enabled — stop or resume a scheduled task",
 		description:
 			"Enable or disable a scheduled task. Disabling stops all future runs while the task and its run history stay on record; enabling resumes it.\n\n" +
-			"Disabling is also the completion step of a watch-until-X task: once a run has delivered its conclusive outcome, it disables its own task so the schedule stops firing. Pass the task id (autere_list_tasks, or the id in a task prompt's footer).",
+			"Disabling is also the completion step of a watch-until-X task: once a run has delivered its conclusive outcome, it disables its own task so the schedule stops firing. Pass the task id (autere_list_tasks, or the id in a task prompt's footer).\n\n" +
+			"A session changes only the tasks it created; tasks created elsewhere (the dashboard, another session) are refused — the user can change them in Scheduled Tasks.",
 		parameters: Type.Object({
 			taskId: Type.String({ description: "The task's id" }),
 			enabled: Type.Boolean({ description: "false = stop future runs, true = resume them" }),
 		}),
-		async execute(_toolCallId, params, signal) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const taskId = String(params.taskId).trim();
 			const data = await api("GET", "/scheduler/tasks", undefined, signal);
 			const task = (data?.tasks ?? []).find((t: any) => t.id === taskId);
 			if (!task) throw new Error(`scheduled task "${taskId}" not found — use autere_list_tasks to see the ids`);
-			// PUT replaces the task, so resend it as-is with only `enabled` flipped.
-			const updated = await api("PUT", `/scheduler/tasks/${taskId}`, { ...task, enabled: params.enabled }, signal);
+			// PUT replaces the task, so resend it as-is with only `enabled`
+			// flipped. fromSession lets the backend refuse tasks another
+			// session created (the user can always change them in the UI).
+			const updated = await api("PUT", `/scheduler/tasks/${taskId}`, { ...task, enabled: params.enabled, fromSession: currentSessionId(ctx) ?? undefined }, signal);
 			return ok(
 				`Task "${updated?.name ?? task.name}" (${taskId}) is now ${updated?.enabled ? "enabled" : "disabled"} (schedule: ${updated?.schedule ?? task.schedule})`,
 				{ taskId, enabled: !!(updated?.enabled ?? params.enabled) },
@@ -294,16 +309,19 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: "autere_find_sessions — locate sessions and read their latest messages",
 		description:
 			"Find this user's sessions (the sessions behind the autere dashboard) together with their latest messages.\n\n" +
+			"Only sessions this one may message are listed: itself, its parent (the session that created the task this run belongs to), its own task runs, and sessions the user paired with it — each tagged with that relationship. Unrelated sessions stay invisible; the user can allow a pair in Sessions -> Edit session -> Messaging.\n\n" +
 			"Without `query` you get the most recently active sessions; with `query` (2+ characters) sessions match on name, id and message content. Each result carries the session id, name, last activity, whether a pi process is running/streaming (busy), and the last few messages, clipped. Sessions that were deleted do not appear.",
 		parameters: Type.Object({
 			query: Type.Optional(Type.String({ description: "Search text (name, id, message content); omit to list recent sessions" })),
 			limit: Type.Optional(Type.Integer({ description: "How many sessions to return (default 5, max 10)", default: 5, minimum: 1, maximum: 10 })),
 		}),
 		annotations: { readOnlyHint: true },
-		async execute(_toolCallId, params, signal) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const query = String(params.query ?? "").trim();
 			const limit = Math.min(Math.max(params.limit ?? 5, 1), 10);
-			const path = query.length >= 2 ? `/sessions/search?q=${encodeURIComponent(query)}` : "/sessions";
+			const base = query.length >= 2 ? `/sessions/search?q=${encodeURIComponent(query)}` : "/sessions";
+			// The backend narrows the list to sessions this one may message.
+			const path = base + actorQuery(ctx, base.includes("?") ? "&" : "?");
 			const found: any[] = (await api("GET", path, undefined, signal)) ?? [];
 			const sessions = found.slice(0, limit);
 			if (sessions.length === 0) return ok(query ? `No sessions match "${query}".` : "No sessions.", { sessions: [] });
@@ -316,7 +334,8 @@ export default function (pi: ExtensionAPI) {
 					messages = ["    (history unavailable)"];
 				}
 				const state = s.streaming ? "streaming (busy)" : s.active ? "running, idle" : "not running";
-				return `- id: ${s.id}  name: ${s.sessionName ?? "(unnamed)"}  last activity: ${iso(s.lastActivity)}  ${state}\n${messages.join("\n")}`;
+				const rel = s.relationship ? `  [${s.relationship}]` : "";
+				return `- id: ${s.id}  name: ${s.sessionName ?? "(unnamed)"}  last activity: ${iso(s.lastActivity)}  ${state}${rel}\n${messages.join("\n")}`;
 			}));
 			return ok(`${sessions.length} session(s):\n${blocks.join("\n")}`, {
 				sessions: sessions.map((s: any) => ({
@@ -333,7 +352,7 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"List the files changed in a session — the log behind autere's Changes tab (writes, edits, deletes recorded from the file tools and bash commands), each with tool, change kind and time.\n\n" +
 			"Use it when the user asks whether something was changed in this session: the answer survives even when the file's content has left your context. Pass `path` to narrow to one file (case-insensitive fragment) and `includeDiff` to get the recorded diff text. Defaults to the calling session; pass `session` to read another one.\n\n" +
-			"The log is append-only: one entry per change, so a file edited three times appears three times. Paths are relative to the session's working directory unless absolute. Changes made outside the agent (an editor, another machine) are not recorded.",
+			"The log is append-only: one entry per change, so a file edited three times appears three times. Paths are relative to the session's working directory unless absolute. Changes made outside the agent (an editor, another machine) are not recorded. Another session's log is readable only when it is related (parent, child task run, or a session the user paired with this one).",
 		parameters: Type.Object({
 			path: Type.Optional(Type.String({ description: 'Only entries whose path contains this fragment, case-insensitive (e.g. "src/app.ts")' })),
 			session: Type.Optional(Type.String({ description: 'Session id to read; omit for the calling session ("current" also works)' })),
@@ -344,7 +363,7 @@ export default function (pi: ExtensionAPI) {
 			const wanted = String(params.session ?? "").trim();
 			const sessionId = wanted && wanted !== "current" ? wanted : currentSessionId(ctx);
 			if (!sessionId) throw new Error('no session context here — pass an explicit `session` id (see autere_find_sessions)');
-			const all: any[] = (await api("GET", `/sessions/${encodeURIComponent(sessionId)}/file-changes`, undefined, signal)) ?? [];
+			const all: any[] = (await api("GET", `/sessions/${encodeURIComponent(sessionId)}/file-changes${actorQuery(ctx)}`, undefined, signal)) ?? [];
 			const rows = (Array.isArray(all) ? all : []).filter((e) => e && e.path);
 			const needle = String(params.path ?? "").trim().toLowerCase();
 			const matched = needle ? rows.filter((e) => String(e.path).toLowerCase().includes(needle)) : rows;
@@ -425,7 +444,8 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"Deliver a message to another session as a fresh user message — the target agent reacts to it as if its own user typed it. An idle session is woken up; a mid-turn session queues the message as a steer instead of dropping it, and the result reports `queued: true`." +
 			"\n\n" +
-			"`sessionId` — an id from autere_find_sessions, an id a scheduled task's prompt footer names, or \"current\" for this session. Make `message` self-contained: the target agent cannot see this conversation. A deleted session gets no delivery (the result says so) — a deleted conversation cannot be recreated.",
+			"`sessionId` — an id from autere_find_sessions, an id a scheduled task's prompt footer names, or \"current\" for this session. Make `message` self-contained: the target agent cannot see this conversation. A deleted session gets no delivery (the result says so) — a deleted conversation cannot be recreated.\n\n" +
+			"Sessions may message their parent, their own task runs and sessions the user paired with them. Anything else is refused — do not retry; ask the user to allow it in Sessions -> Edit session -> Messaging, or run the work as a child task with autere_schedule_task.",
 		parameters: Type.Object({
 			sessionId: Type.String({ description: "Target session id, or \"current\"" }),
 			message: Type.String({ description: "The message the target session's agent should act on" }),
@@ -445,14 +465,28 @@ export default function (pi: ExtensionAPI) {
 					{ delivered: false, reason: "not_found" },
 				);
 			}
-			const res = await api("POST", "/session/messages", {
-				sessionId: target.id,
-				message: params.message,
-				type: "prompt",
-				// Self-identify: the backend stamps task-run deliveries so chat
-				// renders them with a distinct "task" sender.
-				fromSession: currentSessionId(ctx) ?? undefined,
-			}, signal);
+			let res: any;
+			try {
+				res = await api("POST", "/session/messages", {
+					sessionId: target.id,
+					message: params.message,
+					type: "prompt",
+					// Self-identify: the backend stamps task-run deliveries so chat
+					// renders them with a distinct "task" sender, and enforces the
+					// cross-session messaging rules.
+					fromSession: currentSessionId(ctx) ?? undefined,
+				}, signal);
+			} catch (err: any) {
+				if (/not allowed to message/i.test(String(err?.message))) {
+					return ok(
+						`Not delivered: this session is not allowed to message "${target.sessionName ?? target.id}". ` +
+						`Sessions may message their parent, their own task runs and sessions the user paired with them. ` +
+						`Ask the user to allow it in Sessions -> Edit session -> Messaging, or run the work as a child task (autere_schedule_task).`,
+						{ delivered: false, reason: "not_allowed", sessionId: target.id },
+					);
+				}
+				throw err;
+			}
 			const name = target.sessionName ?? target.id;
 			if (res?.queued) {
 				return ok(

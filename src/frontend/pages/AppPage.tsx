@@ -306,7 +306,7 @@ export function AppPage({
     }
   }, [sessionState.sessionId, setSessionError, setSessionState]);
 
-  const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string) => {
+  const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string, peers?: string[]) => {
     // Relative (or ~) workdir paths are allowed: the backend resolves them
     // against the autere backend container's $HOME before spawning.
     setCreatingSession(true);
@@ -327,6 +327,10 @@ export function AppPage({
       .then(data => {
         if (data.navigateUrl) {
           const newId = data.navigateUrl.split('/').pop();
+          // Messaging grants picked in the create form (symmetric links).
+          if (newId && peers?.length) {
+            void apiSend(API.session.links, 'PUT', { sessionId: newId, peers }).catch(() => {});
+          }
           // Navigate directly from the response — no SSE broadcast needed
           setCreatingSession(false);
           // Apply the fresh session state returned by the backend. The SSE

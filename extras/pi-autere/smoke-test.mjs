@@ -59,7 +59,14 @@ const server = createServer((req, res) => {
         { provider: "9router", id: "mimo-v2.5-all", name: "Mimo" },
       ]);
     }
-    if (req.method === "GET" && path === "/sessions") return data(res, state.sessions);
+    if (req.method === "GET" && path === "/sessions") {
+      // mirrors the real route: a tool call is narrowed to related sessions
+      const actor = new URL(req.url, baseUrl).searchParams.get("fromSession");
+      if (!actor) return data(res, state.sessions);
+      return data(res, state.sessions
+        .filter((s) => s.id === actor || (s.relatedTo || []).includes(actor))
+        .map((s) => ({ ...s, relationship: s.id === actor ? "self" : "parent" })));
+    }
     if (req.method === "GET" && path === "/sessions/search") {
       const q = new URL(req.url, baseUrl).searchParams.get("q").toLowerCase();
       return data(res, state.sessions.filter((s) =>
@@ -98,6 +105,16 @@ const server = createServer((req, res) => {
       return data(res, { persona: hit });
     }
     if (req.method === "POST" && path === "/session/messages") {
+      // mirrors the real route: unrelated sessions are refused
+      if (body.fromSession && body.fromSession !== body.sessionId) {
+        const target = state.sessions.find((s) => s.id === body.sessionId);
+        if (!(target?.relatedTo || []).includes(body.fromSession)) {
+          return json(res, 403, {
+            success: false,
+            error: `Session ${body.fromSession} is not allowed to message session ${body.sessionId}: they are not related.`,
+          });
+        }
+      }
       // mirrors the real route: a prompt to a mid-turn session is queued as a
       // steer and the response reports queued:true
       const type = body.type === "steer" || body.type === "followUp"
@@ -125,6 +142,7 @@ process.env.AUTERE_BACKEND_URL = baseUrl;
 state.sessions = [
   { id: "s1", sessionName: "Alpha", sessionFile: `${envDir}/sessions/s1.jsonl`, lastActivity: 1700000000000, active: true, streaming: false },
   { id: "s2", sessionName: "Beta", sessionFile: `${envDir}/sessions/s2.jsonl`, lastActivity: 1700000100000, active: true, streaming: true },
+  { id: "s3", sessionName: "Alpha run", sessionFile: `${envDir}/sessions/s3.jsonl`, lastActivity: 1700000200000, active: true, streaming: true, relatedTo: ["s1"] },
 ];
 state.runs = [{ runId: "r1", taskId: "task-1", taskName: "Alpha task", trigger: "schedule", startedAt: 1700000200000, status: "success", agentResult: "condition not met yet" }];
 state.fileChanges = [
@@ -203,19 +221,19 @@ try {
 
   // 6. find sessions — ids, busy state, latest messages
   const found = text(await run("autere_find_sessions", {}, ctx));
-  assert.ok(found.includes("id: s1") && found.includes("id: s2"), "sessions listed");
+  assert.ok(found.includes("id: s1") && found.includes("id: s3"), "related sessions listed");
   assert.ok(found.includes("running, idle") && found.includes("streaming (busy)"), "busy state shown");
   assert.ok(found.includes("[user] hello there"), "latest messages included");
-  const byName = text(await run("autere_find_sessions", { query: "Beta" }, ctx));
-  assert.ok(byName.includes("id: s2") && !byName.includes("id: s1"), "content search works");
+  const byName = text(await run("autere_find_sessions", { query: "Alpha" }, ctx));
+  assert.ok(byName.includes("id: s1") && !byName.includes("id: s2"), "content search works");
 
   // 7. send_to_session — missing / queued while busy / delivered
   const missing = await run("autere_send_to_session", { sessionId: "ghost", message: "hi" }, ctx);
   assert.deepStrictEqual(missing.details, { delivered: false, reason: "not_found" }, "deleted session reported, not delivered");
-  const busy = await run("autere_send_to_session", { sessionId: "s2", message: "hi" }, ctx);
+  const busy = await run("autere_send_to_session", { sessionId: "s3", message: "hi" }, ctx);
   assert.strictEqual(busy.details.delivered, true, "mid-turn target still accepts the message");
   assert.strictEqual(busy.details.queued, true, "mid-turn target queues it as a steer");
-  assert.deepStrictEqual(state.sent[0], { sessionId: "s2", message: "hi", type: "steer", fromSession: "s1" }, "queued as a steer, self-identified");
+  assert.deepStrictEqual(state.sent[0], { sessionId: "s3", message: "hi", type: "steer", fromSession: "s1" }, "queued as a steer, self-identified");
   const delivered = await run("autere_send_to_session", { sessionId: "current", message: "outcome: still waiting" }, ctx);
   assert.strictEqual(delivered.details.delivered, true, "delivered to the idle session");
   assert.strictEqual(delivered.details.queued, undefined, "idle delivery is immediate");
@@ -315,6 +333,17 @@ try {
   const noMatch = text(await run("autere_session_changes", { path: "nope.txt" }, ctx));
   assert.ok(noMatch.includes('No recorded change matching "nope.txt"'), noMatch);
   assert.strictEqual((await run("autere_session_changes", { session: "s2" }, ctx)).details.total, 0, "other session has no changes");
+
+  // 8f. cross-session messaging: only related sessions are listed and reachable
+  const listedForAlpha = await run("autere_find_sessions", { limit: 10 }, ctx);
+  assert.deepStrictEqual(listedForAlpha.details.sessions.map((s) => s.id), ["s1", "s3"], "unrelated sessions must be hidden");
+  assert.ok(text(listedForAlpha).includes("[self]") && text(listedForAlpha).includes("[parent]"), text(listedForAlpha));
+  const denied = await run("autere_send_to_session", { sessionId: "s2", message: "hi" }, ctx);
+  assert.strictEqual(denied.details.delivered, false, "unrelated send must be refused");
+  assert.strictEqual(denied.details.reason, "not_allowed");
+  assert.ok(text(denied).includes("Sessions -> Edit session -> Messaging"), text(denied));
+  const allowed = await run("autere_send_to_session", { sessionId: "s3", message: "status?" }, ctx);
+  assert.strictEqual(allowed.details.delivered, true, "a child run must be reachable");
 
   // 9. every call authenticated with the minted token
   assert.deepStrictEqual([...state.auth], [`Bearer ${token}`], "backend saw exactly the agent token");

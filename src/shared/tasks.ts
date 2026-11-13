@@ -45,6 +45,10 @@ export interface ScheduledTask {
   /** Scheduler-internal: session file saved by the last run under
    *  saveLastSession (never accepted from clients). */
   savedSessionFile?: string;
+  /** Session that created the task (agent tools only). Its run sessions are
+   *  linked to it for cross-session messaging (session-links.ts). Resolved by
+   *  the backend; never accepted from clients. */
+  originSessionId?: string;
   /** Spawn environment inherited from the session that created the task:
    *  run sessions spawn in this cwd and sandbox work area. Resolved by the
    *  backend from the creating session (never trusted from the client). */

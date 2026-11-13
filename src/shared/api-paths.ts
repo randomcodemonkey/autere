@@ -77,6 +77,8 @@ export const API = {
     name: `${P}/session/name`,
     workdirs: `${P}/session/workdirs`,
     persona: `${P}/session/persona`,
+    /** Cross-session messaging links of the viewed session (GET ?sessionId=, PUT) */
+    links: `${P}/session/links`,
     abort: `${P}/session/abort`,
     restart: `${P}/session/restart`,
     compact: `${P}/session/compact`,

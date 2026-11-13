@@ -37,6 +37,7 @@ import { getUserRole } from './users.js';
 import { broadcastToUser } from './client-hub.js';
 import { canRunTaskScripts } from '../shared/tasks.js';
 import { cleanProviderError } from './error-text.js';
+import { forgetSession, linkParent } from './session-links.js';
 
 import type {
   ScheduledTask,
@@ -609,6 +610,11 @@ export class Scheduler {
           const st = session.state.sessionState;
           runSessionFile = st.sessionFile || '';
           active.piSessionId = st.sessionId || '';
+          // The run session is a child of the session that created the task:
+          // they may message each other (parent <-> child, depth 1).
+          if (active.piSessionId && task.originSessionId) {
+            linkParent(user, active.piSessionId, task.originSessionId);
+          }
           if (runSessionFile) {
             this.persistSpawnOpts?.(user, runSessionFile, { cwd: task.cwd, workdirs: task.workdirs });
           }
@@ -699,6 +705,7 @@ export class Scheduler {
         if (runSessionFile && !settledTask.saveSession && !settledTask.reuseSession && !settledTask.saveLastSession) {
           try {
             rmSync(runSessionFile, { force: true });
+            forgetSession(user, active.piSessionId);
             addLog('Run session removed (save task sessions is off)');
           } catch (err) {
             log.scheduler.error(`Failed to remove run session ${runSessionFile}:`, err);
