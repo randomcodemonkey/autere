@@ -237,6 +237,19 @@ src/backend/
                         # only — applied per user by extensions.ts
                         # enrichExtensionsFor() (check: extension-enrich.check.ts)
   stream-history.ts     # StreamMessage building, extractImages (shared)
+  storage.ts (frontend) # Every client-only setting (card collapse, chat
+                        # filters, drafts, pinned sessions, search kinds, tab
+                        # client id, cached theme) is keyed
+                        # `autere@<origin><base>:<key>` so two instances that
+                        # share a browser origin don't leak state into each
+                        # other. Never call localStorage directly - use
+                        # getStored/setStored (theme: src/frontend/theme.ts
+                        # caches per backend, /auth/status re-applies).
+  session-search.ts     # Full-text search over one session's rendered history
+                        # (roles the chat shows, snippets around the match,
+                        # 200-hit cap). Route: GET /session/search (check:
+                        # session-search.check.ts). Sessions over 32 MB are
+                        # searched in the tail window only.
   session-links.ts      # Cross-session messaging graph: parent<->child (a task
                         # run and the session that created it) and user-granted
                         # peers, symmetric, depth 1 (no transitivity). Enforced
