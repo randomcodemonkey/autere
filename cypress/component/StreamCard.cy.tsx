@@ -1,5 +1,6 @@
 import React from 'react';
 import '../../src/frontend/styles.scss';
+import { storageKey } from '../../src/frontend/storage';
 import { StreamCard } from '../../src/frontend/components/StreamCard';
 import type { StreamMessage } from '../../src/frontend/types';
 
@@ -35,12 +36,24 @@ describe('StreamCard', () => {
     cy.get('.chat-session-name').should('not.exist');
   });
 
-  it('renders filter buttons', () => {
+  it('renders filter buttons with search last', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={cy.stub()} />);
-    cy.get('.stream-toggle').should('have.length', 3);
-    cy.get('.stream-toggle').eq(0).should('contain', 'thinking');
-    cy.get('.stream-toggle').eq(1).should('contain', 'tools');
-    cy.get('.stream-toggle').eq(2).should('contain', 'edits');
+    cy.get('.stream-filters .stream-toggle').should('have.length', 4);
+    cy.get('.stream-filters .stream-toggle').eq(0).should('contain', 'thinking');
+    cy.get('.stream-filters .stream-toggle').eq(1).should('contain', 'tools');
+    cy.get('.stream-filters .stream-toggle').eq(2).should('contain', 'edits');
+    cy.get('.stream-filters .stream-toggle').eq(3).should('contain', 'search');
+  });
+
+  it('opens the session search modal from the search button', () => {
+    cy.intercept('GET', '**/api/v1/session/search*', { success: true, data: { hits: [], total: 0, truncated: false } }).as('search');
+    cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={cy.stub()} sessionId="s1" />);
+    cy.get('.modal-chat-search').parents('.modal-overlay').should('not.have.class', 'open');
+    cy.get('.stream-search-btn').click();
+    cy.get('.modal-chat-search').parents('.modal-overlay').should('have.class', 'open');
+    cy.get('.modal-chat-search').should('contain', 'Search session');
+    cy.get('.chat-search-input').type('kymi');
+    cy.wait('@search').its('request.url').should('include', 'sessionId=s1');
   });
 
   it('renders user messages', () => {
@@ -210,7 +223,7 @@ describe('StreamCard', () => {
 
   it('hides thinking messages when filter is off', () => {
     // Set localStorage to hide thinking
-    localStorage.setItem('autere-filter-thinking', 'off');
+    localStorage.setItem(storageKey('autere-filter-thinking'), 'off');
     const messages: StreamMessage[] = [
       { role: 'thinking', text: 'Hidden thought', streaming: false },
       { role: 'assistant', text: 'Visible response', streaming: false },
@@ -221,7 +234,7 @@ describe('StreamCard', () => {
   });
 
   it('shows thinking messages when filter is on', () => {
-    localStorage.setItem('autere-filter-thinking', 'on');
+    localStorage.setItem(storageKey('autere-filter-thinking'), 'on');
     const messages: StreamMessage[] = [
       { role: 'thinking', text: 'Visible thought', streaming: false },
       { role: 'assistant', text: 'Visible response', streaming: false },

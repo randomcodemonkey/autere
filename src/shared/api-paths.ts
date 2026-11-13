@@ -79,6 +79,8 @@ export const API = {
     persona: `${P}/session/persona`,
     /** Cross-session messaging links of the viewed session (GET ?sessionId=, PUT) */
     links: `${P}/session/links`,
+    /** Full-text search inside the viewed session's history (query: sessionId, q, roles, limit) */
+    search: `${P}/session/search`,
     abort: `${P}/session/abort`,
     restart: `${P}/session/restart`,
     compact: `${P}/session/compact`,

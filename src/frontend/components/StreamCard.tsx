@@ -3,6 +3,8 @@ import { API } from '../api-paths';
 import type { StreamMessage, AvailableModel } from '../types';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
+import { ChatSearchModal } from './ChatSearchModal';
+import { getStored, setStored } from '../storage';
 import { apiJSON, apiSend } from '../api';
 
 interface StreamCardProps {
@@ -55,10 +57,11 @@ const EDIT_COLLAPSE_ROWS = 12;
 export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, compacting, onNewSession, onGoToView, onSetModel, onSetPersona, modelNames, onCompact, onCommandError, steerPending, followUpPending, steerQueue, followUpQueue, model, models, activeModelId, onModelsFetched, onSent, onCancelPending, onModifyPending, sessionId, sessionName }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const sessionLabel = (sessionName ?? '').trim();
+  const [searchOpen, setSearchOpen] = useState(false);
   const [filters, setFilters] = useState({
-    thinking: localStorage.getItem('autere-filter-thinking') !== 'off',
-    toolResult: localStorage.getItem('autere-filter-toolResult') !== 'off',
-    edit: localStorage.getItem('autere-filter-edit') !== 'off',
+    thinking: getStored('autere-filter-thinking') !== 'off',
+    toolResult: getStored('autere-filter-toolResult') !== 'off',
+    edit: getStored('autere-filter-edit') !== 'off',
   });
 
   // Generate a stable key based on message content, not array index
@@ -289,7 +292,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   const toggleFilter = useCallback((filter: 'thinking' | 'toolResult' | 'edit') => {
     setFilters((prev) => {
       const next = { ...prev, [filter]: !prev[filter] };
-      localStorage.setItem('autere-filter-' + filter, next[filter] ? 'on' : 'off');
+      setStored('autere-filter-' + filter, next[filter] ? 'on' : 'off');
       return next;
     });
     // Filtering changes which messages are rendered (and their offsets);
@@ -326,8 +329,16 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
           >
             edits
           </button>
+          <button
+            className="stream-toggle stream-search-btn"
+            onClick={() => setSearchOpen(true)}
+            title="Search this session's history"
+          >
+            search
+          </button>
         </div>
       </div>
+      <ChatSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} sessionId={sessionId} />
       <div className="chat-model-row">
         <span className="chat-model-label">model</span>
         <span className="chat-model-wrapper" ref={modelWrapperRef}>

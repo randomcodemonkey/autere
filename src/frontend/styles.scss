@@ -3329,6 +3329,82 @@ body {
   margin-top: 1rem;
 }
 
+// Chat history search modal
+.chat-search-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: min(90vw, 42rem);
+}
+
+.chat-search-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.chat-search-status {
+  min-height: 1rem;
+}
+
+.chat-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.chat-search-hit {
+  border: 1px solid var(--c-border);
+  border-radius: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--c-surface-2);
+}
+
+.chat-search-hit-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--c-text-ghost-2);
+}
+
+.chat-search-expand {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.7rem;
+  text-transform: lowercase;
+  letter-spacing: 0;
+  color: var(--c-accent);
+  cursor: pointer;
+
+  &:hover { text-decoration: underline; }
+}
+
+.chat-search-snippet {
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  &.full {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+
+  mark {
+    background: var(--c-accent-strong, #f5c542);
+    color: #111;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+}
+
 // Cross-session messaging grants (Create/Edit session)
 .session-messaging {
   margin-top: 0.75rem;

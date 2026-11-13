@@ -26,6 +26,10 @@ import { fileURLToPath } from 'url';
 import { isDeepStrictEqual } from 'node:util';
 import { ProcessManager, spawnOpts } from './process-manager.js';
 import { canTalk, forgetSession, linksOf, relationship, setPeers } from './session-links.js';
+import { MIN_QUERY, SEARCH_LIMIT, searchEntries } from './session-search.js';
+
+/** Above this the search reads the tail window instead of the whole session file. */
+const SEARCH_MAX_BYTES = 32 * 1024 * 1024;
 import { getUser, getUserRole, hasRole, verifyCredentials, checkAuth, requireAuth, authenticateOidc, isOidcAuthenticated, generateToken, addAuthToken, removeAuthToken, removeUserTokens, saveAuthTokens, getAuthEnabled, getAuthTokenExpiry, getTokenFromRequest, setLastSession, getLastSession, isRegisteredUser, userMustChangePassword, listApiTokens, createApiToken, deleteApiToken } from './auth.js';
 import { getClientSession, setClientSession, registerClient, broadcastToUser, viewedSessions, hubUsers } from './client-hub.js';
 import { listUsers, createUser, updateUser, deleteUser, changeOwnPassword, getUserMountDockerSocket, getUserTheme, setUserTheme } from './users.js';
@@ -38,7 +42,7 @@ import { getEnabledModelEntries, scopeModelsForSession } from './utils.js';
 import { isPiImagesInstalled } from './image-models.js';
 import { getPiEnvDir, ensurePiEnv, resolveSandboxImage, validateSandboxImage } from './pi-env.js';
 import { findPersona, listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
-import { readMessageEntries } from './stream-history.js';
+import { buildStreamHistoryFromMessages, readAllMessageEntries, readMessageEntries, readTailMessageEntries } from './stream-history.js';
 import { appendSessionInfo, findSessionFileBySessionId } from './sessions.js';
 import { handleAguiRun } from './agui.js';
 import { corsAllowOrigin, corsHeaders, corsMethods } from './cors.js';
@@ -1303,6 +1307,43 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     sendJSON(c.res, { success: false, error: 'No active session — reload the page' }, 409);
 
   // ── Cross-session messaging links ──
+  route({
+    method: 'GET', path: API.session.search, template: `${API_PREFIX}/session/search`,
+    role: 'chat', tag: 'Session', summary: 'Full-text search in one session history (query: sessionId, q, roles, limit <= 200)',
+    handler: async (c) => {
+      const id = String(c.url.searchParams.get('sessionId') ?? '').trim() || c.session?.state.sessionState.sessionId || '';
+      const sess = id ? pm.findSession(c.user, id, c.viewed) : undefined;
+      if (!sess) { sendJSON(c.res, { success: false, error: 'Session not found' }, 404); return; }
+      const q = String(c.url.searchParams.get('q') ?? '');
+      const roles = String(c.url.searchParams.get('roles') ?? '').split(',').map((r) => r.trim()).filter(Boolean);
+      const limit = Math.min(Math.max(parseInt(c.url.searchParams.get('limit') || '', 10) || SEARCH_LIMIT, 1), SEARCH_LIMIT);
+      if (q.trim().length < MIN_QUERY) {
+        sendJSON(c.res, { success: true, data: { hits: [], total: 0, truncated: false } });
+        return;
+      }
+      // The whole file, mapped the same way the chat renders it, so a hit is
+      // something the user can see. Very long sessions fall back to the tail
+      // window rather than blocking the backend on a multi-hundred-MB read.
+      let entries: any[] = [];
+      let truncated = false;
+      try {
+        if (sess.sessionFile && existsSync(sess.sessionFile) && statSync(sess.sessionFile).size > SEARCH_MAX_BYTES) {
+          entries = buildStreamHistoryFromMessages(readTailMessageEntries(sess.sessionFile, 5000));
+          truncated = true;
+        } else if (sess.sessionFile && existsSync(sess.sessionFile)) {
+          entries = buildStreamHistoryFromMessages(readAllMessageEntries(sess.sessionFile));
+        } else {
+          // Fresh session: no file yet, search what the live process has.
+          entries = pm.get(c.user, sess.sessionFile)?.history() ?? [];
+        }
+      } catch (err) {
+        log.http.warn(`Session search failed for ${sess.id}:`, err);
+      }
+      const { hits, total } = searchEntries(entries, q, roles, limit);
+      sendJSON(c.res, { success: true, data: { hits, total, truncated } });
+    },
+  });
+
   route({
     method: 'GET', path: API.session.links, template: `${API_PREFIX}/session/links`,
     role: 'chat', tag: 'Session', summary: 'Which sessions the viewed session may message (query: sessionId)',
