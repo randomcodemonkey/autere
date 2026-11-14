@@ -162,3 +162,34 @@ fire2("tool_execution_end", { toolName: "bash", toolCallId: "x3" }, {});
 assert(!entries2.some((e) => e.type === "file_change" && e.data.path.endsWith("f-del.txt")),
   "OTHER session's deletion leaked into session 2 chat");
 console.log("smoke-test OK: cross-session deletion suppression (deleted-file ledger guard)");
+
+// ── Case 6: edit inside a directory the command cd's into ──
+// A heredoc script writing a RELATIVE path has no parseable write target,
+// and the cwd sweep never sees a tree the command cd'd into — so a
+// `cd /elsewhere && python3 - <<EOF ... EOF` edit used to vanish.
+const other = mkdtempSync(join(tmpdir(), "filetools-other-"));
+mkdirSync(join(other, "sass"), { recursive: true });
+writeFileSync(join(other, "sass", "base.sass"), "old value\n");
+entries.length = 0;
+fireBash("cd1",
+  `cd ${other} && python3 - <<'PYEOF'\nimport pathlib\np=pathlib.Path("sass/base.sass")\np.write_text("new value\\n")\nPYEOF`,
+  () => writeFileSync(join(other, "sass", "base.sass"), "new value\n"));
+// Other files can legitimately appear (case 5's deletion is still in the
+// baseline); only the cd-tree edit matters here.
+const cdCards = entries.filter((e) => e.type === "file_change" && e.data.change !== "summary"
+  && e.data.path === join(other, "sass", "base.sass"));
+assert(cdCards.length === 1, `expected 1 cd-tree edit card, got ${cdCards.length}`);
+assert(cdCards[0].data.path === join(other, "sass", "base.sass"), `wrong path: ${cdCards[0].data.path}`);
+assert(cdCards[0].data.change === "modified", `wrong change: ${cdCards[0].data.change}`);
+// The rewrite kept the byte count: only the content check can see it.
+assert(cdCards[0].data.diff.includes("-old value"), `diff missing the old line: ${cdCards[0].data.diff}`);
+assert(cdCards[0].data.diff.includes("+new value"), `diff missing the edit: ${cdCards[0].data.diff}`);
+console.log("smoke-test OK: edits inside a cd'd-into directory");
+
+// ── Case 7: a relative redirect after cd is attributed to the cd tree ──
+entries.length = 0;
+fireBash("cd2", `cd ${other} && echo written > rel.txt`, () => writeFileSync(join(other, "rel.txt"), "written\n"));
+const relCards = entries.filter((e) => e.type === "file_change" && e.data.change !== "summary" && e.data.path === join(other, "rel.txt"));
+assert(relCards.length === 1, "relative redirect after cd was missed");
+assert(relCards[0].data.change === "created", `wrong change: ${relCards[0].data.change}`);
+console.log("smoke-test OK: relative write target after cd");

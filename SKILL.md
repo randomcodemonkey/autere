@@ -297,6 +297,9 @@ cypress/
 extras/pi-images/      # pi extension: generate_image tool via 9router (symlinked
                        # from ~/.pi/agent/extensions/pi-images)
 extras/pi-filetools/   # pi extension: file tooling with content cache + edit-ignore
+                       # (bash edit detection sweeps the cwd AND every dir the
+                       # command cd's into, and content-checks freshly stamped
+                       # files: a fast same-size rewrite keeps mtime+size)
 extras/pi-token-reserve/ # pi extension: compaction reserveTokens as % of the model's
                        # context window — per model (perModel map keyed like
                        # enabledModels entries; `percent` fallback), applied live

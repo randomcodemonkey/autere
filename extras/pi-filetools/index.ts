@@ -7,8 +7,12 @@
  * 2. save_file tool: lets the agent hand a file to the user (downloadable
  *    file card in dashboards like autere) via a file_saved session entry.
  * 3. Bash edit detection: diffs files changed by bash commands (command
- *    write-targets + cwd sweep) into file_change entries, rendered as edit
- *    cards. Folders in EDIT_IGNORE_PATHS (colon-separated, default /tmp)
+ *    write-targets + sweep of the cwd and of every directory the command
+ *    cd's into) into file_change entries, rendered as edit
+ *    cards. Both the snapshot and the diff sweep cover the cwd plus every
+ *    directory the command cd's into, and a freshly stamped file is
+ *    verified by content (a fast same-size rewrite can keep mtime+size).
+ *    Folders in EDIT_IGNORE_PATHS (colon-separated, default /tmp)
  *    are skipped; .git folders are always skipped at any depth. Chat cards
  *    cap at 10 per command with a summary line; the JSONL records all.
  * 4. Edit/write tracking: hooks edit and write tool results to compute
@@ -19,7 +23,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resizeImage } from "@earendil-works/pi-coding-agent";
-import { basename as pathBasename, extname, join, relative } from "node:path";
+import { basename as pathBasename, extname, join, relative, resolve } from "node:path";
 import { Type } from "typebox";
 import { createTwoFilesPatch } from "diff";
 
@@ -182,24 +186,46 @@ export default function (pi: any) {
 		return [...out].filter((p) => { try { return statSync(p).isFile(); } catch { return true; } });
 	};
 
+	// Directories the command cd's into. The sweep below only sees
+	// process.cwd(), so an edit made after `cd /elsewhere` — and a heredoc
+	// script writing a relative path has no parseable path at all — would be
+	// invisible. Sequential cds resolve against each other.
+	const MAX_ROOTS = 5;
+	const cdRoots = (cmd: string): string[] => {
+		const roots: string[] = [];
+		let base = process.cwd();
+		for (const m of cmd.matchAll(/(?:^|[;&|(]\s*|\n\s*)(?:cd|pushd)\s+([^\s;&|)]+)/g)) {
+			const raw = m[1].replace(/^["']|["']$/g, "");
+			if (!raw || raw.startsWith("-")) continue;
+			const abs = raw.startsWith("/") ? raw : raw.startsWith("~/") ? join(homedir(), raw.slice(2)) : resolve(base, raw);
+			try { if (!statSync(abs).isDirectory()) continue; } catch { continue; }
+			base = abs;
+			if (abs !== process.cwd() && !roots.includes(abs)) roots.push(abs);
+			if (roots.length >= MAX_ROOTS) break;
+		}
+		return roots;
+	};
+
 	const looksBinary = (buf: Buffer): boolean => {
 		const n = Math.min(buf.length, 8192);
 		for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
 		return false;
 	};
 
-	const walk = (dir: string, out: Map<string, { mtimeMs: number; size: number }>): void => {
+	/** Fills `out`; true when the MAX_FILES cap cut the walk short. */
+	const walk = (dir: string, out: Map<string, { mtimeMs: number; size: number }>): boolean => {
 		let entries;
-		try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+		try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return false; }
 		for (const e of entries) {
-			if (out.size >= MAX_FILES) return;
+			if (out.size >= MAX_FILES) return true;
 			const p = join(dir, e.name);
 			if (e.isDirectory()) {
-				if (!SKIP_DIRS.has(e.name) && !e.name.startsWith(".")) walk(p, out);
+				if (!SKIP_DIRS.has(e.name) && !e.name.startsWith(".") && walk(p, out)) return true;
 			} else if (e.isFile()) {
 				try { const st = statSync(p); out.set(p, { mtimeMs: st.mtimeMs, size: st.size }); } catch {}
 			}
 		}
+		return false;
 	};
 
 	const readText = (path: string, size: number): string | null => {
@@ -277,7 +303,7 @@ export default function (pi: any) {
 
 	// Chat edit cards cap per bash command (a git pull can change hundreds of
 	// files); the file-changes JSONL (autere edits tab) always records all
-	const emitFileChanges = (snap: { stats: Map<string, { mtimeMs: number; size: number }>; candidates: Map<string, string | null> }): void => {
+	const emitFileChanges = (snap: { stats: Map<string, { mtimeMs: number; size: number }>; candidates: Map<string, string | null>; roots: string[]; truncated: boolean }): void => {
 		// 1) Explicit write targets from the command text (anywhere on disk)
 		let changed = 0;
 		let chatShown = 0;
@@ -307,11 +333,18 @@ export default function (pi: any) {
 			try { newContent = readText(path, statSync(path).size); } catch {}
 			emit(path, oldContent ?? contentCache.get(path)?.content, newContent, oldContent !== undefined || contentCache.has(path), "bash");
 		}
-		// 2) Sweep the cwd tree for changes the command text didn't reveal
+		// 2) Sweep the cwd tree (and every cd'd-into tree) for changes the
+		// command text didn't reveal
 		const before = snap.stats;
 		const after = new Map<string, { mtimeMs: number; size: number }>();
-		walk(process.cwd(), after);
-		const paths = new Set<string>([...before.keys(), ...after.keys()]);
+		let capped = false;
+		for (const root of snap.roots) capped = walk(root, after) || capped;
+		if (!capped) capped = walk(process.cwd(), after);
+		// A capped walk can drop files the baseline had, which would read as
+		// bogus deletions - then compare only files both walks saw.
+		const paths = snap.truncated || capped
+			? new Set<string>([...after.keys()].filter((p) => before.has(p)))
+			: new Set<string>([...before.keys(), ...after.keys()]);
 		// Cross-session guard: when some OTHER filetools instance of this env
 		// already emitted a change for a file at ~this mtime, it was that
 		// session's turn, not ours — never post it here (no chat card, no own
@@ -322,7 +355,10 @@ export default function (pi: any) {
 		for (const path of paths) {
 			const b = before.get(path);
 			const a = after.get(path);
-			if (b && a && b.mtimeMs === a.mtimeMs && b.size === a.size) continue;
+			// Same stat is normally "untouched" - except that a fast same-size
+			// rewrite can land in the same filesystem clock tick (tmpfs does
+			// this), so a freshly stamped file is verified by content instead.
+			if (b && a && b.mtimeMs === a.mtimeMs && b.size === a.size && a.mtimeMs < snap.at - 2000) continue;
 			// Deletion by another session: no stat left to compare — compare the
 			// snapshot's baseline mtime against the ledger (the old statSync call
 			// threw on deleted files, so guard silently never fired).
@@ -355,7 +391,12 @@ export default function (pi: any) {
 		if (event.toolName === "bash" && event.toolCallId) {
 			// Seed the cache on the first call, then keep stats fresh per call
 			const stats = new Map<string, { mtimeMs: number; size: number }>();
-			walk(process.cwd(), stats);
+			const roots = cdRoots(String(event.args?.command || ""));
+			let truncated = false;
+			// Deliberate targets first: a cd'd tree is usually small and is
+			// where the command wrote; a huge cwd can eat the file cap.
+			for (const root of roots) truncated = walk(root, stats) || truncated;
+			if (!truncated) truncated = walk(process.cwd(), stats);
 			for (const [p, st] of stats) {
 				const c = contentCache.get(p);
 				if (!c || c.mtimeMs !== st.mtimeMs || c.size !== st.size) {
@@ -372,7 +413,7 @@ export default function (pi: any) {
 			for (const p of candidatePaths(String(event.args?.command || ""))) {
 				try { candidates.set(p, readText(p, statSync(p).size)); } catch { candidates.set(p, null); }
 			}
-			putSnapshot(bashSnapshots, event.toolCallId, { stats, candidates });
+			putSnapshot(bashSnapshots, event.toolCallId, { stats, candidates, roots, truncated, at: Date.now() });
 		}
 	});
 	pi.on("tool_execution_end", (event: any) => {
