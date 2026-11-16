@@ -1878,6 +1878,28 @@ export class UserSession {
     this.broadcast({ type: 'stream_delta', sessionId: ss.sessionId, data: { role, id, text } });
   }
 
+  /**
+   * A tool entry whose timestamp advances belongs at the present. A codemode
+   * script can loop for minutes: its card stays the OLDEST entry while dozens
+   * of nested calls land below it, so the card drifts out of the trailing
+   * window and reads as lost in the history. Promote it once it has drifted
+   * more than this many entries.
+   */
+  private static readonly ACTIVE_PROMOTE_GAP = 5;
+
+  /** Move an entry to the end of the buffer and stamp it as current. Clients
+   *  must drop it first (history_remove) so the following upsert appends
+   *  instead of updating it in place. */
+  private promoteEntry(buf: any[], entry: any): boolean {
+    const idx = buf.indexOf(entry);
+    if (idx < 0 || buf.length - 1 - idx <= UserSession.ACTIVE_PROMOTE_GAP) return false;
+    buf.splice(idx, 1);
+    buf.push(entry);
+    entry.timestamp = Date.now();
+    this.broadcast({ type: 'history_remove', sessionId: this.state.sessionState.sessionId, data: [entry.id] });
+    return true;
+  }
+
   /** Streamed tool output kept per active call (chars) — the expanded card shows all of it */
   private static readonly TOOL_PARTIAL_KEEP = 2_000_000;
   /** Minimum gap between partial-output broadcasts (ms) — bash can stream KBs per second */
@@ -1915,6 +1937,12 @@ export class UserSession {
     const replace = !target.startsWith(sent);
     const delta = replace ? target : target.slice(sent.length);
     tool.sentText = target;
+    // A long-running call (codemode looping on bash output) drifts up the
+    // history while its nested calls land below it - keep the card current.
+    if (this.promoteEntry(this.history(), entry)) {
+      this.broadcastHistoryUpsert([entry]);
+      return;
+    }
     if (!delta) return;
     this.broadcast({ type: 'tool_output', sessionId: this.state.sessionState.sessionId, data: { id: event.toolCallId, text: delta, replace } });
   }
@@ -1963,6 +1991,18 @@ export class UserSession {
         if (idx >= 0) {
           (entries[0] as any).id = buf[idx].id ?? this.tagEntry(entries[0]).id; // keep the toolCall's id — no client remount
           buf.splice(idx, 1, ...entries.map((e2) => this.tagEntry(e2)));
+          // The result carries the completion time: a call that drifted (see
+          // promoteEntry) belongs at that end position, not above the nested
+          // entries its own timestamp now postdates.
+          if (buf.length - entries.length - idx > UserSession.ACTIVE_PROMOTE_GAP) {
+            const moved = buf.splice(idx, entries.length);
+            buf.push(...moved);
+            this.broadcast({
+              type: 'history_remove',
+              sessionId: s.sessionState.sessionId,
+              data: moved.map((e2: any) => e2.id).filter(Boolean),
+            });
+          }
         } else {
           entries.forEach((e2) => this.tagEntry(e2));
           buf.push(...entries);

@@ -465,6 +465,14 @@ npx tsx src/backend/idle-timeout.check.ts`): `stream_delta` -> TEXT/REASONING
   content as one long JSON string): the value still being written fills the
   body while the call streams (replaced, not appended, when the open value
   switches keys), and the first output replaces it again.
+- **Long-running tool cards follow their timestamp**: `promoteEntry()` moves a
+  still-active call (codemode looping on bash output) to the end of the buffer
+  once more than `ACTIVE_PROMOTE_GAP` (5) entries landed below it, stamping it
+  with the current time; its result entry, which carries the completion time,
+  is moved the same way. Clients get `history_remove` first so the following
+  `history_upsert` appends instead of updating in place (check:
+  tool-order.check.ts). A reload restores the session-file order (the call
+  above its nested entries) until the next update promotes it again.
 - **History entries** carry stable server-assigned `id`s (monotonic) —
   frontend React keys prefer them so expansion state and scroll anchoring
   survive broadcasts. toolCall→toolResult replacement inherits the id.
