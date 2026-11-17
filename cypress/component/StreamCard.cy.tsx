@@ -298,6 +298,20 @@ describe('StreamCard', () => {
     cy.get('.stream-text-truncated').should('contain', 'more characters');
   });
 
+  it('lists models alphabetically and marks the pi default', () => {
+    const models = [
+      { provider: 'p', id: 'm2', name: 'Zeta' },
+      { provider: 'p', id: 'm1', name: 'Alpha', isDefault: true },
+      { provider: 'p', id: 'm3', name: 'Mike' },
+    ];
+    cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={cy.stub()} model={null} models={models} />);
+    cy.get('.chat-model-name').click();
+    cy.get('.chat-model-item .model-name').then(($n) => {
+      expect($n.toArray().map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim()))
+        .to.deep.eq(['(default) Alpha', 'Mike', 'Zeta']);
+    });
+  });
+
   it('shows the active model on the second header row', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={{ provider: 'openrouter', id: 'mimo-v2.3', name: 'mimo-v2.3:all' }} />);
     cy.get('.chat-model-row').should('contain', 'mimo-v2.3:all');

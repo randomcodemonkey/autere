@@ -265,9 +265,12 @@ const FolderIgnoreAdd: React.FC<{ onAdd: (path: string) => void; items: FolderIg
 
 /** Models settings section: a table of ALL models pi reports (auto-loaded on
  *  open; the Update button re-reads) with per-model enabled / thinking level /
- *  reserved context / image mode. The enabled checkbox toggles the enabled
- *  list (enabled-first preserves its ordering); all edits go through the SAME
- *  draft settings keys the schema fields use — one Save path, unchanged. */
+ *  reserved context / image mode. Rows are alphabetical; the default model
+ *  (enabledModels[0], which applySettingsToPiEnv turns into pi's
+ *  defaultProvider/defaultModel) is shown above the table and marked in its
+ *  row, and "set as default" moves a model to the head of the list. All edits
+ *  go through the SAME draft settings keys the schema fields use — one Save
+ *  path, unchanged. */
 const ModelsSection: React.FC<{
   section?: SettingSection;
   settings: Record<string, any>;
@@ -282,13 +285,18 @@ const ModelsSection: React.FC<{
   const visionField = section.fields.find((f) => f.key === 'visionByModel');
   const enabled: string[] = Array.isArray(settings.enabledModels) ? settings.enabledModels : [];
   const modelKey = (m: { provider: string; id: string }) => (m.provider ? `${m.provider}/${m.id}` : m.id);
-  // Enabled rows keep their priority order; the rest alphabetical.
+  // The first enabled model is pi's session-start default (applySettingsToPiEnv
+  // writes defaultProvider/defaultModel from it).
+  const defaultKey = enabled[0] || null;
+  const defaultName = defaultKey
+    ? (catalog || []).find((m) => modelKey(m) === defaultKey)?.name || defaultKey
+    : null;
+  // One order - alphabetical by name - wherever models are listed.
   const rows = catalog
-    ? [
-        ...enabled.map((k) => catalog.find((m) => modelKey(m) === k)).filter((m): m is { provider: string; id: string; name: string } => Boolean(m)),
-        ...catalog.filter((m) => !enabled.includes(modelKey(m))).sort((a, b) => a.name.localeCompare(b.name)).map((m) => m as { provider: string; id: string; name: string }),
-      ]
+    ? [...catalog].sort((a, b) => a.name.localeCompare(b.name))
     : [];
+  /** Put a model at the head of enabledModels (enabling it if needed). */
+  const setDefaultModel = (k: string) => handleChange('enabledModels', [k, ...enabled.filter((e) => e !== k)]);
   const mapVal = (fieldKey: string, k: string): any => {
     const v = settings[fieldKey];
     return v && typeof v === 'object' ? v[k] : undefined;
@@ -321,6 +329,12 @@ const ModelsSection: React.FC<{
           </div>
           {modelsError && <div className="settings-description">{modelsError}</div>}
           {catalog !== null && (
+            <div className="models-default-line">
+              <span className="models-default-label">Default model for new sessions:</span>{' '}
+              <strong className="models-default-name">{defaultName ?? 'none set'}</strong>
+            </div>
+          )}
+          {catalog !== null && (
             rows.length === 0 ? (
               <div className="settings-description">No models reported by pi.</div>
             ) : (
@@ -338,9 +352,25 @@ const ModelsSection: React.FC<{
                   {rows.map((m) => {
                     const k = modelKey(m);
                     const on = enabled.includes(k);
+                    const isDefault = k === defaultKey;
                     return (
-                      <tr key={k} className={on ? 'enabled' : ''}>
-                        <td className="models-table-name" title={k} data-label="Model">{m.name}</td>
+                      <tr key={k} className={`${on ? 'enabled' : ''}${isDefault ? ' models-row-default' : ''}`}>
+                        <td className="models-table-name" title={k} data-label="Model">
+                          {isDefault && <span className="models-default-badge">(default)</span>} {m.name}
+                          {!isDefault && (
+                            <>
+                              {' '}
+                              <button
+                                className="models-set-default"
+                                type="button"
+                                title="Use this model for new sessions"
+                                onClick={() => setDefaultModel(k)}
+                              >
+                                set as default
+                              </button>
+                            </>
+                          )}
+                        </td>
                         <td data-label="Enabled"><input type="checkbox" checked={on} onChange={(e) => toggleEnabled(k, e.target.checked)} /></td>
                         <td data-label="Thinking level">
                           <select

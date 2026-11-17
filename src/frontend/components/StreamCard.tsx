@@ -103,7 +103,12 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
   // Model dropdown on the chat model row
   const [modelOpen, setModelOpen] = useState(false);
   const modelWrapperRef = useRef<HTMLSpanElement>(null);
-  const modelsList = useMemo(() => models || [], [models]);
+  // Alphabetical everywhere models are listed; the pi default (first enabled
+  // model, flagged by the backend) is marked so a new session's model is obvious.
+  const modelsList = useMemo(
+    () => [...(models || [])].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
+    [models],
+  );
   const openModelDropdown = useCallback(() => {
     setModelOpen((v) => !v);
     // Fetch while the list is empty — the backend serves the scoped catalog
@@ -358,7 +363,9 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
                     onClick={() => selectModel(m.provider, m.id)}
                   >
                     <span className="model-dot" />
-                    <span className="model-name">{m.name || m.id}</span>
+                    <span className="model-name">
+                      {m.isDefault && <span className="model-default-badge">(default)</span>} {m.name || m.id}
+                    </span>
                     <span className="model-provider">{m.provider}</span>
                   </div>
                 ))

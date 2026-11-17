@@ -339,13 +339,13 @@ describe('SettingsCard models catalog table', () => {
     { provider: 'p2', id: 'm2', name: 'Model Two' },
   ];
 
-  function stubWithCatalog(settings: Record<string, any>) {
+  function stubWithCatalog(settings: Record<string, any>, catalog: any[] = cat) {
     cy.window({ log: false }).then((win) => {
       win.fetch = (input: any) => {
         const u = String(input);
         let data: any = { success: true };
         if (u.includes('/api/v1/settings/schema')) data = { success: true, data: modelsSchema };
-        else if (u.includes('/api/v1/models/available')) data = { success: true, data: cat };
+        else if (u.includes('/api/v1/models/available')) data = { success: true, data: catalog };
         else if (u.includes('/api/v1/settings')) data = { success: true, data: settings };
         else if (u.includes('/api/v1/extensions/packages')) data = { success: true, data: { available: [] } };
         return Promise.resolve({ json: () => Promise.resolve(data) } as any);
@@ -359,7 +359,8 @@ describe('SettingsCard models catalog table', () => {
     // Catalog auto-loads when the section opens; Update re-reads it
     cy.get('.models-table tbody tr', { timeout: 10000 }).should('have.length', 2);
     cy.get('.models-table tbody tr').first().should('contain', 'Model One');
-    // Enabled first (settings order), then the rest alphabetically
+    // Alphabetical by name; the default model is called out outside the table
+    cy.get('.models-default-name').should('have.text', 'Model One');
     cy.get('.models-table tbody tr').eq(0).find('input[type=checkbox]').should('be.checked');
     cy.get('.models-table tbody tr').eq(1).find('input[type=checkbox]').should('not.be.checked');
     // Stored per-model values show up in the row controls
@@ -367,6 +368,46 @@ describe('SettingsCard models catalog table', () => {
     cy.contains('.models-table tbody tr', 'Model Two').find('input[type=number]').should('have.value', '10');
     cy.contains('button', 'Update available models').click();
     cy.get('.models-table tbody tr', { timeout: 10000 }).should('have.length', 2);
+  });
+
+  it('sorts by name, marks the default and sets a new one', () => {
+    // Catalog deliberately out of name order
+    stubWithCatalog({ enabledModels: ['p2/m2', 'p1/m1'] }, [
+      { provider: 'p2', id: 'm2', name: 'Zeta' },
+      { provider: 'p1', id: 'm1', name: 'Alpha' },
+      { provider: 'p3', id: 'm3', name: 'Mike' },
+    ]);
+    cy.mount(<MemoryRouter initialEntries={['/session/s1/settings?section=models']}><SettingsCard sseConnected={true} /></MemoryRouter>);
+    cy.get('.models-table tbody tr', { timeout: 10000 }).should('have.length', 3);
+    cy.get('.models-table-name').then(($n) => {
+      expect($n.toArray().map((el) => el.textContent?.replace(/\s+/g, ' ').trim())).to.deep.eq([
+        'Alpha set as default',
+        'Mike set as default',
+        '(default) Zeta',
+      ]);
+    });
+    cy.get('.models-default-line').should('contain', 'Default model for new sessions').and('contain', 'Zeta');
+    // The default row offers no button; every other row does
+    cy.get('.models-table tbody tr.models-row-default .models-set-default').should('not.exist');
+    cy.get('.models-set-default').should('have.length', 2);
+
+    // Set Alpha as default: it moves to the head of enabledModels (enabled
+    // if it was not) and Save posts that order
+    let savedBody: any = null;
+    cy.window({ log: false }).then((win) => {
+      const real = win.fetch;
+      win.fetch = (input: any, init?: any) => {
+        if (String(input).includes('/api/v1/settings') && init?.method === 'PUT') savedBody = JSON.parse(init.body);
+        return real(input, init);
+      };
+    });
+    cy.contains('.models-table tbody tr', 'Alpha').find('.models-set-default').click();
+    cy.get('.models-default-name').should('have.text', 'Alpha');
+    cy.get('.models-table tbody tr').first().should('have.class', 'models-row-default');
+    cy.contains('button', 'Save Settings').click();
+    cy.wrap(null).should(() => {
+      expect(savedBody.enabledModels).to.deep.eq(['p1/m1', 'p2/m2']);
+    });
   });
 
   it('table controls write the same draft keys (enabled toggle appends)', () => {

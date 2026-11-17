@@ -108,6 +108,8 @@ export interface AvailableModel {
   id: string;
   name?: string;
   thinkingLevel?: string;
+  /** The pi default model (first entry of enabledModels) */
+  isDefault?: boolean;
 }
 
 

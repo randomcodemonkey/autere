@@ -3405,6 +3405,33 @@ body {
   }
 }
 
+// Default model (pi's session-start pick = first enabled model)
+.models-default-line {
+  font-size: 0.85rem;
+  color: var(--c-text-2);
+  margin-bottom: 0.5rem;
+}
+
+.models-default-badge,
+.model-default-badge {
+  color: var(--c-accent);
+  font-weight: 600;
+}
+
+.models-set-default {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 0.25rem;
+  font: inherit;
+  font-size: 0.7rem;
+  color: var(--c-accent);
+  cursor: pointer;
+  opacity: 0.8;
+
+  &:hover { opacity: 1; text-decoration: underline; }
+}
+
 // Cross-session messaging grants (Create/Edit session)
 .session-messaging {
   margin-top: 0.75rem;

@@ -38,7 +38,7 @@ import { copilotStatsFor } from './extension-handlers.js';
 import type { CopilotTotals } from './copilot-totals.js';
 import { readExtensions } from './extensions.js';
 import { sendJSON, sendFile, getDashboardHTML, readSessionHistory } from './utils.js';
-import { getEnabledModelEntries, scopeModelsForSession } from './utils.js';
+import { getEnabledModelEntries, markDefaultModel, scopeModelsForSession } from './utils.js';
 import { isPiImagesInstalled } from './image-models.js';
 import { getPiEnvDir, ensurePiEnv, resolveSandboxImage, validateSandboxImage } from './pi-env.js';
 import { findPersona, listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
@@ -1436,7 +1436,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         // Idle session (lazy spawn): no pi process to ask — enabled models only.
         data = getEnabledModelEntries(c.user);
       }
-      sendJSON(c.res, { success: true, data });
+      sendJSON(c.res, { success: true, data: markDefaultModel(data, c.user) });
     },
   });
 

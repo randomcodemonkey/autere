@@ -37,6 +37,21 @@ export function scopeModelsForSession(models: any[], current: { provider?: strin
 }
 
 /**
+ * Flag the pi default model - the FIRST entry of enabledModels, which
+ * applySettingsToPiEnv writes to defaultProvider/defaultModel, so pi picks it
+ * for a new session. Clients show it as "(default)".
+ */
+export function markDefaultModel(models: any[], user: string): any[] {
+  const first = getEnabledModelPatterns(user)[0];
+  if (!first) return models;
+  const slash = first.indexOf('/');
+  const provider = slash > 0 ? first.slice(0, slash) : '';
+  const id = slash > 0 ? first.slice(slash + 1) : first;
+  return models.map((m: any) =>
+    m.id === id && (!provider || m.provider === provider) ? { ...m, isDefault: true } : m);
+}
+
+/**
  * Enabled models for sessions with no running pi process (no RPC to ask).
  * enabledModels entries are "provider/model" or bare "model" strings; no
  * richer metadata is available without a router dependency.
