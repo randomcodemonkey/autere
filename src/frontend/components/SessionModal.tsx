@@ -565,32 +565,109 @@ export const SessionView: React.FC<SessionViewProps> = ({
  * Checkbox list of sessions: which of them the viewed session may message.
  * Shown in Create session (applied right after creation) and in Edit session.
  */
+/**
+ * Multi-select typeahead over sessions: type to filter, click or Enter to
+ * pair, chips to remove. Used for the messaging grants in Create/Edit session.
+ */
 const SessionPeerPicker: React.FC<{
   candidates: { id: string; name: string; relationship?: string | null }[];
   selected: string[];
   disabled?: boolean;
   onToggle: (id: string, on: boolean) => void;
 }> = ({ candidates, selected, disabled, onToggle }) => {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // Click outside closes the menu (the input keeps focus otherwise).
+  useEffect(() => {
+    if (!open) return;
+    const onDocDown = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [open]);
+
   if (!candidates.length) {
     return <div className="settings-description">No other sessions yet.</div>;
   }
+
+  const byId = new Map(candidates.map((c) => [c.id, c]));
+  const q = query.trim().toLowerCase();
+  const matches = candidates
+    .filter((c) => !selected.includes(c.id))
+    .filter((c) => !q || c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q))
+    .slice(0, 50);
+
+  const add = (id: string) => {
+    onToggle(id, true);
+    setQuery('');
+    setOpen(true);
+  };
+
   return (
-    <div className="session-peers">
-      {candidates.map((c) => (
-        <label key={c.id} className="session-peer-row">
-          <input
-            type="checkbox"
-            className="session-peer-check"
-            checked={selected.includes(c.id)}
-            disabled={disabled}
-            onChange={(e) => onToggle(c.id, e.target.checked)}
-          />
-          <span className="session-peer-name">{c.name}</span>
-          {c.relationship && c.relationship !== 'peer' && (
-            <span className="session-peer-rel">{c.relationship}</span>
+    <div className="session-peers" ref={boxRef}>
+      {selected.length > 0 && (
+        <div className="session-peer-chips">
+          {selected.map((id) => (
+            <span key={id} className="session-peer-chip" title={byId.get(id)?.name ?? id}>
+              {byId.get(id)?.name ?? id}
+              <button
+                type="button"
+                className="session-peer-chip-x"
+                title="Unpair"
+                disabled={disabled}
+                onClick={() => onToggle(id, false)}
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        className="session-peer-search"
+        type="text"
+        placeholder={selected.length ? 'Add another session…' : 'Type to find a session…'}
+        value={query}
+        disabled={disabled}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && matches.length) {
+            e.preventDefault();
+            add(matches[0].id);
+          } else if (e.key === 'Backspace' && !query && selected.length) {
+            // Backspace on an empty field undoes the last pairing.
+            onToggle(selected[selected.length - 1], false);
+          } else if (e.key === 'Escape') {
+            setOpen(false);
+          }
+        }}
+      />
+      {open && (
+        <div className="session-peer-menu">
+          {matches.length === 0 ? (
+            <div className="session-peer-empty">{q ? 'No matching sessions' : 'Every session is paired'}</div>
+          ) : (
+            matches.map((c) => (
+              <div
+                key={c.id}
+                className="session-peer-option"
+                // Keep focus in the input so typing can continue.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => add(c.id)}
+              >
+                <span className="session-peer-name">{c.name}</span>
+                {c.relationship && c.relationship !== 'peer' && (
+                  <span className="session-peer-rel">{c.relationship}</span>
+                )}
+              </div>
+            ))
           )}
-        </label>
-      ))}
+        </div>
+      )}
     </div>
   );
 };

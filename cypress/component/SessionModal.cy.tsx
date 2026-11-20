@@ -69,12 +69,61 @@ describe('SessionModal', () => {
 
     mountModal();
     cy.get('.session-messaging-link').should('contain', 'Task creator').and('contain', 'Task run');
-    cy.get('.session-peer-row').should('have.length', 2);
-    cy.get('.session-peer-check').eq(0).should('be.checked');
-    // Granting a new peer PUTs the full selection (symmetric on the backend)
-    cy.get('.session-peer-check').eq(1).check({ force: true });
-    cy.wait('@saveLinks').its('request.body').should('deep.include', { sessionId: 'aaaa1111-0000' }).and('have.property', 'peers')
-      .and('deep.equal', ['bbbb2222-0000', 'dddd4444-0000']);
+    // Paired sessions are chips; the typeahead lists only what is not paired
+    cy.get('.session-peer-chip').should('have.length', 1).and('contain', 'Second');
+    cy.get('.session-peer-option').should('not.exist');
+    cy.get('.session-peer-search').type('Stra');
+    cy.get('.session-peer-option').should('have.length', 1).and('contain', 'Stranger');
+    // Picking a session PUTs the full selection (symmetric on the backend)
+    cy.get('.session-peer-option').click();
+    cy.wait('@saveLinks').its('request.body').should('deep.include', { sessionId: 'aaaa1111-0000' })
+      .and('have.property', 'peers').and('deep.equal', ['bbbb2222-0000', 'dddd4444-0000']);
+  });
+
+  it('filters the peer typeahead and removes a pairing from its chip', () => {
+    const names: Record<string, string> = { 'bbbb2222-0000': 'Second', 'dddd4444-0000': 'Stranger' };
+    let peers = ['bbbb2222-0000'];
+    cy.intercept('GET', '**/api/v1/session/links*', (req) => req.reply({
+      success: true,
+      data: {
+        parent: null,
+        children: [],
+        peers: peers.map((id) => ({ id, name: names[id] })),
+        candidates: [
+          { id: 'bbbb2222-0000', name: 'Second', relationship: 'peer' },
+          { id: 'dddd4444-0000', name: 'Stranger', relationship: null },
+        ],
+      },
+    })).as('links');
+    cy.intercept('PUT', '**/api/v1/session/links', (req) => {
+      peers = req.body.peers;
+      req.reply({ success: true, data: {} });
+    }).as('saveLinks');
+
+    mountModal();
+    // Typing filters; a non-match says so
+    cy.get('.session-peer-search').type('zzz');
+    cy.get('.session-peer-empty').should('contain', 'No matching sessions');
+    // An already-paired session is not offered again
+    cy.get('.session-peer-search').clear().type('sec');
+    cy.get('.session-peer-option').should('not.exist');
+    cy.get('.session-peer-search').clear();
+    cy.get('.session-peer-option').should('have.length', 1);
+    // The menu must paint over the form behind it, not be transparent
+    cy.get('.session-peer-menu').should(($menu) => {
+      expect(getComputedStyle($menu[0]).backgroundColor).not.to.eq('rgba(0, 0, 0, 0)');
+    });
+
+    // Enter picks the first match
+    cy.get('.session-peer-search').type('Stra{enter}');
+    cy.wait('@saveLinks').its('request.body.peers').should('deep.equal', ['bbbb2222-0000', 'dddd4444-0000']);
+    cy.get('.session-peer-chip').should('have.length', 2);
+    cy.get('.session-peer-search').should('have.value', '');
+
+    // The chip's X drops that pairing
+    cy.get('.session-peer-chip').contains('Second').find('.session-peer-chip-x').click();
+    cy.wait('@saveLinks').its('request.body.peers').should('deep.equal', ['dddd4444-0000']);
+    cy.get('.session-peer-chip').should('have.length', 1).and('contain', 'Stranger');
   });
 
   it('lists sessions with the current one highlighted', () => {
