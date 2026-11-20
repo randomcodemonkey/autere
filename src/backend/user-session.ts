@@ -9,7 +9,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { basename, join } from 'path';
 import { createHash } from 'crypto';
 import { MonitorRpcClient, type RpcClientOptions } from './rpc-client.js';
-import { readSessionUsage, scopeModelsForSession } from './utils.js';
+import { readSessionUsage, scopeModelsForSession, markDefaultModel } from './utils.js';
 import { autoSessionName } from '../shared/format.js';
 import { log, userLog } from './logger.js';
 import { ensurePiEnv, ensureSandboxHomeVolume, ensureSandboxGitconfig, ensureVolumeSubpaths, planSandboxMounts, prepareSandboxEnvDir, resolveSandboxImage, sandboxSharedEnv, DEFAULT_SANDBOX_IMAGE } from './pi-env.js';
@@ -918,7 +918,7 @@ export class UserSession {
             if (this.state.availableModels.length > 0)
               // WS consumers (chat model dropdown) are enabled-scoped; the raw
               // catalog stays in state for the settings table
-              this.broadcast({ type: 'models', data: scopeModelsForSession(this.state.availableModels, this.state.sessionState?.model, this.user) });
+              this.broadcast({ type: 'models', data: markDefaultModel(scopeModelsForSession(this.state.availableModels, this.state.sessionState?.model, this.user), this.user) });
             return;
           }
           await new Promise((r) => setTimeout(r, 1000));
@@ -2035,6 +2035,21 @@ export class UserSession {
    * or compacting is deferred to agent_settled and announced in chat.
    * Returns true when applied immediately, false when deferred.
    */
+  /** Wait (bounded) until pi's catalog lists this model. A fresh process
+   *  loads its catalog asynchronously after boot, so an immediate set_model
+   *  can race it. */
+  async waitForModel(provider: string, modelId: string, timeoutMs = 8000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const models = this.state.availableModels.length > 0
+        ? this.state.availableModels
+        : await this.rpc.getAvailableModels().catch(() => []);
+      if (models.some((m: any) => m.provider === provider && m.id === modelId)) return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
   async setSessionModel(provider: string, modelId: string): Promise<boolean> {
     const s = this.state;
     if (s.sessionState.isStreaming || s.sessionState.compacting) {
@@ -2053,6 +2068,7 @@ export class UserSession {
     if (model) {
       this.state.sessionState.model = { provider: model.provider, id: model.id, name: model.name || model.id };
       this.broadcast({ type: 'status', data: { ...this.state.sessionState } });
+      this.broadcast({ type: 'models', data: markDefaultModel(scopeModelsForSession(this.state.availableModels, this.state.sessionState.model, this.user), this.user) });
     }
   }
 

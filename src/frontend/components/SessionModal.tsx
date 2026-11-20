@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Modal } from './Modal';
 import { SortableList } from './SortableList';
 import { API } from '../api-paths';
 import { uiSessionName } from '../session-name';
 import { PinIcon } from './PinIcon';
-import type { SessionSearchResult, Persona } from '../types';
+import type { SessionSearchResult, Persona, AvailableModel } from '../types';
 import { apiJSON, apiSend } from '../api';
 
 /** Navigational guard: WorkdirEditor raises this while it has unsaved
@@ -81,8 +81,8 @@ interface SessionViewProps {
   isStreaming: boolean;
   /** Admin-only: show the sandbox workdir field in the new-session form */
   canSetWorkdir?: boolean;
-  /** Creates the session: chosen persona id (null = none) + form name + sandbox workdirs + docker.sock opt-in. clearSessionId deletes that session after the new one is bound ("clear" flow) */
-  onNewSession: (personaId: string | null, sessionName: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string, peers?: string[]) => void;
+  /** Creates the session: chosen persona id (null = none) + form name + sandbox workdirs + docker.sock opt-in + optional initial model. clearSessionId deletes that session after the new one is bound ("clear" flow) */
+  onNewSession: (personaId: string | null, sessionName: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string, peers?: string[], model?: { provider: string; modelId: string }) => void;
   onSwitchSession: (sessionId: string) => void;
   pinnedSessionFiles?: string[];
   onTogglePinnedSession?: (session: SessionSearchResult) => void;
@@ -92,6 +92,8 @@ interface SessionViewProps {
   initialView?: 'new';
   /** Fired once the initialView has been consumed */
   onConsumedInitial?: () => void;
+  /** Scoped model catalog (AUTERE_PROVIDER-filtered) for the provider/model pickers */
+  models?: AvailableModel[];
 }
 
 type SearchedSession = SessionSearchResult;
@@ -126,6 +128,7 @@ export const SessionView: React.FC<SessionViewProps> = ({
   pinnedSessionFiles = [], onTogglePinnedSession,
   switching = false,
   initialView, onConsumedInitial,
+  models = [],
 }) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchedSession[]>([]);
@@ -148,6 +151,8 @@ export const SessionView: React.FC<SessionViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialView]);
   const [newNameInput, setNewNameInput] = useState('');
+  const [newProvider, setNewProvider] = useState('');
+  const [newModelId, setNewModelId] = useState('');
   const [newWorkdirs, setNewWorkdirs] = useState<string[]>([]);
   const [newMountDockerSocket, setNewMountDockerSocket] = useState(false);
   const [activeOnly, setActiveOnly] = useState(false);
@@ -262,9 +267,31 @@ export const SessionView: React.FC<SessionViewProps> = ({
     setView('new');
   }, []);
 
+  // Provider/model pickers: providers come from the scoped catalog (the
+  // backend already applied AUTERE_PROVIDER), the pi default model seeds the
+  // initial selection. Alphabetical within a provider.
+  const providers = useMemo(() => {
+    const seen = new Set<string>();
+    for (const m of models) if (m.provider) seen.add(m.provider);
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }, [models]);
+  const defaultModel = models.find((m) => m.isDefault);
+  const selectedProvider = newProvider || defaultModel?.provider || providers[0] || '';
+  const providerModels = useMemo(
+    () => models
+      .filter((m) => m.provider === selectedProvider)
+      .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
+    [models, selectedProvider],
+  );
+  const selectedModelId = (providerModels.some((m) => m.id === newModelId) ? newModelId : '')
+    || (defaultModel?.provider === selectedProvider ? defaultModel.id : '')
+    || providerModels[0]?.id
+    || '';
+
   const createNewSession = useCallback(() => {
-    onNewSession(personaId || null, newNameInput.trim(), canSetWorkdir ? newWorkdirs : undefined, canSetWorkdir ? newMountDockerSocket : false, undefined, newPeers);
-  }, [onNewSession, personaId, newNameInput, newWorkdirs, canSetWorkdir, newMountDockerSocket, newPeers]);
+    const model = selectedProvider && selectedModelId ? { provider: selectedProvider, modelId: selectedModelId } : undefined;
+    onNewSession(personaId || null, newNameInput.trim(), canSetWorkdir ? newWorkdirs : undefined, canSetWorkdir ? newMountDockerSocket : false, undefined, newPeers, model);
+  }, [onNewSession, personaId, newNameInput, newWorkdirs, canSetWorkdir, newMountDockerSocket, newPeers, selectedProvider, selectedModelId]);
 
   const visibleSessions = activeOnly ? results.filter((s) => s.active || s.streaming) : results;
 
@@ -310,6 +337,36 @@ export const SessionView: React.FC<SessionViewProps> = ({
             ))}
           </select>
         </div>
+        {providers.length > 0 && (
+          <div className="session-model-row">
+            <div className="settings-field">
+              <label className="settings-label" htmlFor="session-provider-select">Provider</label>
+              <select
+                id="session-provider-select"
+                className="settings-input"
+                value={selectedProvider}
+                onChange={(e) => { setNewProvider(e.target.value); setNewModelId(''); }}
+                disabled={providers.length <= 1}
+              >
+                {providers.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div className="settings-field">
+              <label className="settings-label" htmlFor="session-model-select">Model</label>
+              <select
+                id="session-model-select"
+                className="settings-input"
+                value={selectedModelId}
+                onChange={(e) => setNewModelId(e.target.value)}
+                disabled={providerModels.length === 0}
+              >
+                {providerModels.map((m) => (
+                  <option key={`${m.provider}/${m.id}`} value={m.id}>{m.name || m.id}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
         {canSetWorkdir && (
           <label className="session-sock-row">
             <input

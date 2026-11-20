@@ -248,6 +248,30 @@ describe('SessionModal', () => {
     cy.get('@onNewSession').should('have.been.calledWith', 'p1', 'My custom name');
   });
 
+  it('new session form: provider/model pickers default to the pi default and scope models', () => {
+    mountModal({
+      models: [
+        { provider: 'anthropic', id: 'claude', name: 'Claude' },
+        { provider: '9router', id: 'auto', name: 'Auto', isDefault: true },
+        { provider: '9router', id: 'glm', name: 'GLM' },
+      ],
+    });
+    cy.wait('@sessions');
+    cy.get('.btn-primary').contains('New Session').click();
+    // Default provider comes from the flagged pi default model
+    cy.get('#session-provider-select').invoke('val').should('eq', '9router');
+    cy.get('#session-model-select option').then(($options) => {
+      expect($options.toArray().map((el) => (el as HTMLOptionElement).value)).to.deep.eq(['auto', 'glm']);
+    });
+    // Choosing a provider re-scopes the model list
+    cy.get('#session-provider-select').select('anthropic');
+    cy.get('#session-model-select option').then(($options) => {
+      expect($options.toArray().map((el) => (el as HTMLOptionElement).value)).to.deep.eq(['claude']);
+    });
+    cy.get('.session-create-btn').click();
+    cy.get('@onNewSession').its('lastCall.args.6').should('deep.equal', { provider: 'anthropic', modelId: 'claude' });
+  });
+
   it('closing the new-session modal returns to the listing', () => {
     mountModal();
     cy.wait('@sessions');

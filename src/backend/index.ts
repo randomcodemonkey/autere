@@ -14,6 +14,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import { openSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { AUTERE_DIR } from './constants.js';
+import { parseProviderList } from '../shared/format.js';
 
 // ── 9router management ──
 
@@ -152,9 +153,9 @@ async function main() {
     process.exit(1);
   }
 
-  // Run the local 9router alongside the backend — but only when pi is
-  // configured for the 9router provider (nothing else talks to it).
-  if (!config.piProvider || config.piProvider === '9router') {
+  // Run the local 9router alongside the backend — when 9router is one of
+  // the providers this deployment exposes (AUTERE_PROVIDER, first = default).
+  if (parseProviderList(config.piProvider).includes('9router')) {
     start9router();
     process.on('SIGTERM', stop9router);
     process.on('SIGINT', stop9router);

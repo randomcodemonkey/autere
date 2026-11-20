@@ -266,28 +266,34 @@ const FolderIgnoreAdd: React.FC<{ onAdd: (path: string) => void; items: FolderIg
 /** Models settings section: a table of ALL models pi reports (auto-loaded on
  *  open; the Update button re-reads) with per-model enabled / thinking level /
  *  reserved context / image mode. Rows are alphabetical; the default model
- *  (enabledModels[0], which applySettingsToPiEnv turns into pi's
- *  defaultProvider/defaultModel) is shown above the table and marked in its
- *  row, and "set as default" moves a model to the head of the list. All edits
- *  go through the SAME draft settings keys the schema fields use — one Save
- *  path, unchanged. */
+ *  (first enabled model on the deployment's default provider, which
+ *  applySettingsToPiEnv turns into pi's defaultProvider/defaultModel) is shown
+ *  above the table and marked in its row, and "set as default" moves a model
+ *  to the head of the list. All edits go through the SAME draft settings keys
+ *  the schema fields use — one Save path, unchanged. */
 const ModelsSection: React.FC<{
   section?: SettingSection;
   settings: Record<string, any>;
   catalog: { provider: string; id: string; name: string }[] | null;
   modelsLoading: boolean;
   modelsError: string | null;
+  /** AUTERE_PROVIDER[0] — the provider new sessions default to */
+  defaultProvider?: string;
   loadCatalog(): void;
   handleChange(key: string, value: any): void;
-}> = ({ section, settings, catalog, modelsLoading, modelsError, loadCatalog, handleChange }) => {
+}> = ({ section, settings, catalog, modelsLoading, modelsError, defaultProvider = '', loadCatalog, handleChange }) => {
   if (!section) return null;
   const thinkingField = section.fields.find((f) => f.key === 'modelThinkingLevels');
   const visionField = section.fields.find((f) => f.key === 'visionByModel');
   const enabled: string[] = Array.isArray(settings.enabledModels) ? settings.enabledModels : [];
   const modelKey = (m: { provider: string; id: string }) => (m.provider ? `${m.provider}/${m.id}` : m.id);
-  // The first enabled model is pi's session-start default (applySettingsToPiEnv
-  // writes defaultProvider/defaultModel from it).
-  const defaultKey = enabled[0] || null;
+  // The default model is the first enabled model on the deployment's default
+  // provider (applySettingsToPiEnv writes it as defaultProvider/defaultModel),
+  // falling back to the first enabled model when none is enabled for it.
+  const defaultKey = (defaultProvider ? enabled.find((k) => {
+    const slash = k.indexOf('/');
+    return slash > 0 && k.slice(0, slash).toLowerCase() === defaultProvider;
+  }) : undefined) || enabled[0] || null;
   const defaultName = defaultKey
     ? (catalog || []).find((m) => modelKey(m) === defaultKey)?.name || defaultKey
     : null;
@@ -353,11 +359,12 @@ const ModelsSection: React.FC<{
                     const k = modelKey(m);
                     const on = enabled.includes(k);
                     const isDefault = k === defaultKey;
+                    const canDefault = !defaultProvider || m.provider.toLowerCase() === defaultProvider;
                     return (
                       <tr key={k} className={`${on ? 'enabled' : ''}${isDefault ? ' models-row-default' : ''}`}>
                         <td className="models-table-name" title={k} data-label="Model">
                           {isDefault && <span className="models-default-badge">(default)</span>} {m.name}
-                          {!isDefault && (
+                          {!isDefault && canDefault && (
                             <>
                               {' '}
                               <button
@@ -426,6 +433,8 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected, onSess
   // pi what it can actually reach. null = not loaded yet; the section
   // auto-loads it on first open, Update re-reads it.
   const [catalog, setCatalog] = useState<{ provider: string; id: string; name: string }[] | null>(null);
+  // AUTERE_PROVIDER[0] from GET /settings (top-level field, not a setting)
+  const [defaultProvider, setDefaultProvider] = useState('');
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const loadCatalog = useCallback(async () => {
@@ -483,9 +492,13 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected, onSess
   useEffect(() => {
     Promise.all([
       apiJSON<any[]>(API.settings.schema),
-      apiJSON<any>(API.settings.root),
+      apiBody<any>(API.settings.root),
       apiJSON<{ available?: string[] }>(API.extensions.packages).catch(() => null),
-    ]).then(async ([schema, loaded, pkgs]) => {
+    ]).then(async ([schema, loadedBody, pkgs]) => {
+      const loaded = loadedBody.data;
+      if (typeof loadedBody.defaultProvider === 'string' && loadedBody.defaultProvider) {
+        setDefaultProvider(loadedBody.defaultProvider.toLowerCase());
+      }
       if (pkgs) setAvailablePackages(pkgs.available || []);
       if (schema) {
         // Sort once here, before render: menu + validation effect + default
@@ -837,6 +850,7 @@ export const SettingsCard: React.FC<SettingsCardProps> = ({ sseConnected, onSess
                 catalog={catalog}
                 modelsLoading={modelsLoading}
                 modelsError={modelsError}
+                defaultProvider={defaultProvider}
                 loadCatalog={loadCatalog}
                 handleChange={handleChange}
               />

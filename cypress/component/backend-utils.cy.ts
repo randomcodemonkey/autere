@@ -5,7 +5,7 @@
 
 import { parseCookies, extractFullText, formatToolArgs, dedupHistory, extractImages } from '../../src/shared/format';
 import { findSession, type SessionRef } from '../../src/shared/find-session';
-import { isRmCommand, extractRmPaths, accumulateUsage, sanitizeUserName, filterModelsByPatterns, matchModelMap, sessionLocaleStamp, autoSessionName } from '../../src/shared/format';
+import { isRmCommand, extractRmPaths, accumulateUsage, sanitizeUserName, filterModelsByPatterns, matchModelMap, sessionLocaleStamp, autoSessionName, parseProviderList } from '../../src/shared/format';
 import { pathIsIgnored } from '../../src/shared/edit-ignore';
 import { TASK_REPORT_MARKER, streamRoleForUserText } from '../../src/shared/format';
 import { canRunTaskScripts, validateTaskInput } from '../../src/shared/tasks';
@@ -370,6 +370,18 @@ describe('Backend Utilities (real implementations)', () => {
 
     it('drops non-matching models', () => {
       expect(filterModelsByPatterns(models, ['nonexistent/model'])).to.have.length(0);
+    });
+  });
+
+  describe('parseProviderList', () => {
+    it('defaults to 9router when unset or empty', () => {
+      expect(parseProviderList(undefined)).to.deep.equal(['9router']);
+      expect(parseProviderList('')).to.deep.equal(['9router']);
+      expect(parseProviderList(' , ')).to.deep.equal(['9router']);
+    });
+
+    it('keeps list order (first = default), trims, lower-cases and de-duplicates', () => {
+      expect(parseProviderList(' Anthropic, 9Router ,ANTHROPIC')).to.deep.equal(['anthropic', '9router']);
     });
   });
 });

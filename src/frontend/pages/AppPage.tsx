@@ -307,7 +307,7 @@ export function AppPage({
     }
   }, [sessionState.sessionId, setSessionError, setSessionState]);
 
-  const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string, peers?: string[]) => {
+  const handleNewSession = useCallback((personaId?: string | null, sessionName?: string, workdirs?: string[], mountDockerSocket?: boolean, clearSessionId?: string, peers?: string[], model?: { provider: string; modelId: string }) => {
     // Relative (or ~) workdir paths are allowed: the backend resolves them
     // against the autere backend container's $HOME before spawning.
     setCreatingSession(true);
@@ -323,6 +323,7 @@ export function AppPage({
         ...(personaId ? { personaId } : {}),
         ...(workdirs && workdirs.length ? { workdirs } : {}),
         ...(mountDockerSocket ? { mountDockerSocket: true } : {}),
+        ...(model ? { provider: model.provider, modelId: model.modelId } : {}),
       }),
     })
       .then(data => {
@@ -471,6 +472,7 @@ export function AppPage({
               pinnedSessionFiles={pinnedSessionFiles}
               onTogglePinnedSession={handleTogglePinnedSession}
               switching={switchingSession}
+              models={models}
             />
             </ErrorBoundary>
           )}

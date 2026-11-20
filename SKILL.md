@@ -342,17 +342,18 @@ extras/pi-9router-ext/ # pi extension: the 9router provider. Autere FORK of
                        # required) — this replaced extras/pi-combo-reasoning,
                        # which had to re-register the provider after async
                        # discovery to avoid racing it. ALWAYS INSTALLED and
-                       # hidden from Settings → Extensions when AUTERE_PROVIDER is
-                       # unset or 9router (ALWAYS_ENABLED_EXTRAS in
-                       # user-settings.ts): absent from getAvailableExtras (not
+                       # hidden from Settings → Extensions when the
+                       # AUTERE_PROVIDER list contains 9router (ALWAYS_ENABLED_EXTRAS
+                       # in user-settings.ts): absent from getAvailableExtras (not
                        # user-toggleable) but still listed on the Agent card's
                        # Extensions row while enabled, so its 9router status and
                        # recent-request detail modal stay available;
                        # reinstalled per env by reconcileExtraExtensions, and
                        # applied to sandboxed sessions too (the env extensions
-                       # dir is mounted). Non-9router providers: not installed,
-                       # and ensurePiEnv strips the legacy npm pi-9router-ext
-                       # package entry so both never register the provider.
+                       # dir is mounted). Provider lists without 9router: not
+                       # installed, and ensurePiEnv strips the legacy npm
+                       # pi-9router-ext package entry so both never register
+                       # the provider.
 extras/pi-dedup/       # pi extension: elides exact-duplicate tool results
                        # (tool_result patch → pointer to the in-context first
                        # occurrence; append-time only so prompt caching keeps
@@ -623,8 +624,24 @@ npx tsx cypress/e2e/support/run-one.ts cypress/e2e/dashboard.cy.ts
 ```bash
 npx tsx src/backend/index.ts \
   --port 3456 --monitor-auth true --monitor-password pw \
-  --provider 9router --model <model-id> --idle-timeout 30 -- [pi args]
+  --provider 9router,anthropic --model <model-id> --idle-timeout 30 -- [pi args]
 ```
+
+**Providers and models** — `AUTERE_PROVIDER` is a comma-separated allowlist
+of pi providers the UI exposes; the first entry is the default provider for
+new sessions (unset/empty = `9router`). `getAllowedProviders()` /
+`getPiDefaultModel()` live in user-settings.ts;
+`filterAllowedProviders()` / `markDefaultModel()` in utils.ts scope EVERY
+model list (bootstrap, SSE `models`, `GET /session/models`, `POST
+/models/available`) to the allowlist and flag the pi default. A new session
+accepts optional `provider` + `modelId` (POST /sessions) and is switched
+with pi's `set_model` after spawn; the chat model dropdown changes provider
+on the fly (grouped per provider when several are exposed). Provider
+credentials are the user's responsibility and live per provider in the
+user's pi env (`auth.json`, or `models.json` keys) — configure them via
+`pi` `/login` or manually (README "Using other providers"); pi only lists
+providers with usable credentials. Self-check:
+`npx tsx src/backend/providers.check.ts`.
 
 Env: `PI_MONITOR_PASSWORD`, `PI_MONITOR_AUTH`, `PI_IMAGES_MODEL`,
 `AUTERE_ADMIN_USER` (default `admin`), `AUTERE_ADMIN_PASSWORD` (default

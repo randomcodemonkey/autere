@@ -45,13 +45,21 @@ The default `9router` instance requires an API key which you can obtain from the
 
 ### Using other providers
 
-Autere is designed for 9router but can also run without it, by setting the `AUTERE_PROVIDER` env value to a valid `pi` provider. With this mode, you must manually configure the provider with `pi` through the running Autere docker instance:
+Autere is designed for 9router but can expose any set of `pi` providers. Set `AUTERE_PROVIDER` to a comma-separated list; the first entry is the default provider for new sessions:
+
+```bash
+docker run -e AUTERE_PROVIDER=9router,anthropic,github-copilot ...
+```
+
+The list scopes what the Autere UI offers: the New Session provider/model pickers, the session model dropdown and the scheduled-task model list. Providers outside the list are hidden even if pi has credentials for them. With `9router` in the list the bundled 9router extension stays installed; without it, 9router is not registered at all.
+
+Provider credentials are per-user pi configuration. Each Autere user needs a usable credential for the providers they use, configured either interactively through pi in the running Autere container:
 
 ```bash
 docker exec -it autere pi
 ```
 
-Enter `/login` to pi and follow the instructions for configuring your selected provider. See [Pi Providers documentation](https://pi.dev/docs/latest/providers) for details.
+Enter `/login` and follow the instructions for the provider. See [Pi Providers documentation](https://pi.dev/docs/latest/providers) for details. A credential can also be placed manually in the user's pi environment (`~/.autere/pi-envs/<user>/auth.json`, or a key in `models.json`). Models only appear in Autere once their provider has a usable credential in that user's environment.
 
 ### Authentication
 
@@ -123,8 +131,8 @@ Autere can be ran behind a proxy and supports the standard `x-forwarded-prefix` 
 | `AUTERE_PORT` | 3456 | HTTP server port |
 | `AUTERE_AUTH` | true | Enable/disable authentication |
 | `INITIAL_PASSWORD` | `admin` | Initial password for the `admin` user and 9router |
-| `AUTERE_PROVIDER` | 9router | Pi provider |
-| `AUTERE_MODEL` | - | Pi model ID |
+| `AUTERE_PROVIDER` | 9router | Comma-separated pi providers exposed in the UI (first = default for new sessions) |
+| `AUTERE_MODEL` | - | Pi model ID (`provider/model` supported) |
 | `AUTERE_IDLE_TIMEOUT` | 30 | Minutes before idle pi sessions are terminated |
 | `AUTERE_NINE_ROUTER_URL` | `http://localhost:20128` | Backend-managed 9router URL |
 | `AUTERE_SANDBOX_IMAGE` | ghcr.io/randomcodemonkey/autere:latest | Docker image for sandboxed pi sessions (`off` disables sandbox mode) |

@@ -38,7 +38,7 @@ import { copilotStatsFor } from './extension-handlers.js';
 import type { CopilotTotals } from './copilot-totals.js';
 import { readExtensions } from './extensions.js';
 import { sendJSON, sendFile, getDashboardHTML, readSessionHistory } from './utils.js';
-import { getEnabledModelEntries, markDefaultModel, scopeModelsForSession } from './utils.js';
+import { getEnabledModelEntries, markDefaultModel, scopeModelsForSession, filterAllowedProviders } from './utils.js';
 import { isPiImagesInstalled } from './image-models.js';
 import { getPiEnvDir, ensurePiEnv, resolveSandboxImage, validateSandboxImage } from './pi-env.js';
 import { findPersona, listPersonas, savePersonas, validatePersona, setActivePersona, getActivePersona, getGlobalPrompt, setGlobalPrompt, type Persona } from './personas.js';
@@ -109,7 +109,7 @@ import { effectiveMessageType, type MessageType } from '../shared/messages.js';
 import { buildOpenApiSpec, type RouteDoc } from './openapi.js';
 import type { SessionInfo } from './types.js';
 
-import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getEditIgnorePaths, getFolderIgnores, getSummaryPromptComposition, getSummaryPromptGuardTokens, getSummaryPromptExtra, deleteUserSettings } from './user-settings.js';
+import { getAllUserSettings, saveUserSettings, setUserSetting, getUserSetting, getUserSettingsSchema, getAvailablePackages, getEnabledPackages, getEditIgnorePaths, getFolderIgnores, getSummaryPromptComposition, getSummaryPromptGuardTokens, getSummaryPromptExtra, deleteUserSettings, getAllowedProviders, getDefaultProvider } from './user-settings.js';
 
 const startsWithLocal = (p: unknown): boolean => String(typeof p === 'string' ? p : (p as { source?: string })?.source || '').startsWith('local:');
 
@@ -450,7 +450,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         streamHistory,
         historySessionId: disk.id,
         availableSessions: pm.listSessions(user, c.viewed),
-        availableModels: getEnabledModelEntries(user),
+        availableModels: markDefaultModel(getEnabledModelEntries(user), user),
         extensions: await enrichExtensionsFor(user),
       };
     }
@@ -467,6 +467,22 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         }
       }
     }
+    const models = sess
+      ? (sess.state.availableModels.length > 0
+        ? scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model, user)
+        : await (async () => {
+            try {
+              const fetched = await Promise.race([
+                sess.rpc.getAvailableModels(),
+                new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+              ]);
+              sess.state.availableModels = fetched.map((m: any) => ({
+                provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
+              }));
+            } catch { /* wedged provider — ship the fallback list */ }
+            return scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model, user);
+          })())
+      : getEnabledModelEntries(user);
     return {
       sessionState: st ? { ...st } : null,
       sessionStats: sess ? { ...sess.state.sessionStats } : null,
@@ -482,22 +498,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       // an empty catalog here ships the 'unknown' placeholder as the only
       // picker entry. One bounded await closes the race when nothing has
       // resolved yet.
-      availableModels: await (sess
-        ? (sess.state.availableModels.length > 0
-          ? scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model, user)
-          : (async () => {
-              try {
-                const models = await Promise.race([
-                  sess.rpc.getAvailableModels(),
-                  new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
-                ]);
-                sess.state.availableModels = models.map((m: any) => ({
-                  provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: undefined,
-                }));
-              } catch { /* wedged provider — ship the fallback list */ }
-              return scopeModelsForSession(sess.state.availableModels, sess.state.sessionState?.model, user);
-            })())
-        : getEnabledModelEntries(user)),
+      availableModels: markDefaultModel(models, user),
       extensions: await enrichExtensionsFor(user),
     };
   };
@@ -905,7 +906,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
 
   route({
     method: 'POST', path: API.sessions.list, template: `${API_PREFIX}/sessions`,
-    role: 'chat', tag: 'Sessions', summary: 'Start a new session (optional body: personaId, sessionName, locale, timeZone; admin-only workdir — scopes the sandboxed pi process to that directory)', status: 201,
+    role: 'chat', tag: 'Sessions', summary: 'Start a new session (optional body: personaId, sessionName, provider + modelId for the initial model, locale, timeZone; admin-only workdir — scopes the sandboxed pi process to that directory)', status: 201,
     handler: async (c) => {
       // Body is optional (tests may post without JSON). Read ONCE — a
       // second read on a consumed stream would hang forever.
@@ -942,6 +943,25 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
         if (!persona) { sendJSON(c.res, { success: false, error: `Unknown persona: ${personaId}` }, 400); return; }
       }
 
+      // Initial model from the New Session dialog. The provider must be one
+      // of this deployment's AUTERE_PROVIDER list; the pair is checked
+      // against pi's catalog after spawn (the registry only exists inside a
+      // running pi). Both fields are required together.
+      const wantProvider = typeof body?.provider === 'string' ? body.provider.trim() : '';
+      const wantModelId = typeof body?.modelId === 'string' ? body.modelId.trim() : '';
+      if (wantProvider || wantModelId) {
+        if (!wantProvider || !wantModelId) {
+          sendJSON(c.res, { success: false, error: 'provider and modelId must be given together' }, 400);
+          return;
+        }
+        if (!getAllowedProviders().includes(wantProvider.toLowerCase())) {
+          sendJSON(c.res, { success: false, error: `Provider "${wantProvider}" is not enabled on this deployment (AUTERE_PROVIDER)` }, 400);
+          return;
+        }
+      }
+      // pi provider ids are lower-case; AUTERE_PROVIDER entries are normalized.
+      const initialProvider = wantProvider.toLowerCase();
+
       // Spawn a DEDICATED process for the fresh session — the previous
       // session's process (if any, even mid-turn) keeps running untouched.
       // workdir scopes pi's cwd (docker sandbox work area) — admin only.
@@ -962,6 +982,21 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
       const state = fresh.state.sessionState;
       if (!state.sessionId || !state.sessionFile) {
         throw new Error('pi started a new session but did not report a sessionId or sessionFile');
+      }
+
+      if (initialProvider && wantModelId) {
+        try {
+          if (!(await fresh.waitForModel(initialProvider, wantModelId))) {
+            throw new Error(`Model ${initialProvider}/${wantModelId} is not available`);
+          }
+          await fresh.setSessionModel(initialProvider, wantModelId);
+        } catch (err: any) {
+          log.http.error(`New session model ${initialProvider}/${wantModelId} failed: ${err?.message || err}`);
+          await pm.terminate(c.user, state.sessionFile);
+          try { rmSync(state.sessionFile, { force: true }); } catch { /* already gone */ }
+          sendJSON(c.res, { success: false, error: `Failed to set model ${initialProvider}/${wantModelId}: ${err?.message || err}` }, 400);
+          return;
+        }
       }
 
       // The fresh process auto-names itself at spawn ("[ui] - …"). An
@@ -1415,7 +1450,7 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
 
   route({
     method: 'GET', path: API.session.models, template: `${API_PREFIX}/session/models`,
-    role: 'chat', tag: 'Session', summary: 'Models available to the viewed session, scoped by settings; enabled models when no live process (query: sessionId?)',
+    role: 'chat', tag: 'Session', summary: 'Models available to the viewed session, scoped by settings and AUTERE_PROVIDER; enabled models when no live process (query: sessionId?)',
     handler: async (c) => {
       const t = await resolveTarget(c, targetParam(c));
       let data: any[];
@@ -2210,13 +2245,13 @@ ${text.trim()}`).catch((err) => settle(err as Error));
   // session file) just to ask the catalog.
   route({
     method: 'POST', path: API.modelsCatalog, template: `${API_PREFIX}/models/available`,
-    role: 'chat', tag: 'Settings', summary: 'Reload available models from pi (body: nothing)',
+    role: 'chat', tag: 'Settings', summary: 'Reload available models from pi, limited to the AUTERE_PROVIDER list (body: nothing)',
     handler: async (c) => {
       // Full pi catalog (unscoped) — the table's enabled checkboxes are the
       // single source of truth for the enabledModels list
-      const toEntries = (models: any[]) => models.map((m: any) => ({
+      const toEntries = (models: any[]) => filterAllowedProviders(models.map((m: any) => ({
         provider: m.provider, id: m.id, name: m.name || m.id, thinkingLevel: m.thinkingLevel,
-      }));
+      })));
       const running = pm.runningForUser(c.user);
       if (running) {
         try {
@@ -2276,7 +2311,9 @@ ${text.trim()}`).catch((err) => settle(err as Error));
     method: 'GET', path: API.settings.root, template: `${API_PREFIX}/settings`,
     role: 'chat', tag: 'Settings', summary: 'Read the caller settings',
     handler: async (c) => {
-      sendJSON(c.res, { success: true, data: getAllUserSettings(c.user) });
+      // defaultProvider is deployment state (AUTERE_PROVIDER[0]), not a user
+      // setting — a top-level field so it never round-trips through a save.
+      sendJSON(c.res, { success: true, data: getAllUserSettings(c.user), defaultProvider: getDefaultProvider() });
     },
   });
 

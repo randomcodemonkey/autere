@@ -68,7 +68,12 @@ try {
     'legacy npm pi-9router-ext is stripped');
   assert.equal(installed('pi-combo-reasoning'), false, 'retired extra copy is removed');
 
-  // Non-9router provider: not installed at all, copy removed.
+  // Multiple providers: 9router in the list (not first) still installs it.
+  process.env.AUTERE_PROVIDER = 'anthropic, 9router';
+  assert.deepEqual(getAlwaysEnabledExtras(), ['pi-9router-ext'], 'always-on when 9router is any list entry');
+  assert.equal(desiredExtras('admin').includes('local:pi-9router-ext'), true, 'wanted when 9router is any list entry');
+
+  // Non-9router provider list: not installed at all, copy removed.
   process.env.AUTERE_PROVIDER = 'openai';
   assert.deepEqual(getAlwaysEnabledExtras(), [], 'no always-on extras for another provider');
   assert.equal(desiredExtras('admin').includes('local:pi-9router-ext'), false, 'not wanted for another provider');

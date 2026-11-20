@@ -3,7 +3,7 @@ import { readFileSync, existsSync, createReadStream } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { StreamEntry, SessionUsageResult } from './types.js';
-import { getUserSetting } from './user-settings.js';
+import { getUserSetting, getAllowedProviders, getPiDefaultModel } from './user-settings.js';
 import { log } from './logger.js';
 import { filterModelsByPatterns } from '../shared/format.js';
 import { buildStreamHistoryFromMessages, readTailMessageEntries } from './stream-history.js';
@@ -16,10 +16,18 @@ export function getEnabledModelPatterns(user: string): string[] {
   return getUserSetting(user, 'enabledModels', []);
 }
 
+/** Drop models from providers this deployment does not expose
+ *  (AUTERE_PROVIDER). Entries without a provider stay (bare enabledModels
+ *  patterns are resolved by pi). */
+export function filterAllowedProviders<T extends { provider?: string | null }>(models: T[]): T[] {
+  const allowed = new Set(getAllowedProviders());
+  return models.filter((m) => !m.provider || allowed.has(String(m.provider).toLowerCase()));
+}
+
 /** Filter models to only those matching the CALLER's enabled/scoped list
  *  (the setting is per user — an admin's list must not scope other users). */
 export function filterScopedModels(models: any[], user: string): any[] {
-  return filterModelsByPatterns(models, getEnabledModelPatterns(user));
+  return filterAllowedProviders(filterModelsByPatterns(models, getEnabledModelPatterns(user)));
 }
 
 /**
@@ -37,18 +45,18 @@ export function scopeModelsForSession(models: any[], current: { provider?: strin
 }
 
 /**
- * Flag the pi default model - the FIRST entry of enabledModels, which
- * applySettingsToPiEnv writes to defaultProvider/defaultModel, so pi picks it
- * for a new session. Clients show it as "(default)".
+ * Flag the pi default model - the first enabled entry on the deployment's
+ * default provider (AUTERE_PROVIDER), which applySettingsToPiEnv writes to
+ * defaultProvider/defaultModel, so pi picks it for a new session.
  */
 export function markDefaultModel(models: any[], user: string): any[] {
-  const first = getEnabledModelPatterns(user)[0];
-  if (!first) return models;
-  const slash = first.indexOf('/');
-  const provider = slash > 0 ? first.slice(0, slash) : '';
-  const id = slash > 0 ? first.slice(slash + 1) : first;
+  const def = getPiDefaultModel(user);
+  if (!def) return models;
+  const provider = def.provider.toLowerCase();
   return models.map((m: any) =>
-    m.id === id && (!provider || m.provider === provider) ? { ...m, isDefault: true } : m);
+    m.id === def.id && (!provider || String(m.provider || '').toLowerCase() === provider)
+      ? { ...m, isDefault: true }
+      : m);
 }
 
 /**
@@ -57,11 +65,11 @@ export function markDefaultModel(models: any[], user: string): any[] {
  * richer metadata is available without a router dependency.
  */
 export function getEnabledModelEntries(user: string): any[] {
-  return getEnabledModelPatterns(user).map((p) => {
+  return filterAllowedProviders(getEnabledModelPatterns(user).map((p) => {
     const slash = p.indexOf('/');
     if (slash > 0) return { provider: p.slice(0, slash), id: p.slice(slash + 1), name: p.slice(slash + 1), thinkingLevel: undefined };
     return { provider: '', id: p, name: p, thinkingLevel: undefined };
-  });
+  }));
 }
 
 // ── JSON response ──

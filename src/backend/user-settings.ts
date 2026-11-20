@@ -23,7 +23,7 @@ import { USER_SETTINGS_DIR, PI_DIR } from './constants.js';
 import { getPiEnvDir, ensurePiEnv, materializeEnvExtensions } from './pi-env.js';
 import { replaceMcpServers } from './mcp-config.js';
 import { isPiImagesInstalled } from './image-models.js';
-import { matchModelMap } from '../shared/format.js';
+import { matchModelMap, parseProviderList } from '../shared/format.js';
 import { log } from './logger.js';
 import { writePrivateFile } from './private-file.js';
 import type { SettingSection } from '../shared/settings.js';
@@ -176,18 +176,13 @@ function applySettingsToPiEnv(user: string, settings: UserSettings): void {
     if ('enabledModels' in settings) {
       piSettings.enabledModels = settings.enabledModels;
       piSettingsChanged = true;
-      // Keep pi's session-start default in sync with the ordered list —
-      // otherwise a stale settings.json defaultModel (e.g. mimo-v2.5-all)
-      // wins in findInitialModel and new sessions ignore the user's order.
-      const first = settings.enabledModels?.[0];
-      if (first) {
-        const slash = first.indexOf('/');
-        if (slash > 0) {
-          piSettings.defaultProvider = first.slice(0, slash);
-          piSettings.defaultModel = first.slice(slash + 1);
-        } else {
-          piSettings.defaultModel = first;
-        }
+      // Keep pi's session-start default in sync with the ordered list and
+      // the deployment's default provider — otherwise a stale settings.json
+      // defaultModel wins in findInitialModel and new sessions ignore it.
+      const def = defaultModelRef(settings.enabledModels, getDefaultProvider());
+      if (def) {
+        if (def.provider) piSettings.defaultProvider = def.provider;
+        piSettings.defaultModel = def.id;
       }
     }
     if ('packages' in settings) {
@@ -759,19 +754,45 @@ export const ALWAYS_ENABLED_EXTRAS = ['pi-9router-ext'];
  *  reconcile loop only iterates currently bundled names). */
 export const RETIRED_EXTRAS = ['pi-combo-reasoning'];
 
-/** True unless AUTERE_PROVIDER names a different provider (9router is the
- *  default, so an unset value means 9router). */
-export function isNineRouterProvider(): boolean {
-  const provider = process.env.AUTERE_PROVIDER;
-  return !provider || provider === '9router';
+/** True when 9router is one of the providers this deployment exposes. */
+export function isNineRouterEnabled(): boolean {
+  return getAllowedProviders().includes('9router');
 }
 
-/** Always-on extras for this deployment — empty when pi runs against a
- *  non-9router provider, where the 9router provider must not register. Also
- *  empty for a name that is not bundled (an image built without the extra),
- *  so ensurePiEnv never tries to install a missing source. */
+/** Providers exposed for selection (AUTERE_PROVIDER, comma separated).
+ *  The first entry is the default provider for new sessions. */
+export function getAllowedProviders(): string[] {
+  return parseProviderList(process.env.AUTERE_PROVIDER);
+}
+
+export function getDefaultProvider(): string {
+  return getAllowedProviders()[0];
+}
+
+/** The provider/model pi starts a new session with: the first enabled model
+ *  on the deployment's default provider, else the first enabled model. */
+export function getPiDefaultModel(user: string): { provider: string; id: string } | null {
+  return defaultModelRef(getUserSetting(user, 'enabledModels', []), getDefaultProvider());
+}
+
+/** Pure version of getPiDefaultModel for the settings-save path (which has
+ *  the new settings in hand, not yet on disk). */
+export function defaultModelRef(patterns: unknown, provider: string): { provider: string; id: string } | null {
+  const refs = (Array.isArray(patterns) ? patterns : [])
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
+    .map((p) => {
+      const slash = p.indexOf('/');
+      return slash > 0 ? { provider: p.slice(0, slash), id: p.slice(slash + 1) } : { provider: '', id: p };
+    });
+  return refs.find((r) => r.provider.toLowerCase() === provider) || refs[0] || null;
+}
+
+/** Always-on extras for this deployment — empty unless 9router is exposed,
+ *  where the 9router provider must not register. Also empty for a name that
+ *  is not bundled (an image built without the extra), so ensurePiEnv never
+ *  tries to install a missing source. */
 export function getAlwaysEnabledExtras(): string[] {
-  return isNineRouterProvider() ? ALWAYS_ENABLED_EXTRAS.filter(isBundledExtra) : [];
+  return isNineRouterEnabled() ? ALWAYS_ENABLED_EXTRAS.filter(isBundledExtra) : [];
 }
 
 /** extras toggle state = saved choices (env autere-extensions.json, names
@@ -1063,8 +1084,8 @@ export async function getUserSettingsSchema(user: string, imageModelOptions: { v
   if (isPiImagesInstalled()) {
     // 9router is discoverable (capabilities.imageOutput over /v1/models);
     // any other provider is not — the user types the model id instead.
-    const provider = process.env.AUTERE_PROVIDER || '9router';
-    const is9router = provider === '9router';
+    const is9router = isNineRouterEnabled();
+    const provider = is9router ? '9router' : getDefaultProvider();
     sections.push({
       id: 'images',
       label: 'Images',

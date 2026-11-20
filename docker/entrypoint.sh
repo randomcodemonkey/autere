@@ -8,11 +8,14 @@
 # deployments, hidden from Settings); skip it here on other providers.
 piExtensions="$HOME/.pi/agent/extensions"
 mkdir -p "$piExtensions"
+# AUTERE_PROVIDER is a comma-separated provider list (first = default).
+providers="${AUTERE_PROVIDER:-9router}"
+has_provider() { case ",${providers//[[:space:]]/}," in *",$1,"*) return 0;; esac; return 1; }
 for dir in /home/autere/pi-ext-extra/*; do
   [ -d "$dir" ] || continue
   name=$(basename "$dir")
   [ "$name" = "pi-dedup" ] && continue
-  if [ "$name" = "pi-9router-ext" ] && [ -n "${AUTERE_PROVIDER:-}" ] && [ "${AUTERE_PROVIDER}" != "9router" ]; then
+  if [ "$name" = "pi-9router-ext" ] && ! has_provider 9router; then
     continue
   fi
   ln -sfn "$dir" "$piExtensions/$name"
@@ -21,16 +24,17 @@ done
 # npm extensions are preinstalled in the image; drop the packages this
 # deployment does not use. Idempotent: safe on every entrypoint rerun.
 piSettings="$HOME/.pi/agent/settings.json"
-jq --arg p "${AUTERE_PROVIDER:-}" '
+jq --arg p "$providers" '
+  def has($name): ($p | gsub("\\s"; "") | split(",") | index($name)) != null;
   def keep($src):
     $src == "npm:pi-memory"
-    or ($src == "npm:pi-web-search" and ($p != "" and $p != "9router"))
-    or ($src == "npm:copilot-credit-usage" and $p == "github-copilot");
+    or ($src == "npm:pi-web-search" and (has("9router") | not))
+    or ($src == "npm:copilot-credit-usage" and has("github-copilot"));
   .packages |= [ .[]
     | if (type == "string") then {source: .} else . end
     | select(.source | keep(.)) ]' "$piSettings" > "$piSettings.tmp" && mv "$piSettings.tmp" "$piSettings"
 
-echo "AUTERE_PROVIDER=${AUTERE_PROVIDER:-9router} — pi extensions configured"
+echo "AUTERE_PROVIDER=${providers} — pi extensions configured"
 
 echo "Initializing admin pi-env"
 mkdir -p ~/.autere/pi-envs/admin

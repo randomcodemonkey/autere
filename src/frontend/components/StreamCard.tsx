@@ -109,6 +109,18 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
     () => [...(models || [])].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
     [models],
   );
+  // Group by provider when the catalog spans more than one: with a single
+  // provider the flat alphabetical list (and its per-row provider badge)
+  // stays exactly as before.
+  const modelGroups = useMemo(() => {
+    const groups = new Map<string, typeof modelsList>();
+    for (const m of modelsList) {
+      const list = groups.get(m.provider || '') || [];
+      list.push(m);
+      groups.set(m.provider || '', list);
+    }
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [modelsList]);
   const openModelDropdown = useCallback(() => {
     setModelOpen((v) => !v);
     // Fetch while the list is empty — the backend serves the scoped catalog
@@ -356,18 +368,25 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
               {modelsList.length === 0 ? (
                 <div className="chat-model-empty">No scoped models configured</div>
               ) : (
-                modelsList.map((m: AvailableModel) => (
-                  <div
-                    key={`${m.provider}/${m.id}`}
-                    className={`chat-model-item${m.id === (activeModelId ?? model?.id) ? ' active' : ''}`}
-                    onClick={() => selectModel(m.provider, m.id)}
-                  >
-                    <span className="model-dot" />
-                    <span className="model-name">
-                      {m.isDefault && <span className="model-default-badge">(default)</span>} {m.name || m.id}
-                    </span>
-                    <span className="model-provider">{m.provider}</span>
-                  </div>
+                modelGroups.map(([provider, groupModels]) => (
+                  <React.Fragment key={provider || 'default'}>
+                    {modelGroups.length > 1 && provider && (
+                      <div className="chat-model-group">{provider}</div>
+                    )}
+                    {groupModels.map((m: AvailableModel) => (
+                      <div
+                        key={`${m.provider}/${m.id}`}
+                        className={`chat-model-item${m.id === (activeModelId ?? model?.id) ? ' active' : ''}`}
+                        onClick={() => selectModel(m.provider, m.id)}
+                      >
+                        <span className="model-dot" />
+                        <span className="model-name">
+                          {m.isDefault && <span className="model-default-badge">(default)</span>} {m.name || m.id}
+                        </span>
+                        {modelGroups.length === 1 && <span className="model-provider">{m.provider}</span>}
+                      </div>
+                    ))}
+                  </React.Fragment>
                 ))
               )}
             </div>

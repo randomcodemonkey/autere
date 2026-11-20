@@ -148,6 +148,25 @@ export function sanitizeUserName(user: string): string {
 // ── Model scoping ──
 
 /**
+ * Providers exposed by this deployment (AUTERE_PROVIDER, comma separated).
+ * The first entry is the default provider for new sessions. Unset/empty
+ * falls back to the 9router-only deployment. Duplicates are dropped and ids
+ * are lower-cased (pi provider ids are lower-case).
+ */
+export function parseProviderList(raw: string | null | undefined): string[] {
+  const seen = new Set<string>();
+  const providers: string[] = [];
+  for (const part of String(raw ?? '').split(',')) {
+    const id = part.trim().toLowerCase();
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      providers.push(id);
+    }
+  }
+  return providers.length ? providers : ['9router'];
+}
+
+/**
  * Filter a model list down to entries matching the enabled-models patterns.
  * A pattern matches either the full `provider/id` or its bare `id` suffix.
  * An empty pattern list disables filtering (all models pass).

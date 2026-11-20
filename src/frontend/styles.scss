@@ -1785,6 +1785,19 @@ body {
     margin-top: 0.5rem;
   }
 
+  // Provider + model pickers for the new session (side by side, wrap on mobile)
+  .session-model-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+
+    .settings-field {
+      flex: 1 1 12rem;
+      min-width: 0;
+    }
+  }
+
   // docker.sock opt-in: row layout with standard margin before the workdirs section
   .session-sock-row {
     display: flex;
@@ -2011,6 +2024,14 @@ body {
     color: var(--c-text-dimmest);
     font-style: italic;
     padding: 0.35rem 0.5rem;
+  }
+
+  .chat-model-group {
+    padding: 0.35rem 0.5rem 0.1rem;
+    font-size: 0.55rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--c-text-dimmest);
   }
 
   // Dropdown items reuse the model-list look

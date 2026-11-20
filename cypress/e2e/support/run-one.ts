@@ -2,7 +2,7 @@
  * Run ONE e2e spec against the harness backend:
  *   npx tsx cypress/e2e/support/run-one.ts cypress/e2e/stream-reload.cy.ts
  */
-import { startBackend, stopBackend, TEST_PORT, getTestEnvsDir } from './start-backend';
+import { startBackend, stopBackend, TEST_PORT, getTestEnvsDir, getTestModels } from './start-backend';
 import { spawn } from 'child_process';
 
 async function main() {
@@ -17,6 +17,17 @@ async function main() {
   try {
     console.log(`[run-one] Starting backend on port ${TEST_PORT}...`);
     await startBackend();
+    // Same documented model settings as run-e2e.ts: without them the user
+    // settings fall back to the master pi settings' model, which the isolated
+    // test env's router cannot serve (the New Session form would preselect it).
+    const models = getTestModels();
+    if (models.length > 0) {
+      await fetch(`http://localhost:${TEST_PORT}/api/v1/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabledModels: models }),
+      });
+    }
     // NOT execSync — it blocks this process's event loop, and the mock router
     // lives in this process: a blocked loop leaves the mock's sockets
     // accepted-but-unserviced (pi's model calls hang until the test times

@@ -312,6 +312,26 @@ describe('StreamCard', () => {
     });
   });
 
+  it('groups the model dropdown by provider when several providers are exposed', () => {
+    const models = [
+      { provider: 'anthropic', id: 'c2', name: 'Beta' },
+      { provider: '9router', id: 'a1', name: 'Zeta' },
+      { provider: 'anthropic', id: 'c1', name: 'Alpha' },
+      { provider: '9router', id: 'a2', name: 'Mike' },
+    ];
+    cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={cy.stub()} model={null} models={models} />);
+    cy.get('.chat-model-name').click();
+    cy.get('.chat-model-group').then(($groups) => {
+      expect($groups.toArray().map((el) => el.textContent)).to.deep.eq(['9router', 'anthropic']);
+    });
+    cy.get('.chat-model-item .model-name').then(($names) => {
+      expect($names.toArray().map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim()))
+        .to.deep.eq(['Mike', 'Zeta', 'Alpha', 'Beta']);
+    });
+    // The per-row provider badge is replaced by the group heading
+    cy.get('.chat-model-item .model-provider').should('not.exist');
+  });
+
   it('shows the active model on the second header row', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={{ provider: 'openrouter', id: 'mimo-v2.3', name: 'mimo-v2.3:all' }} />);
     cy.get('.chat-model-row').should('contain', 'mimo-v2.3:all');
