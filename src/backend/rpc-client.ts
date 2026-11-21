@@ -438,6 +438,10 @@ export class MonitorRpcClient {
     }
 
     await new Promise((resolve) => {
+      // pi 1.5+ turns SIGTERM/SIGHUP into an orderly shutdown and waits for
+      // pending cleanup (e.g. saving a refreshed OAuth token) before exiting.
+      // Give it time before forcing, or a token refresh can be lost.
+      const graceMs = 10_000;
       const timeout = setTimeout(() => {
         if (pid) {
           try { process.kill(-pid, 'SIGKILL'); } catch {}
@@ -445,7 +449,7 @@ export class MonitorRpcClient {
           this.process?.kill('SIGKILL');
         }
         resolve(undefined);
-      }, 2000);
+      }, graceMs);
       this.process?.on('exit', () => {
         clearTimeout(timeout);
         resolve(undefined);

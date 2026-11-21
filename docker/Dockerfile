@@ -92,11 +92,11 @@ RUN apt-get -y -qq update \
     && rm -rf /var/lib/apt/lists/*
 
 # increment the counter if you want to force npm reinstalls, e.g. new versions
-ENV NPM_CACHE_COUNTER=0002
+ENV NPM_CACHE_COUNTER=0003
 
 RUN npm install -g cypress --ignore-scripts \
     && npm install -g 9router --ignore-scripts \
-    && npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.0.4 \
+    && npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.6.0 \
     && npm install -g @tobilu/qmd \
     # qmd ships llama.cpp prebuilds for every arch and GPU backend; keep only
     # this arch's CPU build (deployments pass no GPU devices)
@@ -150,7 +150,7 @@ WORKDIR /home/autere
 # installs at container start (rerunning it would fetch fresh versions).
 # Enabled/disabled per deployment in entrypoint.sh by filtering settings.json
 # "packages". Bump NPM_CACHE_COUNTER when updating versions.
-RUN set -e; for pkg in pi-web-search pi-memory copilot-credit-usage; do pi install "npm:$pkg"; done \
+RUN set -e; for pkg in pi-web-search@1.7.0 pi-memory@0.4.2 copilot-credit-usage@0.1.0; do pi install "npm:$pkg"; done \
     && npm cache clean --force
 
 ENTRYPOINT ["/entrypoint.sh"]
