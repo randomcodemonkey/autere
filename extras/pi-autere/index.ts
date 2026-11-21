@@ -6,6 +6,8 @@
  *   autere_list_tasks         — inspect scheduled tasks + latest run outcome
  *   autere_set_task_enabled   — stop/resume a task (the "goal reached" step)
  *   autere_find_sessions      — sessions and their latest messages
+ *   autere_find_models        — models this session can run, by provider/id
+ *   autere_session_state      — this session's provider, model and status
  *   autere_session_changes  — files changed in a session (Changes tab log)
  *   autere_send_to_session    — deliver a message to another session
  *   autere_persona            — list personas / bind one to this session
@@ -422,18 +424,76 @@ export default function (pi: ExtensionAPI) {
 		label: "Find models",
 		promptSnippet: "autere_find_models — models a session or background task can run on (provider/id)",
 		description:
-			"List the models this user can run: the `provider/id` pair (e.g. \"9router/glm-5.3-flash\"), which is exactly the string a scheduled task's `model` field and a session's model selector expect, plus each model's display name. An empty list means no model is configured for this user yet.",
-		parameters: Type.Object({}),
+			"List the models this user can run: the `provider/id` pair (e.g. \"9router/glm-5.3-flash\"), which is exactly the string a scheduled task's `model` field and a session's model selector expect, plus each model's display name. An empty list means no model is configured for this user yet.\n\n" +
+			"Pass `currentProvider: true` to list only this session's provider — the way to keep a scheduled task on the same provider as this session.",
+		parameters: Type.Object({
+			currentProvider: Type.Optional(Type.Boolean({
+				description: "Only models from this session's current provider",
+			})),
+		}),
 		annotations: { readOnlyHint: true },
-		async execute(_toolCallId, _params, signal) {
-			const models: any[] = (await api("GET", "/session/models", undefined, signal)) ?? [];
-			if (models.length === 0) {
-				return ok("No models are enabled for this user — nothing to choose from (see Settings → Models).", { models: [] });
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const provider = ctx.model?.provider ?? "";
+			let models: any[] = (await api("GET", "/session/models", undefined, signal)) ?? [];
+			if (params.currentProvider === true) {
+				if (!provider) {
+					return ok("This session has no current model, so there is no provider to filter by.", { provider: null, models: [] });
+				}
+				models = models.filter((m) => m.provider === provider);
+				if (models.length === 0) {
+					return ok(`No models are enabled for this session's provider (${provider}) — see Settings → Models.`, { provider, models: [] });
+				}
 			}
+			if (models.length === 0) {
+				return ok("No models are enabled for this user — nothing to choose from (see Settings → Models).", { provider: provider || null, models: [] });
+			}
+			const scope = params.currentProvider === true ? ` for provider ${provider}` : "";
 			const lines = models.map((m) => `- ${m.provider}/${m.id}${m.name && m.name !== m.id ? `  (${m.name})` : ""}`);
-			return ok(`${models.length} model(s) available:\n${lines.join("\n")}`, {
+			return ok(`${models.length} model(s)${scope} available:\n${lines.join("\n")}`, {
+				provider: provider || null,
 				models: models.map((m) => ({ id: `${m.provider}/${m.id}`, name: m.name || m.id })),
 			});
+		},
+	});
+
+	pi.registerTool({
+		name: "autere_session_state",
+		label: "Session state",
+		promptSnippet: "autere_session_state — this session's provider, model and runtime status",
+		description:
+			"Show the current session's runtime state: session id and name, model and its provider, thinking level, whether it is idle or active, pending messages, context usage and cwd.\n\n" +
+			"Use the provider with autere_find_models(currentProvider: true) to keep a scheduled task on the same provider as this session.",
+		parameters: Type.Object({}),
+		annotations: { readOnlyHint: true },
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			const model = ctx.model;
+			const usage = ctx.getContextUsage();
+			const pending = ctx.hasPendingMessages();
+			const idle = ctx.isIdle();
+			const state = {
+				sessionId: currentSessionId(ctx),
+				sessionName: ctx.sessionManager.getSessionName() ?? null,
+				provider: model?.provider ?? null,
+				model: model ? { id: model.id, name: model.name || model.id } : null,
+				thinkingLevel: ctx.thinkingLevel ?? null,
+				idle,
+				pendingMessages: pending,
+				contextUsage: usage ? { tokens: usage.tokens, percent: usage.percent, contextWindow: usage.contextWindow } : null,
+				cwd: ctx.cwd ?? null,
+			};
+			const context = usage
+				? (usage.tokens != null ? `${usage.tokens} tokens (${usage.percent ?? "?"}% of ${usage.contextWindow})` : `unknown of ${usage.contextWindow}`)
+				: "unknown";
+			const lines = [
+				`session: ${state.sessionId ?? "(unknown)"}${state.sessionName ? ` "${state.sessionName}"` : ""}`,
+				`model: ${model ? `${model.provider}/${model.id}${model.name && model.name !== model.id ? ` (${model.name})` : ""}` : "(none)"}`,
+				`provider: ${state.provider ?? "(none)"}`,
+				`thinking: ${state.thinkingLevel ?? "(default)"}`,
+				`state: ${idle ? "idle" : "active"}${pending ? ", pending messages" : ""}`,
+				`context: ${context}`,
+				`cwd: ${state.cwd ?? "(unknown)"}`,
+			];
+			return ok(lines.join("\n"), state);
 		},
 	});
 

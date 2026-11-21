@@ -1,6 +1,6 @@
 // Run: npx tsx smoke-test.mjs  (from extras/pi-autere)
 // Spins up a stub autere backend, has the backend-side helpers mint the agent
-// token + write autere-agent.json, then drives all six tools against it.
+// token + write autere-agent.json, then drives the tools against it.
 import assert from "node:assert";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, renameSync } from "node:fs";
 import { join } from "node:path";
@@ -57,6 +57,7 @@ const server = createServer((req, res) => {
       return data(res, [
         { provider: "9router", id: "glm-5.3-flash", name: "GLM Flash" },
         { provider: "9router", id: "mimo-v2.5-all", name: "Mimo" },
+        { provider: "openai", id: "gpt-5.1-sol", name: "GPT-5.1 Sol" },
       ]);
     }
     if (req.method === "GET" && path === "/sessions") {
@@ -174,12 +175,20 @@ try {
   const tools = {};
   const { default: factory } = await import("./index.ts");
   factory({ registerTool: (t) => (tools[t.name] = t) });
-  for (const name of ["autere_schedule_task", "autere_list_tasks", "autere_set_task_enabled", "autere_find_sessions", "autere_session_changes", "autere_send_to_session", "autere_persona", "send_notification"]) {
+  for (const name of ["autere_schedule_task", "autere_list_tasks", "autere_set_task_enabled", "autere_find_sessions", "autere_find_models", "autere_session_state", "autere_session_changes", "autere_send_to_session", "autere_persona", "send_notification"]) {
     assert.ok(tools[name], `${name} registered`);
   }
   const run = (name, params, ctx) => tools[name].execute("call-1", params, undefined, undefined, ctx);
   const text = (r) => r.content.map((c) => c.text).join("\n");
-  const ctx = { sessionManager: { getSessionId: () => "s1" } };
+  const ctx = {
+    model: { provider: "9router", id: "glm-5.3-flash", name: "GLM Flash" },
+    thinkingLevel: "medium",
+    cwd: "/work",
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+    getContextUsage: () => ({ tokens: 1234, contextWindow: 200000, percent: 0.6 }),
+    sessionManager: { getSessionId: () => "s1", getSessionName: () => "Alpha", getCwd: () => "/work" },
+  };
 
   // 1. schedule with a report target → footer carries ids + both closing steps
   const created = await run("autere_schedule_task", {
@@ -298,6 +307,22 @@ try {
   }, ctx);
   assert.ok(text(defaulted).includes("model: (user's default model)"), "unset model is reported as the default");
   assert.strictEqual(state.tasks[state.tasks.length - 1].model, undefined, "no model stored when unset");
+
+  // 8d. currentProvider filter: only this session's provider
+  const current = await run("autere_find_models", { currentProvider: true }, ctx);
+  assert.ok(text(current).includes("- 9router/glm-5.3-flash  (GLM Flash)"), "current provider keeps its models");
+  assert.ok(!text(current).includes("openai/"), "current provider drops other providers");
+  assert.strictEqual(current.details.provider, "9router");
+
+  // 8e. session state: provider, model and runtime status
+  const sessionState = await run("autere_session_state", {}, ctx);
+  assert.strictEqual(sessionState.details.sessionId, "s1");
+  assert.strictEqual(sessionState.details.sessionName, "Alpha");
+  assert.strictEqual(sessionState.details.provider, "9router");
+  assert.deepStrictEqual(sessionState.details.model, { id: "glm-5.3-flash", name: "GLM Flash" });
+  assert.ok(text(sessionState).includes("model: 9router/glm-5.3-flash (GLM Flash)"), "state shows provider/model");
+  assert.ok(text(sessionState).includes("thinking: medium"), "state shows the thinking level");
+  assert.ok(text(sessionState).includes("state: idle"), "state shows the idle flag");
   const listedWithModel = text(await run("autere_list_tasks", {}, ctx));
   assert.ok(listedWithModel.includes("model: 9router/glm-5.3-flash"), "list shows the task's model");
 
