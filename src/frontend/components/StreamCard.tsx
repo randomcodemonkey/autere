@@ -360,6 +360,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
         <span className="chat-model-label">model</span>
         <span className="chat-model-wrapper" ref={modelWrapperRef}>
           <button className="chat-model-name" onClick={openModelDropdown} title="Change model">
+            {model?.provider && <span className="chat-model-provider">{model.provider} - </span>}
             {model?.name || model?.id || '—'}
             <span className="chat-model-caret">▾</span>
           </button>
@@ -381,7 +382,8 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
                       >
                         <span className="model-dot" />
                         <span className="model-name">
-                          {m.isDefault && <span className="model-default-badge">(default)</span>} {m.name || m.id}
+                          {m.name || m.id}
+                          {m.isDefault && <span className="model-default-badge"> (default)</span>}
                         </span>
                         {modelGroups.length === 1 && <span className="model-provider">{m.provider}</span>}
                       </div>

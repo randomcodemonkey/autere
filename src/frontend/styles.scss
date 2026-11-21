@@ -1994,6 +1994,8 @@ body {
 
     &:hover { color: var(--c-text-muted); }
 
+    .chat-model-provider { color: var(--c-text-dimmer); font-weight: 400; }
+
     .chat-model-caret {
       font-size: 0.55rem;
       color: var(--c-text-dimmer);
@@ -3956,6 +3958,12 @@ body {
     overflow-wrap: anywhere;
     color: var(--c-text-dim);
     font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+
+  .models-table-provider {
+    color: var(--c-text-dim);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    white-space: nowrap;
   }
 
   tr.enabled .models-table-name { color: var(--c-text); }

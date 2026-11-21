@@ -359,6 +359,10 @@ describe('SettingsCard models catalog table', () => {
     // Catalog auto-loads when the section opens; Update re-reads it
     cy.get('.models-table tbody tr', { timeout: 10000 }).should('have.length', 2);
     cy.get('.models-table tbody tr').first().should('contain', 'Model One');
+    // Each row names the provider its model belongs to
+    cy.get('.models-table-provider').then(($p) => {
+      expect($p.toArray().map((el) => el.textContent?.trim())).to.deep.eq(['p1', 'p2']);
+    });
     // Alphabetical by name; the default model is called out outside the table
     cy.get('.models-default-name').should('have.text', 'Model One');
     cy.get('.models-table tbody tr').eq(0).find('input[type=checkbox]').should('be.checked');
@@ -383,7 +387,7 @@ describe('SettingsCard models catalog table', () => {
       expect($n.toArray().map((el) => el.textContent?.replace(/\s+/g, ' ').trim())).to.deep.eq([
         'Alpha set as default',
         'Mike set as default',
-        '(default) Zeta',
+        'Zeta (default)',
       ]);
     });
     cy.get('.models-default-line').should('contain', 'Default model for new sessions').and('contain', 'Zeta');

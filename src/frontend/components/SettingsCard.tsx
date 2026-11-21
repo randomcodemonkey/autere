@@ -348,6 +348,7 @@ const ModelsSection: React.FC<{
                 <thead>
                   <tr>
                     <th>Model</th>
+                    <th>Provider</th>
                     <th>Enabled</th>
                     <th>Thinking level</th>
                     <th>Reserved context</th>
@@ -363,7 +364,8 @@ const ModelsSection: React.FC<{
                     return (
                       <tr key={k} className={`${on ? 'enabled' : ''}${isDefault ? ' models-row-default' : ''}`}>
                         <td className="models-table-name" title={k} data-label="Model">
-                          {isDefault && <span className="models-default-badge">(default)</span>} {m.name}
+                          {m.name}
+                          {isDefault && <span className="models-default-badge"> (default)</span>}
                           {!isDefault && canDefault && (
                             <>
                               {' '}
@@ -378,6 +380,7 @@ const ModelsSection: React.FC<{
                             </>
                           )}
                         </td>
+                        <td className="models-table-provider" data-label="Provider">{m.provider || '-'}</td>
                         <td data-label="Enabled"><input type="checkbox" checked={on} onChange={(e) => toggleEnabled(k, e.target.checked)} /></td>
                         <td data-label="Thinking level">
                           <select

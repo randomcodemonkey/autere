@@ -34,10 +34,11 @@ describe('autere — settings', () => {
     modelsSection().contains('button', 'Update available models', { timeout: 5000 }).click();
     modelsSection().find('.models-table tbody tr', { timeout: 60000 }).should('have.length.greaterThan', 0);
     // Columns match the requested per-model controls
-    modelsSection().find('.models-table thead th').eq(1).should('contain', 'Enabled');
-    modelsSection().find('.models-table thead th').eq(2).should('contain', 'Thinking level');
-    modelsSection().find('.models-table thead th').eq(3).should('contain', 'Reserved context');
-    modelsSection().find('.models-table thead th').eq(4).should('contain', 'Image mode');
+    modelsSection().find('.models-table thead th').eq(1).should('contain', 'Provider');
+    modelsSection().find('.models-table thead th').eq(2).should('contain', 'Enabled');
+    modelsSection().find('.models-table thead th').eq(3).should('contain', 'Thinking level');
+    modelsSection().find('.models-table thead th').eq(4).should('contain', 'Reserved context');
+    modelsSection().find('.models-table thead th').eq(5).should('contain', 'Image mode');
   });
 
   it('shows 9Router section if extension is enabled', () => {

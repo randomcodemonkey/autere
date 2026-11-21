@@ -308,7 +308,7 @@ describe('StreamCard', () => {
     cy.get('.chat-model-name').click();
     cy.get('.chat-model-item .model-name').then(($n) => {
       expect($n.toArray().map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim()))
-        .to.deep.eq(['(default) Alpha', 'Mike', 'Zeta']);
+        .to.deep.eq(['Alpha (default)', 'Mike', 'Zeta']);
     });
   });
 
@@ -334,7 +334,8 @@ describe('StreamCard', () => {
 
   it('shows the active model on the second header row', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={{ provider: 'openrouter', id: 'mimo-v2.3', name: 'mimo-v2.3:all' }} />);
-    cy.get('.chat-model-row').should('contain', 'mimo-v2.3:all');
+    cy.get('.chat-model-row').should('contain', 'openrouter - mimo-v2.3:all');
+    cy.get('.chat-model-provider').should('have.text', 'openrouter - ');
     cy.get('.chat-model-external').should('not.exist');
   });
 
