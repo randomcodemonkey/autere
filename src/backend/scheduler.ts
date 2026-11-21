@@ -164,6 +164,13 @@ export function saveTask(user: string, task: ScheduledTask): void {
   renameSync(tmp, f);
 }
 
+/** An agent session may change a task it created, and a live run of the task
+ *  may change that task itself (so a watch task can stop once it is done). */
+export function canManageTask(task: ScheduledTask, actor: string | null, runTaskId?: string | null): boolean {
+  if (!actor) return true;
+  return task.originSessionId === actor || runTaskId === task.id;
+}
+
 export function deleteTask(user: string, taskId: string): boolean {
   if (!isSafeId(taskId)) return false;
   const f = taskFile(user, taskId);

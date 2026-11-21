@@ -282,7 +282,7 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"Enable or disable a scheduled task. Disabling stops all future runs while the task and its run history stay on record; enabling resumes it.\n\n" +
 			"Disabling is also the completion step of a watch-until-X task: once a run has delivered its conclusive outcome, it disables its own task so the schedule stops firing. Pass the task id (autere_list_tasks, or the id in a task prompt's footer).\n\n" +
-			"A session changes only the tasks it created; tasks created elsewhere (the dashboard, another session) are refused — the user can change them in Scheduled Tasks.",
+			"A session changes the tasks it created, and a task's own run may change that task; tasks created elsewhere (the dashboard, another session) are refused — the user can change them in Scheduled Tasks.",
 		parameters: Type.Object({
 			taskId: Type.String({ description: "The task's id" }),
 			enabled: Type.Boolean({ description: "false = stop future runs, true = resume them" }),

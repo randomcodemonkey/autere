@@ -1,7 +1,7 @@
 /** A scheduled run is failed for going silent, never for being slow: a run that
  *  keeps emitting pi events (polling loop, long tool) must outlive the budget. */
 import assert from 'node:assert';
-import { Scheduler } from './scheduler.js';
+import { Scheduler, canManageTask } from './scheduler.js';
 
 const IDLE_MS = 150;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -62,6 +62,16 @@ const wait = (rpc: any) => (scheduler as any).waitForAgentResult(rpc, () => {});
   const done = wait(f.rpc);
   f.exit(new Error('boom'));
   await assert.rejects(done, /pi exited before the run finished: boom/);
+}
+
+// --- task ownership: creator or a live run of the task ---------------------
+{
+  const task = { id: 't1', originSessionId: 'parent' } as any;
+  assert.equal(canManageTask(task, null), true);            // user / dashboard
+  assert.equal(canManageTask(task, 'parent'), true);        // creating session
+  assert.equal(canManageTask(task, 'run-t1', 't1'), true);  // live run of this task
+  assert.equal(canManageTask(task, 'run-t1', 't2'), false); // run of another task
+  assert.equal(canManageTask(task, 'other'), false);        // unrelated session
 }
 
 console.log('scheduler.check: OK');

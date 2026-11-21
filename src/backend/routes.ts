@@ -95,7 +95,7 @@ import { log } from './logger.js';
 import type { UserSession } from './user-session.js';
 import {
   Scheduler,
-  listTasks, getTask, saveTask, deleteTask, validateTaskInput,
+  listTasks, getTask, saveTask, deleteTask, validateTaskInput, canManageTask,
   listRuns, readRunLog,
   type ScheduledTask,
 } from './scheduler.js';
@@ -385,6 +385,10 @@ export function createMonitorServer(PORT: number, pm: ProcessManager, scheduler?
     if (!id) return null;
     return pm.findSession(c.user, id, c.viewed)?.id ?? null;
   };
+
+  /** Task ownership for an agent actor: its creator, or a live run of it. */
+  const ownsTask = (c: Ctx, task: ScheduledTask, actor: string | null): boolean =>
+    canManageTask(task, actor, actor ? scheduler?.findRunBySession(c.user, actor)?.taskId : undefined);
 
   /** Refuse a cross-session tool call the link graph does not allow. */
   const denyCrossSession = (c: Ctx, from: string, to: string, what: string): boolean => {
@@ -2626,10 +2630,10 @@ ${text.trim()}`).catch((err) => settle(err as Error));
         const existing = getTask(c.user, m![1]);
         if (!existing) { sendJSON(c.res, { success: false, error: 'Task not found' }, 404); return; }
         const input = await readBody(c.req);
-        // Agents manage only the tasks their own session created; the user
-        // (dashboard, CLI) may edit any task.
+        // Agents manage only the tasks their own session created (or their
+        // own run); the user (dashboard, CLI) may edit any task.
         const actor = toolActor(c, input.fromSession);
-        if (actor && existing.originSessionId !== actor) {
+        if (!ownsTask(c, existing, actor)) {
           sendJSON(c.res, { success: false, error: `Task "${existing.name}" was not created by this session - the user can change it in Scheduled Tasks.` }, 403);
           return;
         }
@@ -2696,7 +2700,7 @@ ${text.trim()}`).catch((err) => settle(err as Error));
       try {
         const actor = toolActor(c, c.url.searchParams.get('fromSession'));
         const existing = actor ? getTask(c.user, m![1]) : undefined;
-        if (actor && existing && existing.originSessionId !== actor) {
+        if (actor && existing && !ownsTask(c, existing, actor)) {
           sendJSON(c.res, { success: false, error: `Task "${existing.name}" was not created by this session - the user can delete it in Scheduled Tasks.` }, 403);
           return;
         }
