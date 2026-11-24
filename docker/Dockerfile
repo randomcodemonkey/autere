@@ -91,6 +91,23 @@ RUN apt-get -y -qq update \
     && apt-get -y clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Google Chrome (Cypress --browser chrome). Chrome ships an amd64-only deb;
+# the arm64 image keeps the Cypress Electron browser. Under default Docker
+# caps/AppArmor (no CAP_SYS_ADMIN, restricted user namespaces) Chrome's
+# sandbox cannot start, so Cypress tests must pass --no-sandbox via
+# before:browser:launch.
+RUN set -eux; \
+    if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
+      curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+        | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg; \
+      printf 'Types: deb\nURIs: https://dl.google.com/linux/chrome/deb/\nSuites: stable\nComponents: main\nArchitectures: amd64\nSigned-By: /etc/apt/keyrings/google-chrome.gpg\n' \
+        > /etc/apt/sources.list.d/google-chrome.sources; \
+      apt-get -y -qq update; \
+      apt-get install -y -qq --no-install-recommends fonts-liberation google-chrome-stable; \
+      apt-get -y clean; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # increment the counter if you want to force npm reinstalls, e.g. new versions
 ENV NPM_CACHE_COUNTER=0003
 
