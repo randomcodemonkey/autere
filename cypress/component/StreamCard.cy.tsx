@@ -332,6 +332,23 @@ describe('StreamCard', () => {
     cy.get('.chat-model-item .model-provider').should('not.exist');
   });
 
+  it('marks only the active provider/model as active when ids collide', () => {
+    const models = [
+      { provider: 'openai', id: 'gpt-5.1', name: 'GPT-5.1' },
+      { provider: 'openai', id: 'gpt-5.2', name: 'GPT-5.2' },
+      { provider: 'github-copilot', id: 'gpt-5.1', name: 'GPT-5.1' },
+    ];
+    cy.mount(
+      <StreamCard messages={[]} isStreaming={false} onNewSession={cy.stub()}
+        model={{ provider: 'github-copilot', id: 'gpt-5.1', name: 'GPT-5.1' }}
+        models={models} activeModelId="gpt-5.1" />,
+    );
+    cy.get('.chat-model-name').click();
+    cy.get('.chat-model-item.active').should('have.length', 1);
+    cy.get('.chat-model-group').first().should('have.text', 'github-copilot');
+    cy.get('.chat-model-item').first().should('have.class', 'active');
+  });
+
   it('shows the active model on the second header row', () => {
     cy.mount(<StreamCard messages={[]} isStreaming={false} onNewSession={() => {}} model={{ provider: 'openrouter', id: 'mimo-v2.3', name: 'mimo-v2.3:all' }} />);
     cy.get('.chat-model-row').should('contain', 'openrouter - mimo-v2.3:all');

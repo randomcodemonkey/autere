@@ -377,7 +377,7 @@ export const StreamCard: React.FC<StreamCardProps> = ({ messages, isStreaming, c
                     {groupModels.map((m: AvailableModel) => (
                       <div
                         key={`${m.provider}/${m.id}`}
-                        className={`chat-model-item${m.id === (activeModelId ?? model?.id) ? ' active' : ''}`}
+                        className={`chat-model-item${m.id === (activeModelId ?? model?.id) && (!model?.provider || m.provider === model.provider) ? ' active' : ''}`}
                         onClick={() => selectModel(m.provider, m.id)}
                       >
                         <span className="model-dot" />
