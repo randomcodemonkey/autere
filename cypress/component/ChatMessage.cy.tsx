@@ -240,3 +240,31 @@ describe('ChatMessage — streaming tool call', () => {
     cy.get('.tool-call-timeout').should('not.exist');
   });
 });
+
+describe('ChatMessage — timestamps', () => {
+  const mountAt = (ts: number) => cy.mount(
+    <ChatMessage
+      msg={{ ...base, timestamp: ts }}
+      role="user"
+      displayText="hello"
+      isAssistant={false}
+      isToolResult={false}
+      isLong={false}
+      truncLen={5000}
+    />,
+  );
+
+  it('shows only the clock time for today', () => {
+    const now = new Date();
+    mountAt(now.getTime());
+    cy.get('.stream-timestamp').should('have.text',
+      now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  });
+
+  it('adds the date for messages from earlier days', () => {
+    const old = new Date();
+    old.setDate(old.getDate() - 1);
+    mountAt(old.getTime());
+    cy.get('.stream-timestamp').should('contain', old.toLocaleDateString());
+  });
+});

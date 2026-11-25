@@ -237,8 +237,12 @@ export function stripExtraNewlines(text: string): string {
 
 export function formatTimestamp(ts?: number): string {
   if (!ts) return '';
+  const date = new Date(ts);
   // Locale-aware clock time, e.g. "3:12:45 PM" (en-US) or "15.12.45" (fi-FI)
-  return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  // Older messages carry their date, so a resumed session is not ambiguous.
+  if (date.toDateString() === new Date().toDateString()) return time;
+  return `${date.toLocaleDateString()} ${time}`;
 }
 
 /** Tool timeout as a compact duration. Values >= 1000 are milliseconds. */
