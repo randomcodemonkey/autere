@@ -439,9 +439,11 @@ export class MonitorRpcClient {
 
     await new Promise((resolve) => {
       // pi 1.5+ turns SIGTERM/SIGHUP into an orderly shutdown and waits for
-      // pending cleanup (e.g. saving a refreshed OAuth token) before exiting.
-      // Give it time before forcing, or a token refresh can be lost.
-      const graceMs = 10_000;
+      // pending cleanup, including saving a refreshed OAuth token. The OAuth
+      // refresh request itself may take up to 15s, so a shorter grace would
+      // SIGKILL after the provider already rotated the token, losing it and
+      // leaving auth.json with a dead refresh token.
+      const graceMs = 20_000;
       const timeout = setTimeout(() => {
         if (pid) {
           try { process.kill(-pid, 'SIGKILL'); } catch {}

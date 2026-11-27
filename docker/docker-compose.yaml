@@ -26,6 +26,7 @@ services:
     networks:
       - autere
     restart: unless-stopped
+    stop_grace_period: 30s
 volumes:   
   autere-data: {}
   autere-pi: {}

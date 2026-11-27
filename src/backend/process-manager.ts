@@ -278,16 +278,12 @@ export class ProcessManager {
     const map = this.sessions.get(user);
     if (!map) return;
     this.sessions.delete(user);
-    for (const session of map.values()) {
-      await session.stop();
-    }
+    await Promise.all([...map.values()].map((session) => session.stop()));
   }
 
   /** Terminate all processes (shutdown) */
   async terminateAll(): Promise<void> {
-    for (const user of [...this.sessions.keys()]) {
-      await this.terminateByUser(user);
-    }
+    await Promise.all([...this.sessions.keys()].map((user) => this.terminateByUser(user)));
   }
 
   /** All running session processes (for periodic broadcasts) */

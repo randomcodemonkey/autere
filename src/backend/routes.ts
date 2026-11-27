@@ -3075,16 +3075,24 @@ ${text.trim()}`).catch((err) => settle(err as Error));
     log.http.info(`Dashboard running at http://localhost:${PORT}`);
   });
 
-  process.on('SIGTERM', () => shutdown(server, pm, sessionRefreshInterval, heartbeatInterval, scheduler));
-  process.on('SIGINT', () => shutdown(server, pm, sessionRefreshInterval, heartbeatInterval, scheduler));
+  process.on('SIGTERM', () => { void shutdown(server, pm, sessionRefreshInterval, heartbeatInterval, scheduler); });
+  process.on('SIGINT', () => { void shutdown(server, pm, sessionRefreshInterval, heartbeatInterval, scheduler); });
 
   return server;
 }
 
-function shutdown(server: ReturnType<typeof createServer> | null, pm: ProcessManager, sessionRefreshInterval: ReturnType<typeof setInterval> | null, heartbeatInterval: ReturnType<typeof setInterval> | null, scheduler?: Scheduler) {
+let shuttingDown = false;
+async function shutdown(server: ReturnType<typeof createServer> | null, pm: ProcessManager, sessionRefreshInterval: ReturnType<typeof setInterval> | null, heartbeatInterval: ReturnType<typeof setInterval> | null, scheduler?: Scheduler) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   if (sessionRefreshInterval) clearInterval(sessionRefreshInterval);
   if (heartbeatInterval) clearInterval(heartbeatInterval);
   if (scheduler) scheduler.stop();
-  if (server) server.close();
-  pm.terminateAll().catch(() => {});
+  if (server) {
+    server.close();
+    // Drop keep-alive/SSE sockets so the process can exit once pi is stopped.
+    server.closeAllConnections?.();
+  }
+  // Wait for pi's orderly shutdown (token refreshes included) before exiting.
+  try { await pm.terminateAll(); } catch { /* best effort */ }
 }
