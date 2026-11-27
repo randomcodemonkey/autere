@@ -109,11 +109,11 @@ RUN set -eux; \
     fi
 
 # increment the counter if you want to force npm reinstalls, e.g. new versions
-ENV NPM_CACHE_COUNTER=0003
+ENV NPM_CACHE_COUNTER=0004
 
 RUN npm install -g cypress --ignore-scripts \
     && npm install -g 9router --ignore-scripts \
-    && npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.6.0 \
+    && npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.6.1 \
     && npm install -g @tobilu/qmd \
     # qmd ships llama.cpp prebuilds for every arch and GPU backend; keep only
     # this arch's CPU build (deployments pass no GPU devices)
